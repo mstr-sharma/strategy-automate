@@ -11,7 +11,7 @@ Use this skill when the user asks to automate, inspect, build, modify, secure, p
 
 1. Read `/Users/<operator-user>/Desktop/Mosaic Build/memory/MEMORY.md`.
 2. Identify the task family in `/Users/<operator-user>/Desktop/Mosaic Build/memory/reference_strategy_automation_playbook.md`.
-3. Use `/Users/<operator-user>/Desktop/Mosaic Build/openapi.yaml` or live `{Library}/api/openapi.yaml` through the helper when endpoint details matter.
+3. Use live `{Library}/api/openapi.yaml` through the helper when endpoint details matter. A local `openapi.yaml` may be generated for temporary caching, but it is not part of the lean repo.
 4. Use credentials from environment (`MSTR_PASSWORD`) or user-provided secure runtime values. Never write secrets to memory, skills, config, or logs.
 
 ## Tool Router
