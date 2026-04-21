@@ -2,7 +2,7 @@
 name: Strategy task catalog
 description: Map natural-language Strategy automation requests to references, helper commands, and REST/MCP/mstrio surfaces.
 type: reference
-originSessionId: local-codex-2026-04-21
+originSessionId: codex-session
 ---
 Use this as a routing table. Confirm exact paths with `openapi-search` when implementing.
 
@@ -26,7 +26,7 @@ Use this as a routing table. Confirm exact paths with `openapi-search` when impl
 - "Create/update datasource or mapping": Datasource Management APIs; use mstrio-py only if wrapper is clearer.
 
 ## Mosaic semantic models
-- "Build model from DB/schema/tables": `$build-mosaic-model`.
+- "Build model from DB/schema/tables": the `build-mosaic-model` skill.
 - "Set live/in-memory/hybrid": `set-serve-mode` or `PATCH /api/model/dataModels/{id}`.
 - "Publish/refresh/delete model": `publish`, `refresh`, `delete-model`.
 - "Add tables/attributes/metrics/relationships": Modeling Service under `/api/model/dataModels/{id}/...`; use changesets.
@@ -44,7 +44,7 @@ Use this as a routing table. Confirm exact paths with `openapi-search` when impl
 
 ## Published data access
 - "What attributes/metrics are in this model": Mosaic MCP `get_semantics`, or `/api/cubes/{id}`.
-- "Ask a data question": Mosaic MCP `query` or Trino federation (`catalog=sql`, schema `"shared studio"`).
+- "Ask a data question": Mosaic MCP `query` or Trino federation (`catalog=sql`, schema `"{your project name lowercased}"`).
 - "Get report/cube/dashboard/document data": read `reference_strategy_runtime_analytics.md`; create instance, answer prompts/apply runtime filters when needed, then fetch result/export.
 - "Prompted report/dashboard/document": read prompts first, answer on the runtime instance; do not modify `/api/model/prompts` unless the user asks to change prompt definition.
 - "Runtime filter/view filter/metric limit/requested objects": instance request body or dashboard filter endpoint; do not create project filter objects unless explicitly requested.

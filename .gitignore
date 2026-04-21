@@ -14,4 +14,5 @@ __pycache__/
 # Local secrets and transient logs
 .env
 .env.*
+!.env.example
 *.log

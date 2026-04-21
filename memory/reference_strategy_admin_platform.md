@@ -2,7 +2,7 @@
 name: Strategy administration platform workflows
 description: Clarify datasource administration, distribution/subscriptions, migrations/packages, monitors/caches, search/browse, settings, and project administration.
 type: reference
-originSessionId: local-codex-2026-04-21
+originSessionId: codex-session
 ---
 Use this when the user asks for platform administration beyond semantic modeling: datasources, distribution services, migrations/packages, monitors, caches, jobs, project load/unload, settings, search/browse, or object ownership.
 

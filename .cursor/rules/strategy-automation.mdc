@@ -1,0 +1,13 @@
+---
+description: Strategy (formerly MicroStrategy) automation repo — rules always apply.
+globs:
+alwaysApply: true
+---
+This workspace is the **strategy-automation** repo. Read [AGENTS.md](../../AGENTS.md) for the full agent brief. Highlights:
+
+- Surfaces covered: Mosaic data models, classic / legacy semantic layer, runtime analytics, cubes/datasets, admin platform, AI agents, data validation.
+- Entry skills: `skill/SKILL.md` (build-mosaic-model), `strategy-automation/SKILL.md` (NLQ router), `strategy-validation/SKILL.md` (data validation).
+- Durable knowledge indexed at `memory/MEMORY.md` — load files on demand.
+- Credentials + tenant values come from env vars (`MSTR_BASE`, `MSTR_USER`, `MSTR_PASSWORD`, `MSTR_PROJECT_ID`/`MSTR_PROJECT_NAME`, `MSTR_DEST_FOLDER_ID`). Never hardcode.
+- Consumer-grade naming + paired-query validation are part of the ship bar — see `memory/feedback_consumer_grade_naming.md` and `memory/reference_strategy_data_validation.md`.
+- MCP tools (`get_projects`, `get_mosaic_models`, `get_semantics`, `query`) configured separately through your Cursor MCP settings. This repo references them by name only.

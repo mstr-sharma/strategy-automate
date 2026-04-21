@@ -2,7 +2,7 @@
 name: Strategy intake patterns
 description: Convert user-supplied ERDs, data dictionaries, user/email lists, and legacy object update requests into safe Strategy automation workflows.
 type: reference
-originSessionId: local-codex-2026-04-21
+originSessionId: codex-session
 ---
 Goal: the user should be able to drop artifacts into the workspace and ask for work in natural language. The agent turns those artifacts into a deterministic plan, resolves IDs, performs read-first preflight, writes only after targets are clear, and verifies afterward.
 

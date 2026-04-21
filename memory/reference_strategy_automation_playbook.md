@@ -2,7 +2,7 @@
 name: Strategy automation playbook
 description: NLQ-to-action operating model for making Claude/Codex an expert Strategy automation agent across REST, Mosaic, MCP, Trino, and mstrio-py.
 type: reference
-originSessionId: local-codex-2026-04-21
+originSessionId: codex-session
 ---
 Goal: a user should be able to ask in natural language for nearly any Strategy (formerly MicroStrategy) task, and the agent should route it to the right automation surface without guessing.
 
@@ -32,7 +32,7 @@ Goal: a user should be able to ask in natural language for nearly any Strategy (
 
 ## Core command patterns
 ```bash
-cd "/Users/<operator-user>/Desktop/Mosaic Build"
+cd "$REPO"
 python3 skill/scripts/build_mosaic.py openapi-summary --limit 80
 python3 skill/scripts/build_mosaic.py openapi-search "securityFilters" --context 2
 python3 skill/scripts/build_mosaic.py api-call --method GET --path /api/projects
