@@ -5,6 +5,8 @@ description: Build a Strategy Mosaic (MicroStrategy) semantic model from scratch
 
 # Build a Strategy Mosaic model from scratch
 
+This skill is for **Mosaic data-model** creation and modification. If the user asks for a classic/project semantic-layer object (legacy attributes, project metrics/facts/filters, project security filters assigned to users/groups, subscriptions, users, groups, roles, VLDB, object administration), runtime analytics (reports, dashboards, documents, prompt answers, exports), AI/Agent/Bot work, or non-Mosaic cube/dataset work (Intelligent Cube, OLAP cube, Super Cube, MTDI, Push Data), route through `/Users/<operator-user>/Desktop/Mosaic Build/strategy-automation/SKILL.md` and `memory/reference_strategy_surface_matrix.md` first. For classic-to-Mosaic mining, read `memory/reference_strategy_tutorial_semantic_field_study.md` before translating attributes/facts/metrics/filters/prompts/hierarchies into model candidates.
+
 The user provides:
 - **DB instance name** (the MicroStrategy Database Instance / datasource — looked up by name, resolved to `dbInstanceId`)
 - **Schema** (aka namespace — the warehouse schema containing the tables)
@@ -31,7 +33,7 @@ The Swagger UI at `/api-docs/` is a JavaScript app; the machine-readable spec is
 Always use the helper script `scripts/build_mosaic.py` from this skill folder. Do not re-implement the REST calls inline.
 
 1. **Read memory first.** Confirm the env in memory (base URL, project ID, destination folder, credentials location) still matches what the user wants. If the user names a different project or folder, override via flags. Credentials must come from `MSTR_PASSWORD` or `--password`; do not write secrets into memory or this skill.
-2. **Auth (handled by script).** Login → grab `X-MSTR-AuthToken`; then `POST /api/auth/identityToken` → grab `X-MSTR-IdentityToken` (required for Modeling Service changesets).
+2. **Auth (handled by script).** Login → grab `X-MSTR-AuthToken`; then `POST /api/auth/identityToken` → grab `X-MSTR-IdentityToken` only for Mosaic data-model Modeling Service writes that require it. Classic/project semantic-layer workflows may fail if identity token is added; route those through `$strategy-automation`.
 3. **Resolve DB instance.** `GET /api/datasources` (or `/api/dbobjects/databaseInstances` on older instances) — filter by name. Fail loudly if ambiguous.
 4. **Discover warehouse tables.** Use the helper's `list-namespaces`, `list-tables`, and `describe-table`. On current Strategy Library servers this is `GET /api/datasources/{id}/catalog/namespaces/{namespaceId}/tables` and `GET /api/datasources/{id}/catalog/tables/{tableId}` where namespace/table IDs are base64 JSON. The script includes `discover` for live path variants and `openapi-summary` for the raw spec.
 5. **Build in one changeset:**
@@ -136,7 +138,7 @@ MicroStrategy's Modeling Service accepts whatever `GET` returns. So for anything
 
 ## Failure modes to watch
 
-- **Missing `X-MSTR-IdentityToken`** → changeset commits return 400. Always fetch it post-login.
+- **Missing `X-MSTR-IdentityToken` for Mosaic data-model writes** → changeset commits can return 400. Fetch it only for the Mosaic data-model surface; classic/project workflows can require auth token + project ID without identity token.
 - **Changeset commit failures** are often silent in the logs but loud in stderr text — the helper script prints full response bodies on non-2xx.
 - **Ambiguous DB instance name** — there can be multiple instances with similar names across projects. Script fails closed unless user passes `--db-instance-id` directly.
 - **`dataServeMode:"connect_live"`** is what matches the ref TPCH model; `"in_memory"` creates an importable/cached variant (the `-in_memory` suffix seen in `benchmark_extended_mosaic_trino.py`).
@@ -276,7 +278,7 @@ Mosaic (MicroStrategy) is a full metadata-backed semantic + analytics platform. 
 
 ### Authentication & session
 - `POST /api/auth/login` — `{username, password, loginMode}`. Modes: 1 standard, 8 LDAP, 16 SAML, 4096 Identity Token passthrough. Returns `X-MSTR-AuthToken`.
-- `POST /api/auth/identityToken` — returns `X-MSTR-IdentityToken` (required to commit changesets).
+- `POST /api/auth/identityToken` — returns `X-MSTR-IdentityToken` (required for some Mosaic data-model changesets; avoid adding it to classic/project workflows unless verified).
 - `POST /api/auth/delegate` — SSO delegation.
 - `DELETE /api/auth/login` — logout.
 - `GET /api/sessions` — session info (privileges, locale, time zone).
@@ -380,7 +382,8 @@ Endpoint family: `/api/model/dataModels/{id}/factMetrics` (and sometimes `/metri
 - Incremental refresh filter: `PATCH /api/cubes/{id}` with `incrementalRefresh.filterId`.
 
 ### Security & governance
-- `POST /api/model/dataModels/{id}/securityFilters` — row-level security. Assign members with `PATCH /api/dataModels/{id}/securityFilters/{sfId}/members` using `{operationList:[{op:"addElements",path:"/members",value:[ids...]}]}`; the helper has an older POST fallback.
+- Mosaic data-model security filters: `POST /api/model/dataModels/{id}/securityFilters` — row-level security owned by a Mosaic data model. Assign members with `PATCH /api/dataModels/{id}/securityFilters/{sfId}/members` using `{operationList:[{op:"addElements",path:"/members",value:[ids...]}]}`; the helper has an older POST fallback.
+- Classic/project security filters: do **not** use the Mosaic data-model endpoint. Use top-level `/api/model/securityFilters` to create/read the project security-filter object and `/api/securityFilters/{id}/members` to assign users/groups. See `memory/reference_strategy_legacy_semantic_admin.md`.
 - `GET/POST /api/users`, `/api/usergroups`, `/api/users/{id}/privileges`, `/api/users/{id}/securityRoles`.
 - Data-model object ACL: `PATCH /api/model/dataModels/{modelId}/objects/{objectId}/acl?subType=<objectSubType>` with `{acl:{trusteeId:{granted,denied,subType:"user"|"user_group"}}}` inside a changeset.
 - Data-model object translations: `PATCH /api/model/dataModels/{modelId}/objects/{objectId}/translations?subType=<objectSubType>`.

@@ -14,10 +14,10 @@ originSessionId: cef55f31-c57d-4220-b4dc-eddfff684771
 **Why:** `list-datasources` returned `[]` despite a full server response.
 **How to apply:** any normalization of `dict_or_list_body.get(...) or body if isinstance...` needs explicit parens.
 
-## `X-MSTR-IdentityToken` is mandatory for Modeling-Service changesets
+## `X-MSTR-IdentityToken` is mandatory for Mosaic data-model changesets
 `POST /api/auth/identityToken` returns the token in a response header. Without it, changeset commits 400 silently.
 **Why:** The TPCH build script failed commits until the `identityToken` call was added — see `build_tpch_mosaic_model.py:105–108`.
-**How to apply:** always fetch identity token immediately after login; `MSTR.login()` in the helper does this.
+**How to apply:** fetch identity token immediately after login for Mosaic data-model writes; `MSTR.login()` in the Mosaic helper does this. Do not automatically add identity token to classic/project Modeling Service reads/writes such as `/api/model/attributes`, `/api/model/metrics`, `/api/model/facts`, or `/api/model/securityFilters`; on `<env-id>` it caused false project errors.
 
 ## Changesets don't magically cross-reference
 Objects referenced inside a changeset must already exist (committed). Relationships + security filters + translations need a *separate* changeset AFTER the model + tables + attrs + metrics commit.
