@@ -1,0 +1,14 @@
+- [User profile](user_profile.md) — <operator-user> is building/evaluating Strategy Mosaic vs alternatives; wants deep Mosaic fluency.
+- [Mosaic Build project](project_mosaic_build.md) — this dir holds the "fully automated" mosaic model builder; sibling `~/Desktop/token savings/` is the benchmark harness.
+- [Strategy env reference](reference_strategy_env.md) — studio.strategy.com base URL, project/folder IDs, credentials location.
+- [Strategy OpenAPI reference](reference_strategy_openapi.md) — raw `/api/openapi.yaml` discovery, key Modeling/Data Model/ACL/security endpoints, and how to probe them.
+- [Strategy automation playbook](reference_strategy_automation_playbook.md) — NLQ-to-action loop, safety model, tool routing, verification expectations.
+- [Strategy task catalog](reference_strategy_task_catalog.md) — common Strategy requests mapped to REST/MCP/mstrio/helper surfaces.
+- [Strategy intake patterns](reference_strategy_intake_patterns.md) — how to turn drop-in ERDs, data dictionaries, user/email lists, and legacy-object change requests into safe Strategy actions.
+- [mstrio-py reference](reference_mstrio_py.md) — when to use the official Python wrapper vs direct REST.
+- [Mosaic REST API map](reference_mosaic_rest_api.md) — verified endpoint paths (auth, datasources, catalog, data models, changesets, security, translations).
+- [Mosaic modeling concepts](reference_mosaic_modeling_concepts.md) — attributes, metrics (compound/conditional/level/transformation), relationships, filters, transformations — payload shapes.
+- [MCP tools available](reference_mcp_tools.md) — df3a3274-* server exposes get_projects/get_mosaic_models/get_semantics/query; no Postman MCP connected.
+- [Mosaic build skill](reference_build_mosaic_skill.md) — location + subcommand list for the helper script.
+- [Mosaic build config schema](reference_mosaic_config_schema.md) — declarative config fields and post-build derived metric workflow.
+- [Mosaic gotchas](feedback_mosaic_gotchas.md) — precedence/encoding bugs and the clone-and-remap pattern for unknown payloads.

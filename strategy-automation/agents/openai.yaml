@@ -1,0 +1,7 @@
+interface:
+  display_name: "Strategy Automation"
+  short_description: "Automate Strategy REST, Mosaic, governance, and admin tasks"
+  default_prompt: "Use $strategy-automation to inspect this Strategy environment and complete the requested automation safely."
+
+policy:
+  allow_implicit_invocation: true

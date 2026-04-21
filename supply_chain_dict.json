@@ -1,0 +1,64 @@
+{
+  "tables": {
+    "SD_TECH_PENGUIN_20260413_2145_OPPORTUNITIES": {
+      "description": "Sales-pipeline opportunities; one row per identified deal with the expected revenue, closing probability, and the product being proposed."
+    },
+    "SD_TECH_PENGUIN_20260413_2145_PRODUCTS": {
+      "description": "Product master (SKU catalog); one row per distinct finished good sold or procured, with list price and category."
+    },
+    "SD_TECH_PENGUIN_20260413_2145_PURCHASE_ORDERS": {
+      "description": "Inbound purchase orders issued to suppliers; one row per PO line with ordered quantity, total cost, and fulfillment status."
+    },
+    "SD_TECH_PENGUIN_20260413_2145_SUPPLIERS": {
+      "description": "Supplier master; one row per approved vendor with region, lead time, and quality rating."
+    }
+  },
+  "attributes": {
+    "SD_TECH_PENGUIN_20260413_2145_OPPORTUNITIES.OPPORTUNITY_ID": {"name": "Opportunity ID", "description": "Unique identifier for a sales opportunity; primary key of the opportunities table."},
+    "SD_TECH_PENGUIN_20260413_2145_OPPORTUNITIES.CUSTOMER_NAME":  {"name": "Customer Name",  "description": "Account / company name the opportunity is being pursued with."},
+    "SD_TECH_PENGUIN_20260413_2145_OPPORTUNITIES.STAGE_NAME":     {"name": "Opportunity Stage", "description": "Sales-stage label in the pipeline (e.g., Prospecting, Qualification, Proposal, Negotiation, Closed Won/Lost)."},
+    "SD_TECH_PENGUIN_20260413_2145_OPPORTUNITIES.CLOSE_DATE":     {"name": "Expected Close Date", "description": "Forecasted date on which the opportunity is projected to close."},
+    "SD_TECH_PENGUIN_20260413_2145_OPPORTUNITIES.PRODUCT_ID":     {"name": "Product ID (Opportunities)", "description": "Foreign key to the Products table identifying the product tied to this opportunity."},
+    "SD_TECH_PENGUIN_20260413_2145_OPPORTUNITIES.SOURCE_SYSTEM":  {"name": "Source System (Opportunities)", "description": "Upstream system of record (e.g., Salesforce, Dynamics) from which this opportunity record was ingested."},
+
+    "SD_TECH_PENGUIN_20260413_2145_PRODUCTS.PRODUCT_ID":       {"name": "Product ID", "description": "Unique SKU / product identifier; primary key of the product master."},
+    "SD_TECH_PENGUIN_20260413_2145_PRODUCTS.PRODUCT_NAME":     {"name": "Product Name", "description": "Commercial name of the product as shown on invoices and catalogs."},
+    "SD_TECH_PENGUIN_20260413_2145_PRODUCTS.PRODUCT_CATEGORY": {"name": "Product Category", "description": "Merchandising category the SKU belongs to (e.g., Electronics, Apparel, Hardware)."},
+    "SD_TECH_PENGUIN_20260413_2145_PRODUCTS.SOURCE_SYSTEM":    {"name": "Source System (Products)", "description": "Upstream system of record for the product master (e.g., ERP PIM, merchandising)."},
+
+    "SD_TECH_PENGUIN_20260413_2145_PURCHASE_ORDERS.PO_NUMBER":    {"name": "PO Number", "description": "Human-readable purchase order number used on supplier communications and receipts."},
+    "SD_TECH_PENGUIN_20260413_2145_PURCHASE_ORDERS.ORDER_DATE":   {"name": "Order Date", "description": "Date the purchase order was issued to the supplier."},
+    "SD_TECH_PENGUIN_20260413_2145_PURCHASE_ORDERS.STATUS":       {"name": "PO Status", "description": "Fulfillment status of the PO (e.g., Open, Approved, Shipped, Received, Cancelled)."},
+    "SD_TECH_PENGUIN_20260413_2145_PURCHASE_ORDERS.PRODUCT_ID":   {"name": "Product ID (Purchase Orders)", "description": "Foreign key to the Products table identifying the SKU being purchased."},
+    "SD_TECH_PENGUIN_20260413_2145_PURCHASE_ORDERS.SUPPLIER_ID":  {"name": "Supplier ID (Purchase Orders)", "description": "Foreign key to the Suppliers table identifying the vendor fulfilling this PO."},
+    "SD_TECH_PENGUIN_20260413_2145_PURCHASE_ORDERS.SOURCE_SYSTEM":{"name": "Source System (Purchase Orders)", "description": "Upstream procurement system of record (e.g., Ariba, Coupa, SAP MM)."},
+
+    "SD_TECH_PENGUIN_20260413_2145_SUPPLIERS.SUPPLIER_ID":   {"name": "Supplier ID", "description": "Unique vendor identifier; primary key of the supplier master."},
+    "SD_TECH_PENGUIN_20260413_2145_SUPPLIERS.SUPPLIER_NAME": {"name": "Supplier Name", "description": "Legal / commercial name of the supplier organization."},
+    "SD_TECH_PENGUIN_20260413_2145_SUPPLIERS.REGION":        {"name": "Supplier Region", "description": "Geographic region the supplier primarily serves or ships from (e.g., NA, EMEA, APAC, LATAM)."},
+    "SD_TECH_PENGUIN_20260413_2145_SUPPLIERS.SOURCE_SYSTEM": {"name": "Source System (Suppliers)", "description": "Upstream system of record for the supplier master."}
+  },
+  "metrics": {
+    "SD_TECH_PENGUIN_20260413_2145_OPPORTUNITIES.EXPECTED_REVENUE":  {"name": "Total Expected Revenue", "description": "Sum of opportunity expected revenue across the pipeline — gross (not probability-weighted).", "function": "sum"},
+    "SD_TECH_PENGUIN_20260413_2145_OPPORTUNITIES.PROBABILITY_PERCENT": {"name": "Avg Win Probability %", "description": "Average sales-team-entered probability (0–100) that opportunities close won.", "function": "avg"},
+    "SD_TECH_PENGUIN_20260413_2145_PRODUCTS.LIST_PRICE":              {"name": "Avg List Price", "description": "Average of the product list price across the catalog.", "function": "avg"},
+    "SD_TECH_PENGUIN_20260413_2145_PURCHASE_ORDERS.QUANTITY_ORDERED": {"name": "Total Quantity Ordered", "description": "Total units ordered across all PO lines.", "function": "sum"},
+    "SD_TECH_PENGUIN_20260413_2145_PURCHASE_ORDERS.TOTAL_COST":       {"name": "Total PO Cost", "description": "Total procurement spend across all PO lines, before any rebate adjustments.", "function": "sum"},
+    "SD_TECH_PENGUIN_20260413_2145_SUPPLIERS.LEAD_TIME_DAYS":         {"name": "Avg Supplier Lead Time (Days)", "description": "Average supplier-committed lead time in days from PO issue to delivery.", "function": "avg"},
+    "SD_TECH_PENGUIN_20260413_2145_SUPPLIERS.QUALITY_RATING":         {"name": "Avg Supplier Quality Rating", "description": "Average internal supplier-quality rating (typically 1–5) based on prior shipment QA.", "function": "avg"}
+  },
+  "relationships": [
+    {"parent": "SD_TECH_PENGUIN_20260413_2145_PRODUCTS.PRODUCT_ID",
+     "child":  "SD_TECH_PENGUIN_20260413_2145_OPPORTUNITIES.PRODUCT_ID",
+     "relationship_table": "SD_TECH_PENGUIN_20260413_2145_OPPORTUNITIES",
+     "type": "one_to_many"},
+    {"parent": "SD_TECH_PENGUIN_20260413_2145_PRODUCTS.PRODUCT_ID",
+     "child":  "SD_TECH_PENGUIN_20260413_2145_PURCHASE_ORDERS.PRODUCT_ID",
+     "relationship_table": "SD_TECH_PENGUIN_20260413_2145_PURCHASE_ORDERS",
+     "type": "one_to_many"},
+    {"parent": "SD_TECH_PENGUIN_20260413_2145_SUPPLIERS.SUPPLIER_ID",
+     "child":  "SD_TECH_PENGUIN_20260413_2145_PURCHASE_ORDERS.SUPPLIER_ID",
+     "relationship_table": "SD_TECH_PENGUIN_20260413_2145_PURCHASE_ORDERS",
+     "type": "one_to_many"}
+  ]
+}
