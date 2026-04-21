@@ -11,12 +11,25 @@ Use this skill when the user asks to automate, inspect, build, modify, secure, p
 
 1. Read `/Users/<operator-user>/Desktop/Mosaic Build/memory/MEMORY.md`.
 2. Identify the task family in `/Users/<operator-user>/Desktop/Mosaic Build/memory/reference_strategy_automation_playbook.md`.
-3. Use live `{Library}/api/openapi.yaml` through the helper when endpoint details matter. A local `openapi.yaml` may be generated for temporary caching, but it is not part of the lean repo.
-4. Use credentials from environment (`MSTR_PASSWORD`) or user-provided secure runtime values. Never write secrets to memory, skills, config, or logs.
+3. Decide the product surface before choosing endpoints: classic project semantic layer/admin, Mosaic data model, runtime analytics, Push Data dataset, cube family, platform admin, or AI/agents. Read `reference_strategy_surface_matrix.md` for ambiguous attributes, metrics, prompts, filters, ACLs/object security, security filters, cubes, datasets, reports, dashboards, documents, users/groups, agents, or project-level requests.
+4. Use live `{Library}/api/openapi.yaml` through the helper when endpoint details matter. Add `?visibility=all` when the Swagger UI shows more detail than the default spec. A local `openapi.yaml` may be generated for temporary caching, but it is not part of the lean repo.
+5. Use credentials from environment (`MSTR_PASSWORD`) or user-provided secure runtime values. Never write secrets to memory, skills, config, or logs.
 
 ## Tool Router
 
 - **Build or modify a Mosaic model from warehouse tables:** use `$build-mosaic-model` and its helper script.
+- **Classic-to-modern modeling judgment:** read `reference_strategy_design_transition.md` before translating legacy project schema concepts into Mosaic/USL/AI-ready models.
+- **Classic/project semantic-layer or admin workflows:** read `reference_strategy_legacy_semantic_admin.md`; use top-level `/api/model/...` changeset endpoints for legacy objects and `/api/users`, `/api/securityFilters`, `/api/usergroups`, `/api/objects` for admin/member operations.
+- **Deep classic semantic inspection:** read `reference_strategy_tutorial_semantic_field_study.md`; use `skill/scripts/strategy_semantic_inventory.py` to inventory attributes, facts, metrics, filters, prompts, system hierarchy, user hierarchies, fact extensions, metric dimensionality/conditionality, and prompt/filter internals before cloning or modernizing.
+- **Legacy-to-Mosaic discovery:** read `reference_strategy_legacy_to_mosaic_mining.md`; use `skill/scripts/strategy_semantic_mine.py` to mine reports/documents into candidate tables or reverse from tables into attributes/facts/metrics/reports before building a Mosaic model.
+- **Security filters:** if no Mosaic data-model ID is in the request, treat it as a classic project security filter: create definition with `/api/model/securityFilters`, assign users/groups with `/api/securityFilters/{id}/members`. Use `/api/model/dataModels/{id}/securityFilters` only for Mosaic data-model security filters.
+- **Attributes and metrics:** route by container. Classic/project objects use `/api/model/attributes|metrics`; Mosaic-contained objects use `/api/model/dataModels/{id}/attributes|metrics|factMetrics`; Push Data dataset attributes/metrics live in `/api/datasets` definitions.
+- **ACL/object security:** classic object ACL uses `GET/PUT /api/objects/{id}?type=...`; Mosaic-contained object ACL uses `/api/model/dataModels/{id}/objects/{objectId}/acl`; security roles/privileges are separate from ACL and security filters.
+- **Cubes/datasets:** read `reference_strategy_cubes_and_datasets.md`; Intelligent/OLAP cubes, Super Cube/MTDI Push Data datasets, DDA/MDX runtime cubes, and Mosaic models use different endpoint families.
+- **Reports/dashboards/documents runtime:** read `reference_strategy_runtime_analytics.md`; create instances, answer prompts, apply runtime filters, then fetch/export results.
+- **Platform admin:** read `reference_strategy_admin_platform.md`; datasource admin, distribution/subscriptions, migrations/packages, monitors/caches, project load/unload, settings, search/browse, and object ownership have separate endpoint families.
+- **AI/Agent/Bot:** read `reference_strategy_ai_agents.md`; prefer Auto Agent `/api/questions` and `/api/v2/bots` paths; treat `/api/bots` as legacy/deprecated unless required.
+- **Validation/testing:** read `reference_strategy_validation_workflows.md`; do not run live write tests until the user signs off on the numbered workflows and cleanup behavior.
 - **Drop-in ERDs, dictionaries, rosters, or legacy update briefs:** read `reference_strategy_intake_patterns.md`, normalize files to supported JSON/YAML/CSV/DBML/Mermaid/SQL formats, then resolve IDs before writing.
 - **Any REST endpoint not wrapped yet:** use:
   ```bash
@@ -33,6 +46,7 @@ Use this skill when the user asks to automate, inspect, build, modify, secure, p
 ## Operating Rules
 
 - Prefer tenant-verified gotchas over public docs when they conflict.
+- For classic/project workflows, do not automatically add `X-MSTR-IdentityToken`; `<env-id>` showed it can break top-level Modeling Service reads with a false project error. Use identity token only when the selected surface/reference says it is required.
 - For destructive operations, enumerate the target object IDs and ask once if the user did not explicitly request deletion/removal.
 - Use changesets for Modeling Service writes, commit only after all referenced objects exist, and discard failed changesets.
 - For schema/model writes, print or return the object URL, object IDs, and any skipped/failed operations.
@@ -45,6 +59,16 @@ Use this skill when the user asks to automate, inspect, build, modify, secure, p
 - Broad task routing: `reference_strategy_automation_playbook.md`
 - Task-to-endpoint catalog: `reference_strategy_task_catalog.md`
 - Drop-in ERD/dictionary/user-list/legacy-update intake: `reference_strategy_intake_patterns.md`
+- Surface routing matrix: `reference_strategy_surface_matrix.md`
+- Legacy/project semantic-layer and admin workflows: `reference_strategy_legacy_semantic_admin.md`
+- Legacy-to-Mosaic mining: `reference_strategy_legacy_to_mosaic_mining.md`
+- Tutorial semantic field study: `reference_strategy_tutorial_semantic_field_study.md`
+- Classic-to-modern design transition: `reference_strategy_design_transition.md`
+- Cube and dataset families: `reference_strategy_cubes_and_datasets.md`
+- Runtime analytics/prompts/filters/exports: `reference_strategy_runtime_analytics.md`
+- Platform administration: `reference_strategy_admin_platform.md`
+- AI agents/bots/chats: `reference_strategy_ai_agents.md`
+- Live validation suite: `reference_strategy_validation_workflows.md`
 - Mosaic modeling payloads: `reference_mosaic_modeling_concepts.md`
 - Mosaic build CLI: `reference_build_mosaic_skill.md`
 - mstrio-py role: `reference_mstrio_py.md`
