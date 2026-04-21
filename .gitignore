@@ -1,0 +1,11 @@
+.DS_Store
+*.pyc
+__pycache__/
+
+# Local assistant/runtime state
+.claude/
+
+# Local secrets and transient logs
+.env
+.env.*
+*.log
