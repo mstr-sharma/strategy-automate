@@ -1,24 +1,27 @@
-- [User profile](user_profile.md) — <operator-user> is building/evaluating Strategy Mosaic vs alternatives; wants deep Mosaic fluency.
-- [Mosaic Build project](project_mosaic_build.md) — this dir holds the "fully automated" mosaic model builder; sibling `~/Desktop/token savings/` is the benchmark harness.
-- [Strategy env reference](reference_strategy_env.md) — studio.strategy.com base URL, project/folder IDs, credentials location.
-- [Strategy OpenAPI reference](reference_strategy_openapi.md) — raw `/api/openapi.yaml` discovery, key Modeling/Data Model/ACL/security endpoints, and how to probe them.
+- [User profile](user_profile.md) — Strategy Sales Engineer persona; values terse, working-code outputs across Mosaic + classic semantic layer.
+- [Repo layout + purpose](project_mosaic_build.md) — what this repo does, where each skill / script / memory lives, how to extend it.
+- [Environment configuration](reference_strategy_env.md) — env-var convention (`MSTR_BASE`, `MSTR_USER`, `MSTR_PASSWORD`, `MSTR_PROJECT_ID`/`MSTR_PROJECT_NAME`, `MSTR_DEST_FOLDER_ID`); no hardcoded tenants in the repo.
+- [Strategy OpenAPI reference](reference_strategy_openapi.md) — raw `/api/openapi.yaml` discovery, key Modeling / Data Model / ACL / security endpoints, how to probe them.
 - [Strategy automation playbook](reference_strategy_automation_playbook.md) — NLQ-to-action loop, safety model, tool routing, verification expectations.
-- [Strategy task catalog](reference_strategy_task_catalog.md) — common Strategy requests mapped to REST/MCP/mstrio/helper surfaces.
-- [Strategy intake patterns](reference_strategy_intake_patterns.md) — how to turn drop-in ERDs, data dictionaries, user/email lists, and legacy-object change requests into safe Strategy actions.
-- [Strategy surface matrix](reference_strategy_surface_matrix.md) — route ambiguous nouns like attributes, metrics, security filters, ACLs, cubes, datasets, Mosaic models, and AI/agent requests to the right surface.
-- [Strategy legacy semantic/admin workflows](reference_strategy_legacy_semantic_admin.md) — classic project semantic-layer and admin workflows; distinguishes legacy security filters from Mosaic data-model security filters and AI/agent surfaces.
-- [Strategy legacy-to-Mosaic mining](reference_strategy_legacy_to_mosaic_mining.md) — discover candidate Mosaic tables/objects from legacy reports/documents or reverse from table dependencies.
-- [Strategy Tutorial semantic field study](reference_strategy_tutorial_semantic_field_study.md) — live REST inventory of Tutorial attributes, facts, metrics, filters, prompts, hierarchies, fact extensions, metric dimensionality/conditionality, and Mosaic translation rules.
-- [Strategy design transition knowledge](reference_strategy_design_transition.md) — conceptual bridge from classic project schema design to modern Mosaic/USL/AI/MCP/governed model automation.
+- [Strategy task catalog](reference_strategy_task_catalog.md) — common Strategy requests mapped to REST / MCP / mstrio / helper surfaces.
+- [Strategy intake patterns](reference_strategy_intake_patterns.md) — turn drop-in ERDs, data dictionaries, user/email rosters, and legacy-object change requests into safe Strategy actions.
+- [Strategy surface matrix](reference_strategy_surface_matrix.md) — route ambiguous nouns (attributes, metrics, security filters, ACLs, cubes, datasets, Mosaic models, AI agents) to the right surface.
+- [Strategy legacy semantic / admin workflows](reference_strategy_legacy_semantic_admin.md) — classic project semantic layer + admin; distinguishes legacy SFs from Mosaic data-model SFs and AI/agent surfaces.
+- [Strategy legacy-to-Mosaic mining](reference_strategy_legacy_to_mosaic_mining.md) — discover candidate Mosaic tables/objects from legacy reports/documents, or reverse from table dependencies.
+- [Strategy Tutorial semantic field study](reference_strategy_tutorial_semantic_field_study.md) — live REST inventory of Tutorial attributes, facts, metrics, filters, prompts, hierarchies, fact extensions, plus Mosaic translation rules.
+- [Strategy Mosaic field study + legacy bridge](reference_strategy_mosaic_field_study.md) — live REST inventory of Mosaic data models and the object-by-object classic→Mosaic translation matrix.
+- [Strategy design transition knowledge](reference_strategy_design_transition.md) — conceptual bridge from classic project schema design to modern Mosaic / USL / AI / MCP / governed model automation.
 - [Strategy cube and dataset families](reference_strategy_cubes_and_datasets.md) — Intelligent/OLAP cubes, Super Cube/MTDI Push Data datasets, runtime Cube API, and Mosaic publish/materialization nuances.
-- [Strategy runtime analytics](reference_strategy_runtime_analytics.md) — report/cube/dashboard/document execution, prompt answers, runtime filters, exports, and JSON Data API boundaries.
-- [Strategy admin platform workflows](reference_strategy_admin_platform.md) — datasource admin, distribution/subscriptions, migrations/packages, monitors/caches, search/browse, settings, and project administration.
-- [Strategy AI agents](reference_strategy_ai_agents.md) — Auto Agent vs deprecated Bot APIs, question/chat flows, agent config/training, nuggets/learnings, and AI indexing.
-- [Strategy validation workflows](reference_strategy_validation_workflows.md) — tenant-verified non-Mosaic/non-AI validation suite with 10 workflows, runner command, cleanup rules, and live API gotchas.
+- [Strategy runtime analytics](reference_strategy_runtime_analytics.md) — report/cube/dashboard/document execution, prompt answers, runtime filters, exports, JSON Data API boundaries.
+- [Strategy admin platform workflows](reference_strategy_admin_platform.md) — datasource admin, distribution/subscriptions, migrations/packages, monitors/caches, search/browse, settings, project administration.
+- [Strategy AI agents](reference_strategy_ai_agents.md) — Auto Agent vs deprecated Bot APIs, question/chat flows, agent config/training, nuggets/learnings, AI indexing.
+- [Strategy validation workflows (live tenant suite)](reference_strategy_validation_workflows.md) — non-Mosaic / non-AI validation suite with 10 workflows, runner command, cleanup rules, live-API gotchas.
+- [Strategy data validation (paired-query)](reference_strategy_data_validation.md) — pluggable reference sources (Mosaic, legacy report, flat file, warehouse SQL, REST fixture), 5-query minimum suite, pointer to `strategy-validation` skill.
 - [mstrio-py reference](reference_mstrio_py.md) — when to use the official Python wrapper vs direct REST.
 - [Mosaic REST API map](reference_mosaic_rest_api.md) — verified endpoint paths (auth, datasources, catalog, data models, changesets, security, translations).
 - [Mosaic modeling concepts](reference_mosaic_modeling_concepts.md) — attributes, metrics (compound/conditional/level/transformation), relationships, filters, transformations — payload shapes.
-- [MCP tools available](reference_mcp_tools.md) — df3a3274-* server exposes get_projects/get_mosaic_models/get_semantics/query; no Postman MCP connected.
-- [Mosaic build skill](reference_build_mosaic_skill.md) — location + subcommand list for the helper script.
-- [Mosaic build config schema](reference_mosaic_config_schema.md) — declarative config fields and post-build derived metric workflow.
+- [MCP tools available](reference_mcp_tools.md) — the Mosaic MCP server exposes `get_projects`, `get_mosaic_models`, `get_semantics`, `query`; connected via Claude/Codex connector config.
+- [Mosaic build skill](reference_build_mosaic_skill.md) — location + subcommand list for the build helper script.
+- [Mosaic build config schema](reference_mosaic_config_schema.md) — declarative config fields and post-build derived-metric workflow.
 - [Mosaic gotchas](feedback_mosaic_gotchas.md) — precedence/encoding bugs and the clone-and-remap pattern for unknown payloads.
+- [Consumer-grade naming rules](feedback_consumer_grade_naming.md) — attribute/form/metric naming, descriptions, formatting, no-hardcoded-identities, verify-with-query before ship.

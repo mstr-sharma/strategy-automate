@@ -36,14 +36,17 @@ import argparse, csv, json, os, shutil, subprocess, sys, time, uuid
 from typing import Any
 import requests
 
-# ── Defaults (tenant-specific; override via env or flags) ─────────────────────
-DEFAULT_BASE       = os.environ.get("MSTR_BASE", "https://studio.strategy.com/MicroStrategyLibrary")
-DEFAULT_PROJECT_ID = os.environ.get("MSTR_PROJECT_ID", "1FC5A43B374C963CC773C285DF86E2F6")
-DEFAULT_USER       = os.environ.get("MSTR_USER", "<operator-user>")
-DEFAULT_PASSWORD   = os.environ.get("MSTR_PASSWORD", "")
-DEFAULT_LOGIN_MODE = int(os.environ.get("MSTR_LOGIN_MODE", "1"))
-DEFAULT_DEST_FOLDER = os.environ.get("MSTR_DEST_FOLDER", "DC377018BD4CACD81B7E4CAEB8DB62B4")
-FORM_ID            = "45C11FA478E745FEA08D781CEA190FE5"   # universal ID form
+# ── Configuration: all tenant values come from env vars or CLI flags ──────────
+# No hardcoded tenant defaults. Required: MSTR_BASE, MSTR_USER, MSTR_PASSWORD.
+# Optional: MSTR_PROJECT_ID (or resolve by name at runtime), MSTR_DEST_FOLDER_ID,
+# MSTR_LOGIN_MODE (default 1 = standard). See README.md + .env.example.
+DEFAULT_BASE        = os.environ.get("MSTR_BASE", "")
+DEFAULT_PROJECT_ID  = os.environ.get("MSTR_PROJECT_ID", "")
+DEFAULT_USER        = os.environ.get("MSTR_USER", "")
+DEFAULT_PASSWORD    = os.environ.get("MSTR_PASSWORD", "")
+DEFAULT_LOGIN_MODE  = int(os.environ.get("MSTR_LOGIN_MODE", "1"))
+DEFAULT_DEST_FOLDER = os.environ.get("MSTR_DEST_FOLDER_ID", os.environ.get("MSTR_DEST_FOLDER", ""))
+FORM_ID             = "45C11FA478E745FEA08D781CEA190FE5"   # Universal Strategy ID-form constant (all tenants)
 
 # MicroStrategy REST paths have drifted across versions. Try these in order.
 ENDPOINT_CANDIDATES = {

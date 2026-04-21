@@ -2,7 +2,7 @@
 name: Strategy legacy semantic layer and admin workflows
 description: Distinguish classic project semantic-layer/admin workflows from Mosaic data-model and AI/agent workflows.
 type: reference
-originSessionId: local-codex-2026-04-21
+originSessionId: codex-session
 ---
 Use this when a user asks for "legacy", "classic", "project-level", or existing MicroStrategy semantic-layer automation: attributes, facts, metrics, filters, security filters, users, groups, roles, subscriptions, ACLs, VLDB, object moves/copies, or legacy object edits.
 
@@ -61,7 +61,7 @@ Create/read/update the filter definition through top-level Modeling Service:
 - Create changeset: `POST /api/model/changesets?schemaEdit=false`
 - Create filter object: `POST /api/model/securityFilters` with `X-MSTR-MS-Changeset`
 - Read definition: `GET /api/model/securityFilters/{securityFilterId}` with `X-MSTR-ProjectID` and optional `showExpressionAs=tree|tokens`, `showFilterTokens=true`
-- Commit: `POST /api/model/changesets/{changesetId}/commit` with body `{}`. Tenant `<env-id>` rejected `{"userComments":...}` as an unrecognized field.
+- Commit: `POST /api/model/changesets/{changesetId}/commit` with body `{}`. Tenant `a verified Strategy Cloud tenant` rejected `{"userComments":...}` as an unrecognized field.
 
 List and assign members through the non-model security filter API:
 
@@ -117,11 +117,11 @@ Minimal body shape:
 }
 ```
 
-On `<env-id>`, the schema `Category` attribute was `8D679D3711D3E4981000E787EC6DE8A4`; generic element lookup returned `{"name":"Books","id":"h1;;Books"}`, and using that ID as `elementId` in the security-filter body committed successfully.
+On `a verified Strategy Cloud tenant`, the schema `Category` attribute was `8D679D3711D3E4981000E787EC6DE8A4`; generic element lookup returned `{"name":"Books","id":"h1;;Books"}`, and using that ID as `elementId` in the security-filter body committed successfully.
 
 If a tenant rejects hand-authored predicate trees, use mstrio-py or clone/remap a working security filter returned by `GET /api/model/securityFilters/{id}?showExpressionAs=tree`. mstrio-py accepts a string qualification and builds the expression body for `/api/model/securityFilters`.
 
-For classic/project workflows, do not automatically add `X-MSTR-IdentityToken`. On `<env-id>`, adding identity token after login caused classic Modeling Service metric reads to fail with a false "Wrong projectId" error. Use `X-MSTR-AuthToken` plus `X-MSTR-ProjectID` unless a specific tenant endpoint proves it needs identity token.
+For classic/project workflows, do not automatically add `X-MSTR-IdentityToken`. On `a verified Strategy Cloud tenant`, adding identity token after login caused classic Modeling Service metric reads to fail with a false "Wrong projectId" error. Use `X-MSTR-AuthToken` plus `X-MSTR-ProjectID` unless a specific tenant endpoint proves it needs identity token.
 
 ## User duplication and assignment
 

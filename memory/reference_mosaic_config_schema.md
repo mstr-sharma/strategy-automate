@@ -2,7 +2,7 @@
 name: Mosaic build config schema
 description: Declarative YAML/JSON shape accepted by build_mosaic.py build-from-config, plus post-build metric operations agents should run when needed.
 type: reference
-originSessionId: local-codex-2026-04-21
+originSessionId: codex-session
 ---
 `build-from-config --config spec.yaml` rehydrates this shape and calls the normal `build` flow.
 
@@ -21,7 +21,7 @@ erds: [/path/to/model.dbml, /path/to/joins.sql]
 
 Supported build keys:
 ```yaml
-destination_folder: DC377018BD4CACD81B7E4CAEB8DB62B4
+destination_folder: {MSTR_DEST_FOLDER_ID}
 attr_cols: [CUSTOMER_ID]
 metric_cols: [REVENUE, COST]
 skip_relationships: false
@@ -54,6 +54,6 @@ Derived metric workflow:
 - For formula metrics over existing metric IDs, run `create-compound-metric --model-id M --name N --formula 'METRIC_ID1 / METRIC_ID2'`.
 - For filtered metrics, create/reuse a filter or security filter first, then run `create-conditional-metric --model-id M --name N --source-metric MID --filter FID`.
 - For prior-period / time-shift metrics, run `create-transformation`, then `attach-transformation`.
-- On studio.strategy.com, if token-based compound metrics fail on commit, use the known fallback: a fact metric with an inline column formula using `character` operator tokens (`TOTAL_COST`, `/`, `QUANTITY_ORDERED`) and an aggregate function such as `avg`.
+- On {MSTR_BASE host}, if token-based compound metrics fail on commit, use the known fallback: a fact metric with an inline column formula using `character` operator tokens (`TOTAL_COST`, `/`, `QUANTITY_ORDERED`) and an aggregate function such as `avg`.
 
 When extending `build-from-config`, add deterministic support for a top-level `derived_metrics:` list rather than asking future agents to hand-write ad hoc post-build code.

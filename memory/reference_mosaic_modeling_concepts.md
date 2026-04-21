@@ -2,7 +2,7 @@
 name: Mosaic modeling concepts and payload shapes
 description: Every Mosaic modeling construct (attribute forms, relationships, metric kinds, filters, transformations, hierarchies, consolidations, prompts) with the JSON body shape expected by the Modeling Service.
 type: reference
-originSessionId: cef55f31-c57d-4220-b4dc-eddfff684771
+originSessionId: initial-session
 ---
 Applied to endpoints under `/api/model/dataModels/{id}/...`. When in doubt, `GET` an existing object of the same kind, capture the JSON, generate fresh UUIDs for inner `id`s, remap `objectId`s, and `POST` it back (the clone-and-remap pattern).
 

@@ -1,25 +1,51 @@
 ---
-name: Strategy environment reference
-description: Base URL, project ID, destination folder, credentials, and login mode for the studio.strategy.com tenant.
+name: Strategy environment configuration
+description: How the helper scripts and skills read tenant/project/credential configuration. All values come from environment variables or CLI flags — no hardcoded tenants in the repo.
 type: reference
-originSessionId: cef55f31-c57d-4220-b4dc-eddfff684771
 ---
-**Tenant:** `https://studio.strategy.com/MicroStrategyLibrary`
-**User:** `<operator-user>`
-**Password:** do not store in memory or skills. Set `MSTR_PASSWORD` in the shell/keychain environment, or pass `--password` only for one-off local probes.
-**Login mode:** `1` (standard)
-**Project ID:** `1FC5A43B374C963CC773C285DF86E2F6`  (primary project the user works in — matches "Shared Studio" schema in Trino queries)
-**Destination folder for models:** `DC377018BD4CACD81B7E4CAEB8DB62B4`
-**Universal attribute ID form:** `45C11FA478E745FEA08D781CEA190FE5`
+## Configuration model
 
-**Trino federation:** host `studio.strategy.com:443`, HTTPS, catalog `sql`, schema `"shared studio"` (quoted — has a space), basic-auth with the same creds. Each published Mosaic model appears as one Trino table whose columns are the model's attributes + metrics.
+Every script and skill in this repo reads tenant + credential values from environment variables (or equivalent CLI flags). Nothing is hardcoded. See `.env.example` at the repo root for a copyable template.
 
-**Known Snowflake datasources (as of 2026-04-20):**
-- `Snowflake Sample Data` — id `245EBDFD85458E568C76FCB353406E93`
-- `WACSE Snowflake` — id `A8FF8DDD064B31A3D67668AEDB8BF954` (has schemas including PUBLIC, ENTERPRISE, HEALTHCAREDEMO, AD_SALES, INSURANCEDEMO, FREDDIE_MOSAIC, POWERUP_2025_CAPSTONE, etc.)
+## Environment variables
 
-**Reference model to clone from when payload shape is unknown:** "Snowflake TPCH_SF1", id `3D4154B75ACF47DCB90806983EF57160` — used by `build_tpch_mosaic_model.py`.
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `MSTR_BASE` | yes | Library URL, e.g. `https://your-tenant.example.com/MicroStrategyLibrary` |
+| `MSTR_USER` | yes | Username for `/api/auth/login` |
+| `MSTR_PASSWORD` | yes | Password. Never commit. Set in shell, keychain, or CI secret store. |
+| `MSTR_LOGIN_MODE` | no | Login mode integer. 1 = standard (default), 8 = LDAP, 16 = SAML, 4096 = identity token passthrough. |
+| `MSTR_PROJECT_ID` | one-of | Project UUID (32-hex). |
+| `MSTR_PROJECT_NAME` | one-of | Project display name — helper will resolve to ID at login. Either `MSTR_PROJECT_ID` or `MSTR_PROJECT_NAME` is required; ID wins when both are set. |
+| `MSTR_DEST_FOLDER_ID` | build-only | Destination folder UUID for new Mosaic data models. Look up once via `/api/folders/…` in the target project and export; used by `build_mosaic.py build`. |
 
-**Machine-readable REST spec:** `{Tenant}/api/openapi.yaml` returns OpenAPI 3.0.1 YAML. Use `python3 skill/scripts/build_mosaic.py openapi-summary` from `/Users/<operator-user>/Desktop/Mosaic Build/` to verify the current tenant paths without logging in.
+CLI equivalents: every script accepts `--base`, `--user`, `--password`, `--login-mode`, `--project-id` / `--project-name`, and build-mosaic also takes `--dest-folder`. CLI flags win over env vars.
 
-**MCP tools connected:** one Mosaic MCP server under prefix `mcp__df3a3274-2371-452c-ac93-7d58f2af669f__*` exposing `get_projects`, `get_mosaic_models`, `get_semantics`, `query`. **No Postman MCP** connected; Strategy REST is invoked directly via the helper script.
+## MCP connectivity (separate from REST)
+
+The Mosaic MCP tools (`get_projects`, `get_mosaic_models`, `get_semantics`, `query`) connect through **Claude / Codex connector config**, not this repo. Each user adds the MCP server to their Claude Code / Codex settings once; the tool names are standard, the server id prefix (`mcp__<uuid>__*`) is per-user. The skills here reference MCP tools by **tool name**, not server id, so any correctly-configured MCP connection works.
+
+## Looking up tenant-specific IDs
+
+Every environment has different internal IDs. Do not paste production IDs into memory. The repo helpers resolve IDs at runtime:
+
+- **Projects:** `GET /api/projects` → choose by name, read `id`.
+- **Datasources (DB instances):** `python3 skill/scripts/build_mosaic.py list-datasources` → filter by name, read `id`.
+- **Destination folder (for new models):** browse `/api/folders/{id}` from a well-known root (e.g., `preDefined/8` PublicObjects) and pick a target.
+- **Reference TPCH (or other seed) model:** `python3 skill/scripts/build_mosaic.py search-objects --name "<seed model name>" --type 3` → read `id`.
+- **Universal ID form** `45C11FA478E745FEA08D781CEA190FE5` — this IS a Strategy platform-wide constant, shared across all tenants. Safe to use as-is.
+
+## Local workflow
+
+```bash
+cp .env.example .env          # one-time
+# edit .env with your tenant values
+set -a; source .env; set +a   # export into shell
+python3 skill/scripts/build_mosaic.py auth-probe
+```
+
+CI / automation should inject the same variables from the platform's secret store; never commit a populated `.env`.
+
+## Validation note
+
+The consumer-grade build + validation reference run documented in `reference_strategy_mosaic_field_study.md` and `reference_strategy_data_validation.md` was executed against a Strategy Cloud tenant. Portfolio numbers (156 data models, 1830 one-to-many relationships, etc.) describe that tenant's state at run time — they are illustrative of shape, not a fixed expectation for every tenant.

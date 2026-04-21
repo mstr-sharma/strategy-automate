@@ -2,7 +2,7 @@
 name: Strategy legacy semantic mining for Mosaic candidates
 description: Read classic attributes, facts, metrics, filters, prompts, reports, documents, and tables to recommend source tables and objects for a Mosaic data model.
 type: reference
-originSessionId: local-codex-2026-04-21
+originSessionId: codex-session
 ---
 Use this when the user asks to modernize a legacy project into Mosaic, find the warehouse tables behind important reports/documents, clone legacy semantics into a new model, or start from a table and discover which attributes/facts/metrics/reports depend on it.
 
@@ -28,7 +28,7 @@ Outputs:
 
 The script uses runtime credentials only and does not store tokens or data exports.
 
-Verified on `<env-id>`:
+Verified on `a verified Strategy Cloud tenant`:
 - Top-down report mining for `Historical Product Revenue Analysis No Prompt` resolved attributes (`Category`, `Subcategory`, `Year`), metrics (`Revenue`, `Profit`, `Cost`, `Units Sold`), and scored candidate tables including `F_TUTORIAL_TARGETS`, `LU_SUBCATEG`, `YR_CATEGORY_SLS`, `LU_CATEGORY`, and date/product lookup tables.
 - Metadata component search returned empty for that report, so the helper used a read-only report instance/JSON Data API fallback to mine `availableObjects`, then read Modeling Service definitions for table references.
 - Reverse table lineage can also be sparse. The helper falls back to a bounded visible attribute/fact definition scan (`--scan-limit`, default `40`) and records warnings when lineage/scan returns no downstream objects.

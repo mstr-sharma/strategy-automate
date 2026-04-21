@@ -2,7 +2,7 @@
 name: Strategy surface matrix
 description: Routing matrix for classic semantic objects, Mosaic data-model objects, runtime analytics, Push Data datasets, AI/agents, and admin/security.
 type: reference
-originSessionId: local-codex-2026-04-21
+originSessionId: codex-session
 ---
 Use this before choosing endpoints. Strategy has overlapping nouns across product generations; route by ownership and runtime surface.
 

@@ -2,7 +2,7 @@
 name: Strategy design transition knowledge
 description: Conceptual bridge from classic MicroStrategy project schema design to modern Strategy Mosaic, Universal Semantic Layer, AI/MCP, validation, Git/YAML, and governance.
 type: reference
-originSessionId: local-codex-2026-04-21
+originSessionId: codex-session
 ---
 Use this when the user asks for modeling judgment: how classic MicroStrategy project design should inform modern Mosaic models, how to modernize legacy projects, or how to make agents understand old semantic-layer intent rather than just copy objects.
 

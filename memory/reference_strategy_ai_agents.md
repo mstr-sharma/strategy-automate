@@ -2,7 +2,7 @@
 name: Strategy AI agents, bots, chats, nuggets, and unstructured data
 description: Clarify Auto Agent APIs, legacy/deprecated Bot APIs, chat/question flows, and AI-related indexing/nugget surfaces.
 type: reference
-originSessionId: local-codex-2026-04-21
+originSessionId: codex-session
 ---
 Use this when the user asks for Strategy AI, Auto Agent, Agent, Bot, chat, question answering, suggestions, training sets, NER indexing, nuggets/learnings, auto narratives, or unstructured data.
 

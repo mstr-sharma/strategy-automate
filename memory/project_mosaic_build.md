@@ -1,18 +1,35 @@
 ---
-name: Mosaic Build project
-description: This working dir is the "fully automated Mosaic model builder" project; sibling token-savings dir holds the benchmark harness that proves it out.
+name: Strategy automation repo — purpose and layout
+description: What this repo is for (single Strategy automation brain), where each surface lives (skills, scripts, memory), and how new work should be added.
 type: project
-originSessionId: cef55f31-c57d-4220-b4dc-eddfff684771
 ---
-Directory: `/Users/<operator-user>/Desktop/Mosaic Build/` — empty at session start on 2026-04-20; purpose is to hold the build-mosaic-model skill + helper, without being contaminated by the benchmark harness next door.
+This repo is a **one-stop Strategy (formerly MicroStrategy) automation brain** for Claude Code / Codex. It should let an operator (typically a Sales Engineer; see `user_profile.md`) drive any Strategy task — Mosaic model build, legacy semantic-layer inspection, data validation, administration — from natural-language requests, using only environment-configured credentials plus a correctly-configured MCP connector.
 
-Sibling: `/Users/<operator-user>/Desktop/token savings/harness/` contains:
-- `build_tpch_mosaic_model.py` — canonical reference build script (clone-and-remap pattern against an existing TPCH model). Copy payload shapes from here when unsure.
-- `benchmark_extended_mosaic*.py` — benchmark scripts proving agents can query the published model via MCP or Trino.
-- `tpch_semantic_model.yaml` — YAML snapshot of the semantic layer used in benchmarks.
+## Repo layout
 
-**Why:** user wants a single, composable Strategy automation brain. It should stand up Mosaic models end-to-end and also let Claude/Codex automate nearly any Strategy task through NLQ by combining memory, OpenAPI, REST helper calls, mstrio-py, MCP, and tenant-specific gotchas.
+- `memory/` — the durable knowledge base. `MEMORY.md` is the index; every other file is a typed memory (user / feedback / project / reference).
+- `skill/` — the `build-mosaic-model` skill: SKILL.md plus `scripts/` (the REST helper CLIs: `build_mosaic.py`, `strategy_mosaic_inventory.py`, `strategy_semantic_inventory.py`, `strategy_semantic_mine.py`, `strategy_validate.py`).
+- `strategy-automation/` — the NLQ router skill that chooses between surfaces and points Claude at the right memory + helper.
+- `strategy-validation/` — the data-validation skill (paired-query correctness checks against any reference source — Mosaic, legacy report, flat file, warehouse SQL, REST fixture).
+- Root: `README.md`, `.env.example`, `.gitignore`.
 
-**How to apply:** when extending, add features as new subcommands on `~/.claude/skills/build-mosaic-model/scripts/build_mosaic.py`; do not scatter logic across the benchmark harness. Keep skill docs in sync with script flags. Probe `/api/openapi.yaml` with `openapi-summary` before trusting old endpoint notes, and keep credentials in `MSTR_PASSWORD`, not memory.
+## Why
 
-**Hardening direction:** the tool should accept drop-in artifacts (ERDs, data dictionaries, user/email rosters, legacy object briefs), normalize them, resolve names to IDs, dry-run high-impact admin changes, write through Strategy REST/Modeling Service with changesets, and verify after every mutation.
+A single, composable Strategy automation brain that:
+- Stands up new Mosaic models end-to-end from warehouse tables + an ERD / data dictionary.
+- Inspects, mines, and modernizes legacy / classic project semantic-layer content.
+- Automates administrative tasks through REST (and mstrio-py where appropriate).
+- Proves every change correct via paired-query validation before it ships.
+- Captures every tenant-verified gotcha into memory so the next session doesn't re-learn them.
+
+## How to add to this repo
+
+1. **New endpoint or workflow?** Add a subcommand to `skill/scripts/build_mosaic.py` (don't scatter logic into separate scripts). Keep `skill/SKILL.md` in sync with the script's flags.
+2. **New kind of durable knowledge?** Add a memory file in `memory/` with the standard frontmatter (`name`, `description`, `type`), then add a one-line pointer to `memory/MEMORY.md`.
+3. **New skill surface?** Sibling directory with a `SKILL.md`. Add routing in `strategy-automation/SKILL.md` so other sessions find it.
+4. **Tenant-specific value discovered?** Do **not** commit it. Add an env-var lookup and document it in `.env.example` / `reference_strategy_env.md`.
+5. **Before trusting an old endpoint note?** Re-probe with `openapi-summary` / `openapi-search` against the live `/api/openapi.yaml` and update the memory file.
+
+## Hardening direction
+
+The tool should accept drop-in artifacts (ERDs, data dictionaries, user/email rosters, legacy object briefs), normalize them, resolve names to IDs, dry-run high-impact admin changes, write through Strategy REST / Modeling Service with changesets, verify after every mutation, and close every build with a data-validation pass.

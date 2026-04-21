@@ -5,7 +5,7 @@ description: Build a Strategy Mosaic (MicroStrategy) semantic model from scratch
 
 # Build a Strategy Mosaic model from scratch
 
-This skill is for **Mosaic data-model** creation and modification. If the user asks for a classic/project semantic-layer object (legacy attributes, project metrics/facts/filters, project security filters assigned to users/groups, subscriptions, users, groups, roles, VLDB, object administration), runtime analytics (reports, dashboards, documents, prompt answers, exports), AI/Agent/Bot work, or non-Mosaic cube/dataset work (Intelligent Cube, OLAP cube, Super Cube, MTDI, Push Data), route through `/Users/<operator-user>/Desktop/Mosaic Build/strategy-automation/SKILL.md` and `memory/reference_strategy_surface_matrix.md` first. For classic-to-Mosaic mining, read `memory/reference_strategy_tutorial_semantic_field_study.md` before translating attributes/facts/metrics/filters/prompts/hierarchies into model candidates.
+This skill is for **Mosaic data-model** creation and modification. If the user asks for a classic/project semantic-layer object (legacy attributes, project metrics/facts/filters, project security filters assigned to users/groups, subscriptions, users, groups, roles, VLDB, object administration), runtime analytics (reports, dashboards, documents, prompt answers, exports), AI/Agent/Bot work, or non-Mosaic cube/dataset work (Intelligent Cube, OLAP cube, Super Cube, MTDI, Push Data), route through `$REPO/strategy-automation/SKILL.md` and `memory/reference_strategy_surface_matrix.md` first. For classic-to-Mosaic mining, read `memory/reference_strategy_tutorial_semantic_field_study.md` before translating attributes/facts/metrics/filters/prompts/hierarchies into model candidates.
 
 The user provides:
 - **DB instance name** (the MicroStrategy Database Instance / datasource — looked up by name, resolved to `dbInstanceId`)
@@ -33,7 +33,7 @@ The Swagger UI at `/api-docs/` is a JavaScript app; the machine-readable spec is
 Always use the helper script `scripts/build_mosaic.py` from this skill folder. Do not re-implement the REST calls inline.
 
 1. **Read memory first.** Confirm the env in memory (base URL, project ID, destination folder, credentials location) still matches what the user wants. If the user names a different project or folder, override via flags. Credentials must come from `MSTR_PASSWORD` or `--password`; do not write secrets into memory or this skill.
-2. **Auth (handled by script).** Login → grab `X-MSTR-AuthToken`; then `POST /api/auth/identityToken` → grab `X-MSTR-IdentityToken` only for Mosaic data-model Modeling Service writes that require it. Classic/project semantic-layer workflows may fail if identity token is added; route those through `$strategy-automation`.
+2. **Auth (handled by script).** Login → grab `X-MSTR-AuthToken`; then `POST /api/auth/identityToken` → grab `X-MSTR-IdentityToken` only for Mosaic data-model Modeling Service writes that require it. Classic/project semantic-layer workflows may fail if identity token is added; route those through the `strategy-automation` skill (`strategy-automation/SKILL.md`).
 3. **Resolve DB instance.** `GET /api/datasources` (or `/api/dbobjects/databaseInstances` on older instances) — filter by name. Fail loudly if ambiguous.
 4. **Discover warehouse tables.** Use the helper's `list-namespaces`, `list-tables`, and `describe-table`. On current Strategy Library servers this is `GET /api/datasources/{id}/catalog/namespaces/{namespaceId}/tables` and `GET /api/datasources/{id}/catalog/tables/{tableId}` where namespace/table IDs are base64 JSON. The script includes `discover` for live path variants and `openapi-summary` for the raw spec.
 5. **Build in one changeset:**
@@ -47,7 +47,7 @@ Always use the helper script `scripts/build_mosaic.py` from this skill folder. D
                        "tableName":"<TABLE>",
                        "databaseInstance":{"objectId":"<dbInstanceId>"}}}
      ```
-     Fall back to `type:"normal"` or `type:"pipeline"` if the server rejects; the TPCH reference script (see `~/Desktop/token savings/harness/build_tpch_mosaic_model.py`) shows the pipeline shape.
+     Fall back to `type:"normal"` or `type:"pipeline"` if the server rejects; the TPCH reference script (see `<sibling harness dir>/build_tpch_mosaic_model.py`) shows the pipeline shape.
    - For each ID/text column → `POST .../attributes` with one key form pointing to the column, lookupTable = that table.
    - For each numeric column → `POST .../factMetrics` with `function:"sum"`, fact expression = the column.
    - `POST /api/model/changesets/{cs}/commit`.
@@ -142,7 +142,7 @@ MicroStrategy's Modeling Service accepts whatever `GET` returns. So for anything
 - **Changeset commit failures** are often silent in the logs but loud in stderr text — the helper script prints full response bodies on non-2xx.
 - **Ambiguous DB instance name** — there can be multiple instances with similar names across projects. Script fails closed unless user passes `--db-instance-id` directly.
 - **`dataServeMode:"connect_live"`** is what matches the ref TPCH model; `"in_memory"` creates an importable/cached variant (the `-in_memory` suffix seen in `benchmark_extended_mosaic_trino.py`).
-- **Publishing in-memory Mosaic models on studio.strategy.com** uses `POST /api/cubes/{modelId}` with an empty body. The helper tries this before older/public publish variants.
+- **Publishing in-memory Mosaic models on {MSTR_BASE host}** uses `POST /api/cubes/{modelId}` with an empty body. The helper tries this before older/public publish variants.
 - **Multi-source models:** the user can list tables from different DB instances. Pass instance/schema/table triples — the script groups them per instance for warehouse-table lookup, but all tables land in one model.
 
 ## Naming, descriptions, and inputs from ERDs / data dictionaries
@@ -191,7 +191,7 @@ Before running `build`, do the following:
 Build the base model first, then apply post-build operations against the returned `model_id`:
 - Simple numeric measures: dictionary `metrics.TABLE.COLUMN.function` controls `sum`, `avg`, `min`, `max`, `count`, etc.
 - Compound metrics over existing metrics: `create-compound-metric --model-id M --name N --formula 'METRIC_ID1 / METRIC_ID2'`.
-- Tenant fallback for derived calculations: create a fact metric with an inline column formula using `character` operator tokens; this is the verified studio.strategy.com pattern when compound metric references fail at commit.
+- Tenant fallback for derived calculations: create a fact metric with an inline column formula using `character` operator tokens; this is the verified {MSTR_BASE host} pattern when compound metric references fail at commit.
 - Filter-scoped metrics: create/reuse a filter first, then `create-conditional-metric`.
 - Time-shift metrics: `create-transformation`, then `attach-transformation`.
 - Row-level security: `--security-filter 'Name=qualification|memberIdOrName,...'`.
@@ -202,10 +202,10 @@ Build the base model first, then apply post-build operations against the returne
 
 Use these before applying row-level security, ACLs, user provisioning, or updates to existing schema objects:
 ```bash
-python3 /Users/<operator-user>/.claude/skills/build-mosaic-model/scripts/build_mosaic.py resolve-users --file users.csv
-python3 /Users/<operator-user>/.claude/skills/build-mosaic-model/scripts/build_mosaic.py create-users --file users.csv        # dry-run
-python3 /Users/<operator-user>/.claude/skills/build-mosaic-model/scripts/build_mosaic.py search-objects --name "Customer"
-python3 /Users/<operator-user>/.claude/skills/build-mosaic-model/scripts/build_mosaic.py get-model-object --kind legacy_attribute --object-id ATTR_ID --show-expression-as tokens --out /tmp/before.json
+python3 $REPO/skill/scripts/build_mosaic.py resolve-users --file users.csv
+python3 $REPO/skill/scripts/build_mosaic.py create-users --file users.csv        # dry-run
+python3 $REPO/skill/scripts/build_mosaic.py search-objects --name "Customer"
+python3 $REPO/skill/scripts/build_mosaic.py get-model-object --kind legacy_attribute --object-id ATTR_ID --show-expression-as tokens --out /tmp/before.json
 ```
 
 For existing Mosaic-contained objects use `--kind attribute|fact_metric|table|filter|security_filter --model-id MODEL_ID --object-id OBJECT_ID`. For classic schema objects use `legacy_attribute`, `legacy_metric`, `project_fact`, or `project_table`.
@@ -228,8 +228,8 @@ When the user gives a prompt like:
 
 Run:
 ```bash
-cd "/Users/<operator-user>/Desktop/Mosaic Build"
-python3 /Users/<operator-user>/.claude/skills/build-mosaic-model/scripts/build_mosaic.py \
+cd "$REPO"
+python3 $REPO/skill/scripts/build_mosaic.py \
     --instance "Snowflake Prod" --schema SALES \
     --tables CUSTOMER ORDER LINEITEM \
     --name "Sales Mosaic"
@@ -315,7 +315,7 @@ Mosaic (MicroStrategy) is a full metadata-backed semantic + analytics platform. 
   - `dataServeMode`: `connect_live` (live queries to source), `in_memory` (imported / cached cube-backed model). Some tenants also support `hybrid`.
 - `GET /api/model/dataModels/{id}` — full definition, including `schemaFolderId` (where all child objects live).
 - `PATCH /api/model/dataModels/{id}` — rename, move, change serve mode.
-- `POST /api/cubes/{id}` — studio.strategy.com verified publish/materialize path for an in-memory Mosaic model. Public specs may also list `/api/dataModels/{id}/publish`; keep it as fallback, not first choice.
+- `POST /api/cubes/{id}` — {MSTR_BASE host} verified publish/materialize path for an in-memory Mosaic model. Public specs may also list `/api/dataModels/{id}/publish`; keep it as fallback, not first choice.
 - `POST /api/model/dataModels/{id}/refresh` — incremental refresh of cached data.
 
 ### Changesets (unit of atomic metadata write)
@@ -377,7 +377,7 @@ Endpoint family: `/api/model/dataModels/{id}/factMetrics` (and sometimes `/metri
 - `POST /api/model/dataModels/{id}/hierarchies` — `{attributes:[{id,filters,…}], relationships:[{parent,child}]}`. Separate from attribute parent-child relationships.
 
 ### Intelligent cubes (in-memory OLAP, backs `in_memory` models)
-- `POST /api/cubes/{id}` publishes/materializes an in-memory Mosaic model on studio.strategy.com.
+- `POST /api/cubes/{id}` publishes/materializes an in-memory Mosaic model on {MSTR_BASE host}.
 - `POST /api/cubes`, `POST /api/cubes/{id}/instances`, `POST /api/cubes/{id}/publish`, `POST /api/cubes/{id}/refresh?refreshType=update|add|replace|incremental` exist for cube workflows, but `/instances` requires an already-published cube.
 - Incremental refresh filter: `PATCH /api/cubes/{id}` with `incrementalRefresh.filterId`.
 
@@ -402,14 +402,14 @@ Endpoint family: `/api/model/dataModels/{id}/factMetrics` (and sometimes `/metri
 - `GET/PATCH /api/objects/{id}/vldbProperties?type=` — per-metric, per-table, per-report overrides controlling SQL generation (join types, GROUP BY strategy, count behavior, etc.).
 
 ### Mosaic MCP server (this tenant)
-Connected as `mcp__df3a3274-…`:
+Connected as `<mosaic MCP server>`:
 - `get_projects` — project list.
 - `get_mosaic_models` — list of models in a project.
 - `get_semantics` — attributes + metrics of a model (shape matches what the benchmark scripts embed in system prompts).
 - `query` — Trino SQL against the published model (takes `schema` + `query`).
 
 ### Trino federation layer
-Live models are queryable as Trino tables — `host=studio.strategy.com:443`, `catalog=sql`, `schema="shared studio"`, basic-auth with the same MSTR creds. Every Mosaic model becomes one Trino "table" whose columns are the model's attributes + metrics (lowercase, quoted). In-memory variants appear with a `-in_memory` suffix.
+Live models are queryable as Trino tables — `host={MSTR_BASE host}:443`, `catalog=sql`, `schema="{your project name lowercased}"`, basic-auth with the same MSTR creds. Every Mosaic model becomes one Trino "table" whose columns are the model's attributes + metrics (lowercase, quoted). In-memory variants appear with a `-in_memory` suffix.
 
 ### Clone-and-remap pattern (when payload shape is unknown)
 1. Find a reference object (same kind, already working) via folder browse.

@@ -2,7 +2,7 @@
 name: Strategy validation workflow suite
 description: Tenant-verified non-Mosaic, non-AI validation workflows for proving Strategy automation coverage against a live demo environment.
 type: reference
-originSessionId: local-codex-2026-04-21
+originSessionId: validation-session
 status: tenant-verified-2026-04-21
 ---
 Use this to validate the Strategy automation memory/skills against a live environment. These workflows intentionally exclude Mosaic data-model and AI/Agent/Bot work.
@@ -11,7 +11,7 @@ Credentials must come from runtime input or environment variables. Never write p
 
 ## Verified runner
 
-Script: `/Users/<operator-user>/Desktop/Mosaic Build/skill/scripts/strategy_validate.py`
+Script: `$REPO/skill/scripts/strategy_validate.py`
 
 Command pattern:
 ```bash
@@ -19,10 +19,10 @@ python3 skill/scripts/strategy_validate.py --yes --keep-security-artifacts --pac
 ```
 
 Final tenant run on 2026-04-21:
-- run ID: `codex-20260421-140728`
+- run ID: `validation-<YYYYMMDD-HHMM>`
 - project: `MicroStrategy Tutorial` / `<project-id>`
 - result: `pass=10 warn=0 skip=0 fail=0`
-- kept requested artifacts: `Books_secFilter-codex` (`6F6705C3935C409FB3BFB8BCFDDC177C`) assigned to `arpan_duplicate-codex` (`6C5374CACE46881669DD40819EAF4B99`)
+- kept requested artifacts: `Books_secFilter_validation` (`<security-filter-id>`) assigned to `validation_duplicate_user` (`<duplicate-user-id>`)
 - optional package holder was created and deleted in the same run.
 
 Live gotchas captured from the run:
@@ -35,7 +35,7 @@ Live gotchas captured from the run:
 
 ## Execution rules
 
-- Use one run ID suffix, e.g. `codex-YYYYMMDD-HHMM`, for any created object.
+- Use one run ID suffix, e.g. `validation-YYYYMMDD-HHMM`, for any created object.
 - First run every workflow in read-only/probe mode where possible.
 - For write workflows, resolve and print target IDs before writing.
 - Clean up all test-created objects unless the user explicitly asks to keep them.
@@ -163,7 +163,7 @@ Purpose: validate governance reads before any user/security writes.
 Scope: read-only.
 
 Core steps:
-- Resolve source user `arpan`.
+- Resolve source user `$MSTR_USER`.
 - List user details, memberships, addresses, security roles, privileges.
 - List user groups and security roles visible to the session.
 - Verify project-level context for role/privilege endpoints.
@@ -175,13 +175,13 @@ Verification:
 
 Purpose: validate the classic project security-filter workflow requested by the user.
 
-Scope: write with `-codex` names; cleanup decision required.
+Scope: write with `-validation` names; cleanup decision required.
 
 Core steps:
-- Resolve project, source user `arpan`, target username `arpan_duplicate-codex`.
+- Resolve project, source user `$MSTR_USER`, target username `validation_duplicate_user`.
 - Resolve `Category` attribute and `Books` element.
-- Create or reuse `Books_secFilter-codex` via `/api/model/securityFilters`.
-- Duplicate user with `POST /api/users?sourceUserId=<arpanId>` if `arpan_duplicate-codex` does not already exist.
+- Create or reuse `Books_secFilter_validation` via `/api/model/securityFilters`.
+- Duplicate user with `POST /api/users?sourceUserId=<$MSTR_USER id>` if `validation_duplicate_user` does not already exist.
 - Assign filter with `PATCH /api/securityFilters/{id}/members`.
 - Verify via `/api/securityFilters/{id}/members` and `/api/users/{id}/securityFilters`.
 
@@ -199,7 +199,7 @@ Purpose: validate high-impact admin lanes without risky operations.
 Scope: mostly read-only; optional create/delete of harmless package holder only if approved.
 
 Core steps:
-- Distribution: `GET /api/subscriptions`, `GET /api/schedules`, list addresses/recipients visible to `arpan`.
+- Distribution: `GET /api/subscriptions`, `GET /api/schedules`, list addresses/recipients visible to `$MSTR_USER`.
 - Monitor/cache: list cube/content caches and project status where privileges allow; do not alter/delete caches.
 - Packages: optionally `POST /api/packages` to create an empty package holder, `GET /api/packages/{id}`, then `DELETE /api/packages/{id}`. Do not upload/import packages.
 

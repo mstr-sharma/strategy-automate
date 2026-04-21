@@ -22,13 +22,13 @@ from typing import Any
 import requests
 
 
-DEFAULT_BASE = "https://<env-id>.customer.cloud.microstrategy.com/MicroStrategyLibrary"
-DEFAULT_USER = "arpan"
-DEFAULT_PROJECT_NAME = "MicroStrategy Tutorial"
+DEFAULT_BASE = os.environ.get("MSTR_BASE", "")
+DEFAULT_USER = os.environ.get("MSTR_USER", "")
+DEFAULT_PROJECT_NAME = os.environ.get("MSTR_PROJECT_NAME", "")
 
 
 def now_run_id() -> str:
-    return "codex-" + datetime.now().strftime("%Y%m%d-%H%M%S")
+    return "run-" + datetime.now().strftime("%Y%m%d-%H%M%S")
 
 
 def compact_json(value: Any, limit: int = 800) -> str:
@@ -518,7 +518,7 @@ class Runner:
         return None
 
     def create_security_filter(self, attr: dict[str, Any], books: dict[str, Any]) -> dict[str, Any]:
-        existing = self.find_security_filter("Books_secFilter-codex")
+        existing = self.find_security_filter("Books_secFilter_validation")
         if existing:
             return existing
         folder_id = self.find_public_folder_id()
@@ -529,7 +529,7 @@ class Runner:
         elem_display = books.get("display") or books.get("name") or "Books"
         body = {
             "information": {
-                "name": "Books_secFilter-codex",
+                "name": "Books_secFilter_validation",
                 "description": f"Codex validation security filter, run {self.args.run_id}",
                 "destinationFolderId": folder_id,
             },
@@ -561,15 +561,15 @@ class Runner:
             self.m.commit_changeset(cs)
             if isinstance(sf, dict):
                 sf_id = sf.get("id") or (sf.get("information") or {}).get("objectId")
-                self.created.append({"kind": "securityFilter", "id": sf_id, "name": "Books_secFilter-codex"})
+                self.created.append({"kind": "securityFilter", "id": sf_id, "name": "Books_secFilter_validation"})
                 return sf
-            return {"name": "Books_secFilter-codex"}
+            return {"name": "Books_secFilter_validation"}
         except Exception:
             self.m.delete_changeset(cs)
             raise
 
     def ensure_duplicate_user(self, source_user: dict[str, Any]) -> dict[str, Any]:
-        target = "arpan_duplicate-codex"
+        target = "validation_duplicate_user"
         users = response_json(self.m.request("GET", "/api/users", project=False, params={"nameBegins": target, "limit": 20}))
         if isinstance(users, list):
             for user in users:
@@ -580,7 +580,7 @@ class Runner:
         body = {
             "username": target,
             "fullName": target,
-            "description": f"Codex validation duplicate of arpan, run {self.args.run_id}",
+            "description": f"Validation duplicate of {source_user.get('username') or self.args.user}, run {self.args.run_id}",
             "enabled": True,
         }
         resp = self.m.request("POST", "/api/users", project=False, params={"sourceUserId": source_user.get("id")}, json=body, ok=(201,))
@@ -602,7 +602,7 @@ class Runner:
         sf = self.create_security_filter(attr, books)
         sf_id = sf.get("id") or (sf.get("information") or {}).get("objectId")
         if not sf_id:
-            existing = self.find_security_filter("Books_secFilter-codex")
+            existing = self.find_security_filter("Books_secFilter_validation")
             sf_id = existing and normalize_id(existing)
         if not sf_id:
             raise RuntimeError(f"could not determine security filter id: {compact_json(sf)}")
@@ -617,7 +617,7 @@ class Runner:
             "classic security filter assignment",
             "pass",
             "security filter assigned to duplicate user",
-            securityFilter={"id": sf_id, "name": "Books_secFilter-codex"},
+            securityFilter={"id": sf_id, "name": "Books_secFilter_validation"},
             user={"id": dup_id, "username": dup.get("username") or dup.get("name")},
             memberPayloadKeys=sorted(members.keys()) if isinstance(members, dict) else [],
             userFiltersStatus=user_filters.status_code if user_filters is not None else "unavailable",
@@ -633,7 +633,7 @@ class Runner:
         }
         package_status = "not-run"
         if self.args.package_holder and self.args.yes:
-            body = {"name": f"codex-validation-{self.args.run_id}", "type": "project"}
+            body = {"name": f"validation-{self.args.run_id}", "type": "project"}
             pkg = self.m.try_request("POST", "/api/packages", json=body)
             if pkg is not None:
                 package_status = str(pkg.status_code)

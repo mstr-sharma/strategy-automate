@@ -2,14 +2,14 @@
 name: Strategy Tutorial semantic field study
 description: Live REST inventory of MicroStrategy Tutorial classic semantic objects, including attributes, facts, metrics, filters, prompts, hierarchies, and translation cues for Mosaic.
 type: reference
-originSessionId: local-codex-2026-04-21
+originSessionId: codex-session
 ---
-Use this when the user asks to inspect, clone, modify, modernize, or mine a legacy/classic Strategy semantic layer. This is grounded in live REST reads from the `MicroStrategy Tutorial` project on `<env-id>` on 2026-04-21.
+Use this when the user asks to inspect, clone, modify, modernize, or mine a legacy/classic Strategy semantic layer. This is grounded in live REST reads from the `MicroStrategy Tutorial` project on `a verified Strategy Cloud tenant` on 2026-04-21.
 
 Raw field-study output was written to `/tmp/strategy-tutorial-semantic-inventory-full.json`, with supplemental hierarchy verification at `/tmp/strategy-tutorial-hierarchies.json`; do not commit raw tenant payloads. Regenerate with:
 
 ```bash
-cd "/Users/<operator-user>/Desktop/Mosaic Build"
+cd "$REPO"
 python3 skill/scripts/strategy_semantic_inventory.py \
   --workers 12 \
   --include-definition-bodies \

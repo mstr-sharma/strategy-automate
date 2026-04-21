@@ -23,9 +23,9 @@ from typing import Any
 import requests
 
 
-DEFAULT_BASE = "https://<env-id>.customer.cloud.microstrategy.com/MicroStrategyLibrary"
-DEFAULT_USER = "arpan"
-DEFAULT_PROJECT_NAME = "MicroStrategy Tutorial"
+DEFAULT_BASE = os.environ.get("MSTR_BASE", "")
+DEFAULT_USER = os.environ.get("MSTR_USER", "")
+DEFAULT_PROJECT_NAME = os.environ.get("MSTR_PROJECT_NAME", "")
 
 FAMILIES = {
     "attributes": {"type": 12, "path": "/api/model/attributes/{id}", "singular": "attribute"},

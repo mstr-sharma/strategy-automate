@@ -1,15 +1,15 @@
 ---
 name: Mosaic REST API map
-description: Verified endpoint paths and payload shapes for the studio.strategy.com MicroStrategy REST API; covers auth, datasources, catalog, data models, changesets, metrics, filters, transformations, security, translations, VLDB.
+description: Verified endpoint paths and payload shapes for the {MSTR_BASE host} MicroStrategy REST API; covers auth, datasources, catalog, data models, changesets, metrics, filters, transformations, security, translations, VLDB.
 type: reference
-originSessionId: cef55f31-c57d-4220-b4dc-eddfff684771
+originSessionId: initial-session
 ---
-All paths prefixed with `{BASE} = https://studio.strategy.com/MicroStrategyLibrary`. Unless otherwise noted, send `X-MSTR-AuthToken`, `X-MSTR-ProjectID`, and (for writes) `X-MSTR-IdentityToken` + `X-MSTR-MS-Changeset`.
+All paths prefixed with `{BASE} = {MSTR_BASE}`. Unless otherwise noted, send `X-MSTR-AuthToken`, `X-MSTR-ProjectID`, and (for writes) `X-MSTR-IdentityToken` + `X-MSTR-MS-Changeset`.
 
 ## OpenAPI / docs
 - Raw machine-readable spec: `GET /api/openapi.yaml` (OpenAPI 3.0.1, title `Strategy REST`, version `2026` as of 2026-04-21).
 - Swagger/API Explorer UI: `/api-docs/` is a JavaScript app; use it interactively, not as a scrape target.
-- `api-docs/swagger-config` 404s on studio.strategy.com; use `openapi-summary` in the helper.
+- `api-docs/swagger-config` 404s on {MSTR_BASE host}; use `openapi-summary` in the helper.
 
 ## Auth
 - `POST /api/auth/login` body `{username,password,loginMode:1}` → response header `X-MSTR-AuthToken` (lowercase `X-Mstr-Authtoken` on some responses).
@@ -67,14 +67,14 @@ See `reference_mosaic_modeling_concepts.md` for full body shapes. Endpoints:
 - Classic schema objects outside a Mosaic model use `/api/model/attributes/{attributeId}`, `/api/model/metrics/{metricId}`, `/api/model/facts/{factId}`, and `/api/model/tables/{tableId}`. Read with `showExpressionAs=tokens|tree`, patch through a changeset, then commit.
 
 ## Cubes (in-memory model backing store)
-- `POST /api/cubes/{id}` — verified studio.strategy.com publish path for in-memory Mosaic models.
+- `POST /api/cubes/{id}` — verified {MSTR_BASE host} publish path for in-memory Mosaic models.
 - `POST /api/cubes/{id}/publish` — public/older cube publish variant; keep as fallback.
 - `POST /api/cubes/{id}/refresh?refreshType=update|add|replace|incremental`
 - `PATCH /api/cubes/{id}` for `incrementalRefresh.filterId`.
 
 ## Governance: ACL, translations, certification
 - Data-model-contained object ACL: `PATCH /api/model/dataModels/{dataModelId}/objects/{objectId}/acl?subType=<objectSubType>` inside a changeset. Body: `{acl:{trusteeId:{granted:<mask>, denied:<mask>, subType:"user"|"user_group"}}}`.
-- Global `POST /api/objects/{objId}/acl` is not accepted on studio.strategy.com for the tested object-security use case; use the data-model ACL endpoint when object belongs to a Mosaic model.
+- Global `POST /api/objects/{objId}/acl` is not accepted on {MSTR_BASE host} for the tested object-security use case; use the data-model ACL endpoint when object belongs to a Mosaic model.
   Rights mask flags: read=1, write=2, delete=4, control=32, execute=128, browse=64, use=512, inherit=1024, full=255.
 - Data-model translations: `PATCH /api/model/dataModels/{dataModelId}/objects/{objectId}/translations?subType=<objectSubType>` inside a changeset. Body has `name.translationValues` and/or `description.translationValues` keyed by locale.
 - Global translations in public spec use `/api/objects/{type}/{id}/translations`, not `/api/objects/{id}/translations`.

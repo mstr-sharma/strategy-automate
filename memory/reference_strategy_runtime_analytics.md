@@ -2,7 +2,7 @@
 name: Strategy runtime analytics, prompts, filters, and exports
 description: Clarify report/cube/dashboard/document execution, runtime filters/prompts, exports, and JSON Data API behavior.
 type: reference
-originSessionId: local-codex-2026-04-21
+originSessionId: codex-session
 ---
 Use this when the user asks to run, fetch data from, filter, prompt, export, refresh, or inspect reports, cubes, dashboards/dossiers, or documents. This is a **runtime analytics** lane, not a semantic-model editing lane.
 

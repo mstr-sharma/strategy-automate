@@ -9,18 +9,19 @@ Use this skill when the user asks to automate, inspect, build, modify, secure, p
 
 ## First Move
 
-1. Read `/Users/<operator-user>/Desktop/Mosaic Build/memory/MEMORY.md`.
-2. Identify the task family in `/Users/<operator-user>/Desktop/Mosaic Build/memory/reference_strategy_automation_playbook.md`.
+1. Read `$REPO/memory/MEMORY.md`.
+2. Identify the task family in `$REPO/memory/reference_strategy_automation_playbook.md`.
 3. Decide the product surface before choosing endpoints: classic project semantic layer/admin, Mosaic data model, runtime analytics, Push Data dataset, cube family, platform admin, or AI/agents. Read `reference_strategy_surface_matrix.md` for ambiguous attributes, metrics, prompts, filters, ACLs/object security, security filters, cubes, datasets, reports, dashboards, documents, users/groups, agents, or project-level requests.
 4. Use live `{Library}/api/openapi.yaml` through the helper when endpoint details matter. Add `?visibility=all` when the Swagger UI shows more detail than the default spec. A local `openapi.yaml` may be generated for temporary caching, but it is not part of the lean repo.
 5. Use credentials from environment (`MSTR_PASSWORD`) or user-provided secure runtime values. Never write secrets to memory, skills, config, or logs.
 
 ## Tool Router
 
-- **Build or modify a Mosaic model from warehouse tables:** use `$build-mosaic-model` and its helper script.
+- **Build or modify a Mosaic model from warehouse tables:** use the `build-mosaic-model` skill (`skill/SKILL.md`) and its helper script.
 - **Classic-to-modern modeling judgment:** read `reference_strategy_design_transition.md` before translating legacy project schema concepts into Mosaic/USL/AI-ready models.
 - **Classic/project semantic-layer or admin workflows:** read `reference_strategy_legacy_semantic_admin.md`; use top-level `/api/model/...` changeset endpoints for legacy objects and `/api/users`, `/api/securityFilters`, `/api/usergroups`, `/api/objects` for admin/member operations.
 - **Deep classic semantic inspection:** read `reference_strategy_tutorial_semantic_field_study.md`; use `skill/scripts/strategy_semantic_inventory.py` to inventory attributes, facts, metrics, filters, prompts, system hierarchy, user hierarchies, fact extensions, metric dimensionality/conditionality, and prompt/filter internals before cloning or modernizing.
+- **Deep Mosaic semantic inspection / legacy↔Mosaic bridge:** read `reference_strategy_mosaic_field_study.md`; use `skill/scripts/strategy_mosaic_inventory.py` to inventory every Mosaic data model (subType 779) — tables, attributes, factMetrics, custom metrics, hierarchy, security filters, externalDataModels — and reference the classic→Mosaic translation matrix for object-by-object mapping. Use `/usr/bin/python3` on this workstation (Anaconda OpenSSL hangs on {MSTR_BASE host} TLS).
 - **Legacy-to-Mosaic discovery:** read `reference_strategy_legacy_to_mosaic_mining.md`; use `skill/scripts/strategy_semantic_mine.py` to mine reports/documents into candidate tables or reverse from tables into attributes/facts/metrics/reports before building a Mosaic model.
 - **Security filters:** if no Mosaic data-model ID is in the request, treat it as a classic project security filter: create definition with `/api/model/securityFilters`, assign users/groups with `/api/securityFilters/{id}/members`. Use `/api/model/dataModels/{id}/securityFilters` only for Mosaic data-model security filters.
 - **Attributes and metrics:** route by container. Classic/project objects use `/api/model/attributes|metrics`; Mosaic-contained objects use `/api/model/dataModels/{id}/attributes|metrics|factMetrics`; Push Data dataset attributes/metrics live in `/api/datasets` definitions.
@@ -30,10 +31,11 @@ Use this skill when the user asks to automate, inspect, build, modify, secure, p
 - **Platform admin:** read `reference_strategy_admin_platform.md`; datasource admin, distribution/subscriptions, migrations/packages, monitors/caches, project load/unload, settings, search/browse, and object ownership have separate endpoint families.
 - **AI/Agent/Bot:** read `reference_strategy_ai_agents.md`; prefer Auto Agent `/api/questions` and `/api/v2/bots` paths; treat `/api/bots` as legacy/deprecated unless required.
 - **Validation/testing:** read `reference_strategy_validation_workflows.md`; do not run live write tests until the user signs off on the numbered workflows and cleanup behavior.
+- **Data-correctness validation (post-build, pre-ship):** route through `strategy-validation/SKILL.md` and `reference_strategy_data_validation.md`. Reference can be another Mosaic model, legacy/classic report, flat file, direct warehouse SQL, or a saved REST fixture — NOT Mosaic-to-Mosaic only. Required after every build per `feedback_consumer_grade_naming.md` item 8.
 - **Drop-in ERDs, dictionaries, rosters, or legacy update briefs:** read `reference_strategy_intake_patterns.md`, normalize files to supported JSON/YAML/CSV/DBML/Mermaid/SQL formats, then resolve IDs before writing.
 - **Any REST endpoint not wrapped yet:** use:
   ```bash
-  cd "/Users/<operator-user>/Desktop/Mosaic Build"
+  cd "$REPO"
   python3 skill/scripts/build_mosaic.py openapi-search "<term>" --context 2
   python3 skill/scripts/build_mosaic.py api-call --method GET --path /api/projects
   ```
@@ -46,11 +48,11 @@ Use this skill when the user asks to automate, inspect, build, modify, secure, p
 ## Operating Rules
 
 - Prefer tenant-verified gotchas over public docs when they conflict.
-- For classic/project workflows, do not automatically add `X-MSTR-IdentityToken`; `<env-id>` showed it can break top-level Modeling Service reads with a false project error. Use identity token only when the selected surface/reference says it is required.
+- For classic/project workflows, do not automatically add `X-MSTR-IdentityToken`; `a verified Strategy Cloud tenant` showed it can break top-level Modeling Service reads with a false project error. Use identity token only when the selected surface/reference says it is required.
 - For destructive operations, enumerate the target object IDs and ask once if the user did not explicitly request deletion/removal.
 - Use changesets for Modeling Service writes, commit only after all referenced objects exist, and discard failed changesets.
 - For schema/model writes, print or return the object URL, object IDs, and any skipped/failed operations.
-- Keep durable lessons in `/Users/<operator-user>/Desktop/Mosaic Build/memory/feedback_mosaic_gotchas.md` or a specific reference file.
+- Keep durable lessons in `$REPO/memory/feedback_mosaic_gotchas.md` or a specific reference file.
 
 ## Memory Map
 
@@ -63,6 +65,7 @@ Use this skill when the user asks to automate, inspect, build, modify, secure, p
 - Legacy/project semantic-layer and admin workflows: `reference_strategy_legacy_semantic_admin.md`
 - Legacy-to-Mosaic mining: `reference_strategy_legacy_to_mosaic_mining.md`
 - Tutorial semantic field study: `reference_strategy_tutorial_semantic_field_study.md`
+- Mosaic field study + legacy↔Mosaic bridge: `reference_strategy_mosaic_field_study.md`
 - Classic-to-modern design transition: `reference_strategy_design_transition.md`
 - Cube and dataset families: `reference_strategy_cubes_and_datasets.md`
 - Runtime analytics/prompts/filters/exports: `reference_strategy_runtime_analytics.md`

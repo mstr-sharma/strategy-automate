@@ -2,7 +2,7 @@
 name: Mosaic API gotchas learned
 description: Bugs and lessons from the first pass building the mosaic-build skill — keep these in mind when extending.
 type: feedback
-originSessionId: cef55f31-c57d-4220-b4dc-eddfff684771
+originSessionId: initial-session
 ---
 ## Catalog IDs are base64(JSON), not UUIDs
 `namespaceId` = base64(`{"ns":"<schema>"}`); `tableId` = base64(`{"tbn":"<table>","ns":"<schema>"}`). The helper has `encode_ns_id` / `encode_tb_id`. Don't pass the raw schema name to `/tables` — it 404s.
@@ -17,7 +17,7 @@ originSessionId: cef55f31-c57d-4220-b4dc-eddfff684771
 ## `X-MSTR-IdentityToken` is mandatory for Mosaic data-model changesets
 `POST /api/auth/identityToken` returns the token in a response header. Without it, changeset commits 400 silently.
 **Why:** The TPCH build script failed commits until the `identityToken` call was added — see `build_tpch_mosaic_model.py:105–108`.
-**How to apply:** fetch identity token immediately after login for Mosaic data-model writes; `MSTR.login()` in the Mosaic helper does this. Do not automatically add identity token to classic/project Modeling Service reads/writes such as `/api/model/attributes`, `/api/model/metrics`, `/api/model/facts`, or `/api/model/securityFilters`; on `<env-id>` it caused false project errors.
+**How to apply:** fetch identity token immediately after login for Mosaic data-model writes; `MSTR.login()` in the Mosaic helper does this. Do not automatically add identity token to classic/project Modeling Service reads/writes such as `/api/model/attributes`, `/api/model/metrics`, `/api/model/facts`, or `/api/model/securityFilters`; on `a verified Strategy Cloud tenant` it caused false project errors.
 
 ## Changesets don't magically cross-reference
 Objects referenced inside a changeset must already exist (committed). Relationships + security filters + translations need a *separate* changeset AFTER the model + tables + attrs + metrics commit.
@@ -27,7 +27,7 @@ Objects referenced inside a changeset must already exist (committed). Relationsh
 ## When payload shape is unknown: clone-and-remap
 Fetch a working object via `GET /api/model/dataModels/{refModelId}/attributes/{id}` (or `/factMetrics/{id}` / `/filters/{id}`), generate fresh UUIDs for every inner `id`, remap every `objectId` that points at a replaced table/attr/metric, POST it back. The TPCH build script is the canonical example.
 **Why:** Modeling Service payloads are deeply nested and undocumented in places; the returned JSON is always a valid POST body.
-**How to apply:** for transformation/conditional/level metrics and advanced form types, clone from the TPCH reference (id `3D4154B75ACF47DCB90806983EF57160`) before writing new payloads from scratch.
+**How to apply:** for transformation/conditional/level metrics and advanced form types, clone from the TPCH reference (id `<seed-model-id from search-objects>`) before writing new payloads from scratch.
 
 ## `/api/datasources` is project-agnostic
 Returns every datasource visible to the user regardless of `X-MSTR-ProjectID`. Filter client-side if the user only wants those attached to a specific project.
@@ -36,7 +36,7 @@ Returns every datasource visible to the user regardless of `X-MSTR-ProjectID`. F
 The Swagger UI SPA exists at `/api-docs/`, but the useful machine-readable spec is `/api/openapi.yaml` under the Library root. `api-docs/swagger-config` 404s on the current tenant. Use `openapi-summary` to confirm title/version/path count, and use `discover` for live catalog path variants.
 
 ## Table creation requires the "pipeline" shape, not "warehouse_partition_table"
-The MSTR Modeling docs mention `type:"warehouse_partition_table"` but on studio.strategy.com it returns 400 "Invalid value for field 'type'". Use `type:"pipeline"` with an inner `rootTable.children[0].importSource:{type:"single_table", dataSourceId, namespace, tableName, sql:""}`. See `build_tpch_mosaic_model.py` for the canonical shape or `cmd_build` in the helper after the 2026-04-21 fix.
+The MSTR Modeling docs mention `type:"warehouse_partition_table"` but on {MSTR_BASE host} it returns 400 "Invalid value for field 'type'". Use `type:"pipeline"` with an inner `rootTable.children[0].importSource:{type:"single_table", dataSourceId, namespace, tableName, sql:""}`. See `build_tpch_mosaic_model.py` for the canonical shape or `cmd_build` in the helper after the 2026-04-21 fix.
 **How to apply:** always build the pipeline JSON with fresh UUIDs for every inner id, and set outer `physicalTable.columns` as `[{information:{name}, dataType, columnName}]` (no top-level id) while inner `pipeline.rootTable.children[].columns` uses `[{id, name, dataType, sourceDataType}]`.
 
 ## Attributes must have a `displays` PATCH after create, or the changeset commit fails
@@ -61,12 +61,12 @@ NOT `/api/cubes/{id}/instances` (the latter requires an already-published cube a
 Returns 204 on success. Type 3 = data model.
 
 ## `/api/users` is locked down on this tenant; use `/api/searches/results` to find users
-`GET /api/users?limit=N` returns `{}` empty even for admin. To find a user by name, search for any object they own via `/api/searches/results?name=<firstName>&limit=50` and read the `result[].owner.{id,name}` fields. Verified: `O'Connell, Tommy` has user id `DBE00854E14B8D8919D3FBADCA61894B`.
+`GET /api/users?limit=N` returns `{}` empty even for admin on some tenants. To find a user by name, search for any object they own via `/api/searches/results?name=<firstName>&limit=50` and read the `result[].owner.{id,name}` fields. The owner tuple carries the user's 32-hex id.
 
 ## Object ACL: use the data-model-contained object endpoint first
 - Public OpenAPI exposes `PATCH /api/model/dataModels/{dataModelId}/objects/{objectId}/acl?subType=<objectSubType>` with body `{acl:{trusteeId:{granted,denied,subType:"user"|"user_group"}}}` and a changeset commit.
 - Use this for Mosaic model children (attributes, fact metrics, model folders, etc.).
-- Keep the older failures below as evidence of endpoints that do not work on studio.strategy.com for this use case.
+- Keep the older failures below as evidence of endpoints that do not work on {MSTR_BASE host} for this use case.
 
 ### Global object ACL PUT on this tenant rejects every shape tried so far
 - `POST /api/objects/{id}/acl` → 404

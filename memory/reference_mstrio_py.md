@@ -2,7 +2,7 @@
 name: mstrio-py reference for Strategy automation
 description: How to use MicroStrategy/mstrio-py alongside direct REST calls when building Mosaic automation.
 type: reference
-originSessionId: local-codex-2026-04-21
+originSessionId: codex-session
 ---
 mstrio-py is useful, but the build-mosaic-model helper should remain REST-first.
 
@@ -18,7 +18,7 @@ Current docs observed 2026-04-21:
 - Metric docs expose `Metric`, metric listing, default subtotals, thresholds, and dimensionality/format helpers.
 
 How to apply:
-- Use direct REST via `skill/scripts/build_mosaic.py` for scratch Mosaic model creation because tenant behavior can differ from public wrappers and the helper already encodes studio.strategy.com quirks.
+- Use direct REST via `skill/scripts/build_mosaic.py` for scratch Mosaic model creation because tenant behavior can differ from public wrappers and the helper already encodes {MSTR_BASE host} quirks.
 - Use mstrio-py for admin/read workflows where wrappers are stable: listing projects/users/groups, object search, security roles, schedules/subscriptions, cache operations, VLDB/admin settings, and object metadata inspection.
 - For classic project security filters, mstrio-py is useful because `SecurityFilter.create(...)` can accept an `Expression`, a dict, or a string qualification and wraps `POST /api/model/securityFilters`; `SecurityFilter.apply(...)` wraps `PATCH /api/securityFilters/{id}/members`.
 - Relevant modules/packages confirmed in the public repo: `mstrio.api.security_filters`, `mstrio.modeling.security_filter.security_filter`, `mstrio.users_and_groups.user`, and `mstrio.users_and_groups.user_group`.

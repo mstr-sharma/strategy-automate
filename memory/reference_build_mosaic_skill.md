@@ -2,10 +2,10 @@
 name: build-mosaic-model skill location and subcommands
 description: Where the skill lives and what every subcommand of its helper script does.
 type: reference
-originSessionId: cef55f31-c57d-4220-b4dc-eddfff684771
+originSessionId: initial-session
 ---
-**Skill:** `~/.claude/skills/build-mosaic-model/SKILL.md`
-**Helper script:** `~/.claude/skills/build-mosaic-model/scripts/build_mosaic.py`
+**Skill:** `$REPO/skill/SKILL.md`
+**Helper script:** `$REPO/skill/scripts/build_mosaic.py`
 
 Invoke directly; auto-reads tenant defaults and requires `MSTR_PASSWORD` (or `--password`) for authenticated calls. Do not hardcode credentials in memory or skill files.
 
