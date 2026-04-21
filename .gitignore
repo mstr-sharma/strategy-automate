@@ -5,6 +5,12 @@ __pycache__/
 # Local assistant/runtime state
 .claude/
 
+# Optional generated API cache; refresh with:
+# python3 skill/scripts/build_mosaic.py openapi-summary --out openapi.yaml
+/openapi.yaml
+/openapi.yml
+/openapi.json
+
 # Local secrets and transient logs
 .env
 .env.*
