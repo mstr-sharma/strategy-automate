@@ -24,6 +24,7 @@
 - [MCP tools available](reference_mcp_tools.md) — the Mosaic MCP server exposes `get_projects`, `get_mosaic_models`, `get_semantics`, `query`; connected via Claude/Codex connector config.
 - [Mosaic build skill](reference_build_mosaic_skill.md) — location + subcommand list for the build helper script.
 - [Mosaic build config schema](reference_mosaic_config_schema.md) — declarative config fields and post-build derived-metric workflow.
+- [Strategy automation audit resolution 2026-04-22](feedback_strategy_automation_audit_2026_04_22.md) — consolidated first audit findings, implementation status, and follow-ups.
 - [Mosaic gotchas](feedback_mosaic_gotchas.md) — precedence/encoding bugs and the clone-and-remap pattern for unknown payloads.
 - [Consumer-grade naming rules](feedback_consumer_grade_naming.md) — attribute/form/metric naming, descriptions, formatting, no-hardcoded-identities, verify-with-query before ship.
 - [Mosaic build quality rules](feedback_mosaic_build_quality.md) — 11 durable rules from the TPC-H side-by-side: form names, auto-hierarchy limits, FK coverage, composites, dates, aggregation, read-back, orphans, descriptions, diff-mode QA.
