@@ -41,6 +41,8 @@ python3 skill/scripts/build_mosaic.py api-call --method GET --path /api/projects
 python3 skill/scripts/build_mosaic.py api-call --method PATCH --path /api/model/dataModels/<id> --json-file /tmp/body.json
 ```
 
+This generic `api-call` path is the baseline API hook for every Strategy REST endpoint exposed by the tenant OpenAPI spec. Treat it as reachability, not as a full workflow wrapper; promote high-value or high-risk flows into typed helpers with dry-run/read-back/cleanup behavior.
+
 For read-first automation flows:
 ```bash
 python3 skill/scripts/build_mosaic.py search-objects --name "Object Name"
@@ -59,7 +61,7 @@ Important OpenAPI paths for Mosaic automation:
 - `GET/POST /api/model/dataModels/{dataModelId}/metrics` for advanced metrics; tenant also accepts `/factMetrics` for fact metrics.
 - `GET/POST /api/model/dataModels/{dataModelId}/factMetrics`
 - `GET/POST /api/model/dataModels/{dataModelId}/securityFilters`
-- `PATCH /api/dataModels/{dataModelId}/securityFilters/{securityFilterId}/members` for assigning members; body is JSON Patch style: `{operationList:[{op:"addElements",path:"/members",value:[ids...]}]}`.
+- `PATCH /api/dataModels/{dataModelId}/securityFilters/{securityFilterId}/members` for assigning Mosaic data-model security-filter members; body is JSON Patch style with capitalized path: `{operationList:[{op:"addElements",path:"/Members",value:[ids...]}]}`.
 - `PATCH /api/model/dataModels/{dataModelId}/objects/{objectId}/acl?subType=<objectSubType>` for ACL on model-contained objects.
 - `PATCH /api/model/dataModels/{dataModelId}/objects/{objectId}/translations?subType=<objectSubType>` for name/description/form translations.
 - `GET/PATCH /api/model/attributes/{attributeId}` for classic/legacy schema attributes outside a Mosaic data model; use changesets and request `showExpressionAs=tokens` when editing expressions.

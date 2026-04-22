@@ -60,7 +60,7 @@ SEVERITY = {"ERROR": 3, "WARN": 2, "INFO": 1}
 LOCALE_SUFFIXES = {"_DE","_ES","_FR","_IT","_JA","_KO","_PO","_SCH","_ZH","_EN"}
 AUDIT_COLS = {"LOAD_TS","LOAD_DATE","LOAD_TIMESTAMP","LAST_UPDATED_AT","ETL_BATCH_ID","DW_CREATED_AT","DW_UPDATED_AT","SOURCE_SYSTEM","INGESTION_DATE"}
 PII_HINTS = ("EMAIL","SSN","DOB","BIRTH","PHONE","FAX","ADDRESS","ZIP","POSTCODE","LAT","LON","IP_ADDR","CREDIT_CARD","PASSWORD")
-ID_TOKENS = ("_ID","_KEY","_CD","_CODE","_NO","_NUM")
+ID_TOKENS = ("_ID","ID","_KEY","KEY","_CD","_CODE","CODE","_NO","NO","_NUM","NUM","_NUMBER","NUMBER")
 NATURAL_NUMERIC_DIMS = ("YEAR","MONTH","QUARTER","WEEK","DAY","FISCAL","QTR")  # numeric but not metrics
 NUMERIC_DATATYPES = {"integer","int","decimal","double","float","numeric","real","bigint","smallint","tinyint","number"}
 
@@ -101,7 +101,7 @@ def classify_column(tname: str, col: dict) -> ColumnInfo:
     for s in LOCALE_SUFFIXES:
         if upper.endswith(s):
             locale = s.lstrip("_"); break
-    is_id = any(upper.endswith(t) or upper == t.strip("_") for t in ID_TOKENS) or upper.endswith("ID")
+    is_id = any(upper.endswith(t) or upper == t.strip("_") for t in ID_TOKENS)
     is_audit = upper in AUDIT_COLS
     is_pii = any(h in upper for h in PII_HINTS)
     return ColumnInfo(
@@ -164,17 +164,10 @@ def check_naming(cols: list[ColumnInfo], findings: list[Finding]):
 
 def check_classification(cols: list[ColumnInfo], findings: list[Finding]):
     for c in cols:
-        role = predict_role(c)
-        # ID column that the predictor skipped because of numeric type → metric: ERROR
-        if c.looks_id and c.is_numeric and not (c.name.upper().endswith("_ID") or c.name.upper().endswith("ID")):
-            # edge case — ID-like but doesn't end with ID
+        if c.looks_id and c.is_numeric and not any(c.name.upper().endswith(s) for s in ("_ID", "ID", "_KEY", "KEY")):
             findings.append(Finding("INFO","AMBIGUOUS_ID",
                 f"{c.table}.{c.name}","Numeric column matches ID tokens but not ending in ID.",
-                "Force via --attr-cols to prevent auto-classification as a metric."))
-        if c.looks_id and c.is_numeric and role == "metric":
-            findings.append(Finding("ERROR","ID_SUMMED_AS_METRIC",
-                f"{c.table}.{c.name}","ID column will be auto-SUM'd as a metric (Total X ID).",
-                "Declare in --attr-cols or dictionary so it becomes an attribute."))
+                "Confirm it is an attribute/key, or force via --metric-cols if this is actually additive."))
         if c.is_numeric and not c.looks_id and any(t in c.name.upper() for t in NATURAL_NUMERIC_DIMS):
             findings.append(Finding("WARN","NUMERIC_DIM_AS_METRIC",
                 f"{c.table}.{c.name}","Numeric dimension (year/month/qtr) will be summed as a metric.",

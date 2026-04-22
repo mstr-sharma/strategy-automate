@@ -8,7 +8,7 @@ type: reference
 - **Mosaic data-model security filter** → owned by the Mosaic model; endpoints under `/api/model/dataModels/{modelId}/securityFilters` (create) and `/api/dataModels/{modelId}/securityFilters/{sfId}/members` (assign).
 - **Project (classic) security filter** → owned at project level; different endpoints. Do not mix.
 
-This doc covers the Mosaic variant.
+This doc covers the Mosaic variant. If a request says "security filter" but does not name a Mosaic data model / dataModelId, route to `reference_strategy_legacy_semantic_admin.md` and use the classic project security-filter endpoints instead.
 
 ## Step 1 — create the filter
 
@@ -38,6 +38,7 @@ Body (verified for a Category ID = 1 filter on Products Hierarchy):
 ```
 
 Gotchas observed:
+- **Do not create a placeholder `predicate_false` filter from free text.** That is a deny-all filter, not a parsed qualification. For automation, require a structured qualification JSON or a constrained form-qualification shorthand such as `ATTR_ID[:FORM_ID]=VALUE`.
 - **`information.subType` must be `md_security_filter`**, not `security_filter`. Wrong subType → 400.
 - **`form.subType` must be `attribute_form_system`** (for the ID system form with objectId `45C11FA478E745FEA08D781CEA190FE5`). Omitting subType or using `attribute_form` → `400: The object of subtype 'null' for object '...' is not supported.`
 - Commit the changeset after creation. Member assignment happens in a separate REST call (no changeset header), so commit is required for the SF to be visible to the members endpoint.
@@ -93,6 +94,8 @@ Read back the assigned members:
 ```
 GET /api/dataModels/{modelId}/securityFilters/{sfId}/members
 ```
+
+Classic/project security-filter member assignment is similar but not identical: it uses `/api/securityFilters/{id}/members` and the lowercase `/members` patch path documented in `reference_strategy_legacy_semantic_admin.md`. Keep these two surfaces separate in helper code and audit findings.
 
 ## Full example
 

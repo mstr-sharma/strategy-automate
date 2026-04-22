@@ -154,7 +154,7 @@ class MSTR:
 
     def logout(self) -> None:
         try:
-            self.session.post(f"{self.base}/api/auth/logout", timeout=20)
+            self.session.delete(f"{self.base}/api/auth/login", timeout=20)
         except Exception:
             pass
 

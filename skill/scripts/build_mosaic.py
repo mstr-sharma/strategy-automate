@@ -138,6 +138,9 @@ def _parse_kv(items):
 NUMERIC_TYPES = {"integer","int","bigint","smallint","tinyint","long","short",
                  "decimal","numeric","float","double","real","number","money",
                  "int64","int32","fixed_numeric"}
+ID_COLUMN_SUFFIXES = ("_ID", "ID", "_KEY", "KEY", "_CD", "_CODE", "CODE",
+                      "_NO", "NO", "_NUM", "NUM", "_NUMBER", "NUMBER")
+NATURAL_NUMERIC_DIMS = ("YEAR", "MONTH", "QUARTER", "QTR", "WEEK", "DAY", "FISCAL")
 
 import re as _re
 
@@ -171,8 +174,9 @@ class MSTR:
         self.s       = requests.Session()
         self.s.headers.update({"Content-Type":"application/json","Accept":"application/json"})
         self.verbose = args.verbose
+        self.logged_in = False
 
-    def login(self):
+    def login(self, *, identity: bool = False):
         if not self.pw:
             die("missing password. Set MSTR_PASSWORD or pass --password; do not store secrets in skill/memory files.")
         r = self.s.post(f"{self.base}/api/auth/login",
@@ -183,12 +187,15 @@ class MSTR:
             die(f"login: no auth token in response headers: {dict(r.headers)}")
         self.s.headers["X-MSTR-AuthToken"] = tok
         self.s.headers["X-MSTR-ProjectID"] = self.project
-        # Identity token — required for Modeling Service changesets
-        r2 = self.s.post(f"{self.base}/api/auth/identityToken")
-        if r2.ok:
-            id_tok = r2.headers.get("X-Mstr-Identitytoken") or r2.headers.get("X-MSTR-IdentityToken","")
-            if id_tok:
-                self.s.headers["X-MSTR-IdentityToken"] = id_tok
+        self.logged_in = True
+        if identity:
+            # Identity token is required for Mosaic data-model Modeling Service changesets,
+            # but can break classic/project Modeling reads on some tenants.
+            r2 = self.s.post(f"{self.base}/api/auth/identityToken")
+            if r2.ok:
+                id_tok = r2.headers.get("X-Mstr-Identitytoken") or r2.headers.get("X-MSTR-IdentityToken","")
+                if id_tok:
+                    self.s.headers["X-MSTR-IdentityToken"] = id_tok
         if self.verbose:
             print(f"[auth] token={tok[:12]}…  identity={'yes' if 'X-MSTR-IdentityToken' in self.s.headers else 'no'}", file=sys.stderr)
 
@@ -200,10 +207,14 @@ class MSTR:
     def delete(self, path, **kw): return self.s.delete(f"{self.base}{path}", **kw)
 
     def logout(self):
+        if not self.logged_in:
+            return
         try:
             self.delete("/api/auth/login")
         except requests.RequestException:
             pass
+        finally:
+            self.logged_in = False
 
     def try_candidates(self, kind, **fmt) -> tuple[str, Any]:
         """Walk ENDPOINT_CANDIDATES[kind]; return (path_used, json_body) on first 2xx."""
@@ -229,7 +240,7 @@ def new_uuid() -> str:
 
 # ── Discovery ─────────────────────────────────────────────────────────────────
 def cmd_auth_probe(m: MSTR, args):
-    m.login()
+    m.login(identity=True)
     print(json.dumps({
         "ok": True,
         "base": m.base,
@@ -449,7 +460,7 @@ def cmd_openapi_search(m: MSTR, args):
 def cmd_api_call(m: MSTR, args):
     """Generic Strategy REST call for workflows not yet wrapped by a subcommand."""
     if not args.no_auth:
-        m.login()
+        m.login(identity=args.identity_token)
     method = args.method.upper()
     if method == "DELETE" and not args.yes:
         die("DELETE requires --yes")
@@ -593,6 +604,16 @@ def _col_dtype(c: dict) -> str:
     return str(dt).lower()
 
 
+def _looks_like_identifier_col(name: str) -> bool:
+    upper = (name or "").upper()
+    return any(upper.endswith(suffix) or upper == suffix.lstrip("_") for suffix in ID_COLUMN_SUFFIXES)
+
+
+def _looks_like_numeric_dimension(name: str) -> bool:
+    upper = (name or "").upper()
+    return any(token in upper for token in NATURAL_NUMERIC_DIMS)
+
+
 def classify_columns(cols, attr_override: set[str], metric_override: set[str]):
     attrs, metrics = [], []
     for c in cols:
@@ -603,7 +624,9 @@ def classify_columns(cols, attr_override: set[str], metric_override: set[str]):
         if name.lower() in metric_override:
             metrics.append(c); continue
         dtype = _col_dtype(c)
-        if any(t in dtype for t in NUMERIC_TYPES):
+        if _looks_like_identifier_col(name) or _looks_like_numeric_dimension(name):
+            attrs.append(c)
+        elif any(t in dtype for t in NUMERIC_TYPES):
             metrics.append(c)
         else:
             attrs.append(c)
@@ -628,7 +651,7 @@ def commit_cs(m: MSTR, cs: str):
 
 
 def cmd_build(m: MSTR, args):
-    m.login()
+    m.login(identity=True)
     sources = [parse_source(s) for s in args.source]
     if args.instance and args.schema and args.tables:
         sources.append((args.instance, args.schema, args.tables))
@@ -1169,6 +1192,11 @@ def cmd_build(m: MSTR, args):
         "conformed_dimensions": len(conformed_cols),
         "hierarchy_path": [n["name"] for n in hierarchy_path] if hierarchy_path else None,
         "hierarchy_id": hierarchy_id,
+        "data_validation": {
+            "status": "not_run",
+            "required": True,
+            "reason": "Data correctness validation is reference-dependent. Choose a trusted comparator such as another Mosaic model, a classic report/model, warehouse SQL, a flat file, or a REST fixture before marking the build shippable.",
+        },
     }
 
     # ── Security filters ──
@@ -1315,7 +1343,7 @@ def _resolve_member_ids(m: MSTR, names_or_ids: list[str]) -> list[str]:
 def _assign_security_filter_members(m: MSTR, model_id: str, sf_id: str, member_ids: list[str]):
     if not member_ids:
         return False
-    patch_body = {"operationList":[{"op":"addElements", "path":"/members", "value": member_ids}]}
+    patch_body = {"operationList":[{"op":"addElements", "path":"/Members", "value": member_ids}]}
     r = m.patch(f"/api/dataModels/{model_id}/securityFilters/{sf_id}/members", json=patch_body)
     if r.ok:
         return True
@@ -1329,18 +1357,93 @@ def _assign_security_filter_members(m: MSTR, model_id: str, sf_id: str, member_i
     return False
 
 
+def _normalize_mosaic_security_filter_qualification(value: Any) -> dict:
+    """Return a Mosaic security-filter qualification object.
+
+    Accepts either {"qualification": {...}} or the qualification object itself.
+    """
+    if not isinstance(value, dict):
+        die("Mosaic security filter qualification must be a JSON object")
+    if isinstance(value.get("qualification"), dict):
+        value = value["qualification"]
+    if isinstance(value.get("tree"), dict):
+        return value
+    die("Mosaic security filter qualification must contain a top-level 'tree' object")
+
+
+def _infer_constant(value: str) -> dict:
+    text = str(value).strip()
+    if (text.startswith('"') and text.endswith('"')) or (text.startswith("'") and text.endswith("'")):
+        text = text[1:-1]
+    if _re.fullmatch(r"-?\d+", text):
+        return {"parameterType": "constant", "constant": {"type": "int32", "value": text}}
+    if _re.fullmatch(r"-?(?:\d+\.\d*|\.\d+)(?:[eE][+-]?\d+)?|-?\d+[eE][+-]?\d+", text):
+        return {"parameterType": "constant", "constant": {"type": "double", "value": text}}
+    return {"parameterType": "constant", "constant": {"type": "string", "value": text}}
+
+
+def _parse_mosaic_security_filter_qualification(raw: str) -> dict:
+    """Parse the Mosaic-only qualification half of --security-filter.
+
+    Supported minimal form:
+      <attributeId>[:<formId>]=<constant>
+
+    For anything richer, pass @path/to/qualification.json where the file contains
+    either {"qualification": {...}} or {"tree": {...}}. Classic/project security
+    filters use a different endpoint family and should not call this helper.
+    """
+    qual = (raw or "").strip()
+    if not qual:
+        die("Mosaic security filter requires a qualification after NAME=")
+    if qual.startswith("@"):
+        return _normalize_mosaic_security_filter_qualification(load_structured_file(qual[1:]))
+    if qual.startswith("{"):
+        try:
+            payload = json.loads(qual)
+        except json.JSONDecodeError as exc:
+            die(f"Mosaic security filter JSON qualification is invalid: {exc}")
+        return _normalize_mosaic_security_filter_qualification(payload)
+
+    left, sep, value = qual.partition("=")
+    if sep and value:
+        attr, _, form = left.strip().partition(":")
+        if _is_mstr_id(attr) and (not form or _is_mstr_id(form)):
+            return {"tree": {
+                "type": "predicate_form_qualification",
+                "predicateTree": {
+                    "function": "equals",
+                    "attribute": {"objectId": attr.upper(), "subType": "attribute"},
+                    "form": {"objectId": (form.upper() if form else FORM_ID),
+                             "subType": "attribute_form_system"},
+                    "parameters": [_infer_constant(value)],
+                },
+            }}
+
+    die("Mosaic security filter qualification must be @file.json, JSON, or ATTR_ID[:FORM_ID]=VALUE. "
+        "Classic/project security filters use /api/model/securityFilters and /api/securityFilters/{id}/members.")
+
+
 def _apply_security_filter(m: MSTR, model_id: str, spec: str):
-    """spec format: 'NAME=qualification_text|USER,USER' — minimal; for richer
-    qualifications use --sf-config pointing at a JSON file."""
-    parts = spec.split("|")
+    """Create a Mosaic data-model security filter and optionally assign members.
+
+    This is not the classic/project security-filter helper. Classic filters are
+    created through /api/model/securityFilters and assigned through
+    /api/securityFilters/{id}/members.
+    """
+    parts = spec.split("|", 1)
     nq, users = parts[0], (parts[1].split(",") if len(parts)>1 else [])
     name, _, qual = nq.partition("=")
+    name = name.strip()
+    qualification = _parse_mosaic_security_filter_qualification(qual)
     cs = open_cs(m)
     r = m.post(f"/api/model/dataModels/{model_id}/securityFilters?changesetId={cs}",
-               json={"information":{"name": name},
-                     "qualification":{"tree":{"type":"predicate_false","predicateText": qual}},
+               json={"information":{"name": name, "subType": "md_security_filter"},
+                     "qualification": qualification,
                      "topLevel":[],"bottomLevel":[]})
-    if not r.ok: die(f"security filter '{name}': {r.status_code} {r.text[:300]}")
+    if not r.ok:
+        m.delete(f"/api/model/changesets/{cs}")
+        m.s.headers.pop("X-MSTR-MS-Changeset", None)
+        die(f"security filter '{name}': {r.status_code} {r.text[:300]}")
     sf_id = r.json()["information"]["objectId"]
     commit_cs(m, cs)
     if users:
@@ -1505,7 +1608,7 @@ def _publish(m: MSTR, model_id: str):
 
 
 def cmd_set_serve_mode(m: MSTR, args):
-    m.login()
+    m.login(identity=True)
     r = m.s.patch(f"{m.base}/api/model/dataModels/{args.model_id}",
                   json={"dataServeMode": args.mode})
     print(f"HTTP {r.status_code}: {r.text[:300]}")
@@ -1517,16 +1620,18 @@ def cmd_refresh(m: MSTR, args):
                params={"refreshType": args.refresh_type})
     print(f"HTTP {r.status_code}: {r.text[:300]}")
 def cmd_delete_model(m: MSTR, args):
+    if not args.yes:
+        die("delete-model requires --yes after verifying the Mosaic data model id")
     m.login()
     r = m.delete(f"/api/objects/{args.model_id}?type=3")
     print(f"HTTP {r.status_code}: {r.text[:300]}")
 def cmd_set_acl(m: MSTR, args):
-    m.login(); _apply_acl(m, args.object_id, args.grant, model_id=args.model_id,
-                          sub_type=args.sub_type, denies=args.deny)
+    m.login(identity=bool(args.model_id)); _apply_acl(m, args.object_id, args.grant, model_id=args.model_id,
+                                                       sub_type=args.sub_type, denies=args.deny)
 def cmd_add_security_filter(m: MSTR, args):
-    m.login(); _apply_security_filter(m, args.model_id, args.spec)
+    m.login(identity=True); _apply_security_filter(m, args.model_id, args.spec)
 def cmd_translate(m: MSTR, args):
-    m.login(); _apply_translations(m, args.model_id, args.entry, default_sub_type=args.sub_type)
+    m.login(identity=True); _apply_translations(m, args.model_id, args.entry, default_sub_type=args.sub_type)
 def cmd_certify(m: MSTR, args):
     m.login(); _certify(m, args.object_id)
 
@@ -1700,8 +1805,8 @@ def _expression_params(args) -> dict:
 
 
 def cmd_get_model_object(m: MSTR, args):
-    m.login()
     path, _ = _model_object_path(args.kind, args.model_id, args.object_id)
+    m.login(identity=False)
     r = m.get(path, params=_expression_params(args) or None)
     out = {"ok": r.ok, "status": r.status_code, "path": path}
     try:
@@ -1726,8 +1831,8 @@ def cmd_patch_model_object(m: MSTR, args):
     body = _load_json_arg(args.json, args.json_file)
     if body is None:
         die("patch-model-object requires --json or --json-file")
-    m.login()
     path, info = _model_object_path(args.kind, args.model_id, args.object_id)
+    m.login(identity=info.get("needs_model", False))
     before = None
     if args.before_out or args.include_before:
         r0 = m.get(path, params=_expression_params(args) or None)
@@ -1906,7 +2011,7 @@ def cmd_create_users(m: MSTR, args):
 def cmd_create_transformation(m: MSTR, args):
     """Create a time-shift transformation.
     --member: 'attributeId=offset' (repeatable). offset is integer (-1 = prior period)."""
-    m.login()
+    m.login(identity=True)
     members = []
     for spec in args.member:
         aid, _, off = spec.partition("=")
@@ -1925,7 +2030,7 @@ def cmd_create_compound_metric(m: MSTR, args):
     """Create a compound metric from a formula referencing existing metric IDs.
     --formula: infix tokens, e.g. 'METRIC:<id1> - METRIC:<id2>'  (METRIC:<id> metric_reference tokens,
     OP:<op> operator tokens).  Simple: 'A - B' where A,B are metric IDs."""
-    m.login()
+    m.login(identity=True)
     tokens = []
     for raw in args.formula.split():
         if raw in {"+","-","*","/","(",")"}:
@@ -1947,7 +2052,7 @@ def cmd_create_conditional_metric(m: MSTR, args):
     """Create a filtered metric: copy a source metric and apply a filter.
     --source-metric: existing metric id to clone semantics from.
     --filter: existing filter object id to embed."""
-    m.login()
+    m.login(identity=True)
     r = m.get(f"/api/model/dataModels/{args.model_id}/factMetrics/{args.source_metric}")
     if not r.ok: die(f"source metric GET: {r.status_code} {r.text[:200]}")
     src = r.json()
@@ -1971,7 +2076,7 @@ def cmd_create_conditional_metric(m: MSTR, args):
 
 def cmd_attach_transformation(m: MSTR, args):
     """Apply a transformation to an existing metric → creates a new time-shifted metric."""
-    m.login()
+    m.login(identity=True)
     r = m.get(f"/api/model/dataModels/{args.model_id}/factMetrics/{args.source_metric}")
     if not r.ok: die(f"source metric GET: {r.status_code} {r.text[:200]}")
     src = r.json()
@@ -2282,6 +2387,8 @@ def build_parser():
     sp.add_argument("--out", help="save response body to file")
     sp.add_argument("--text-limit", type=int, default=8000)
     sp.add_argument("--no-auth", action="store_true", help="do not login first; useful for public OpenAPI paths")
+    sp.add_argument("--identity-token", action="store_true",
+                    help="also request X-MSTR-IdentityToken; use for Mosaic data-model Modeling Service writes, not classic/project Modeling calls")
     sp.add_argument("--yes", action="store_true", help="required for DELETE")
 
     sp = sub.add_parser("resolve-users")
@@ -2359,7 +2466,7 @@ def build_parser():
     sp.add_argument("--erd", action="append", default=[],
                     help="ERD file (JSON/YAML list of relationships, DBML, Mermaid, or SQL DDL). Repeatable.")
     sp.add_argument("--security-filter", action="append", default=[],
-                    help="'NAME=qualification|USER,USER' (repeatable)")
+                    help="Mosaic data-model SF: 'NAME=ATTR_ID[:FORM_ID]=VALUE|USER,USER' or 'NAME=@qualification.json|USER,USER' (repeatable)")
     sp.add_argument("--grant", action="append", default=[],
                     help="ACL grant 'trusteeId:right1,right2' (repeatable)")
     sp.add_argument("--deny", action="append", default=[],
@@ -2392,7 +2499,9 @@ def build_parser():
     sp.add_argument("--refresh-type", default="incremental",
                     choices=["update","add","replace","incremental"])
 
-    sp = sub.add_parser("delete-model"); sp.add_argument("--model-id", required=True)
+    sp = sub.add_parser("delete-model")
+    sp.add_argument("--model-id", required=True)
+    sp.add_argument("--yes", action="store_true", help="required after verifying the Mosaic data model id")
 
     sp = sub.add_parser("set-acl")
     sp.add_argument("--model-id", help="required for data-model-contained objects")
@@ -2404,7 +2513,8 @@ def build_parser():
 
     sp = sub.add_parser("add-security-filter")
     sp.add_argument("--model-id", required=True)
-    sp.add_argument("--spec", required=True, help="'NAME=qualification|USER,USER'")
+    sp.add_argument("--spec", required=True,
+                    help="Mosaic data-model SF: 'NAME=ATTR_ID[:FORM_ID]=VALUE|USER,USER' or 'NAME=@qualification.json|USER,USER'")
 
     sp = sub.add_parser("translate")
     sp.add_argument("--model-id", required=True)
@@ -2479,6 +2589,7 @@ def main():
     except requests.HTTPError as e:
         die(f"{e.response.status_code} {e.response.text[:500]}")
     finally:
+        m.logout()
         if args.verbose:
             print(f"[wall] {int((time.monotonic()-t0)*1000)}ms", file=sys.stderr)
 

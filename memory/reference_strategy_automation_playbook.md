@@ -4,11 +4,12 @@ description: NLQ-to-action operating model for making Claude/Codex an expert Str
 type: reference
 originSessionId: codex-session
 ---
-Goal: a user should be able to ask in natural language for nearly any Strategy (formerly MicroStrategy) task, and the agent should route it to the right automation surface without guessing.
+Goal: a user should be able to ask in natural language for nearly any Strategy (formerly MicroStrategy) task, and the agent should route it to the right automation surface without guessing. The target is complete platform automation wherever Strategy exposes an API, SDK, MCP, CLI, or reproducible hook, with explicit known-gap notes where no reliable hook exists.
 
 ## Operating loop
 1. Classify the request: read-only inspect, create/update, destructive, query published data, build/modify Mosaic model, governance/security, admin/platform.
 2. Load only the needed references from `MEMORY.md`.
+   - For broad audits or "can this automate everything?" requests, load `reference_strategy_automation_coverage.md` and classify each area by coverage level.
    - If the noun is overloaded (`attribute`, `metric`, `prompt`, `filter`, `security filter`, `ACL`, `cube`, `dataset`, `report`, `dashboard`, `document`, `model`, `agent`), load `reference_strategy_surface_matrix.md` before choosing endpoints.
    - If the user drops files or says "use this ERD / dictionary / user list", load `reference_strategy_intake_patterns.md`.
    - If the user wants to modernize legacy reports/documents/tables into Mosaic, load `reference_strategy_legacy_to_mosaic_mining.md`.
@@ -46,11 +47,16 @@ python3 skill/scripts/strategy_semantic_mine.py --mode reverse --seed TABLE_ID;1
 
 ## Choosing the automation surface
 - Surface matrix: first stop for ambiguous nouns and product-generation boundaries.
-- REST helper: default for anything in OpenAPI, especially writes.
+- REST helper: default for anything in OpenAPI, especially writes. A generic `api-call` path is the baseline hook for every exposed REST endpoint; typed helper commands are added for repeatable, risky, or multi-step workflows.
 - Mosaic builder: warehouse table discovery through semantic model creation, relationships, metrics, security, publish.
 - MCP: read/query already-published Mosaic models; do not use MCP for Modeling Service writes.
 - mstrio-py: admin/read-heavy workflows and stable wrappers; still capture REST if a workflow becomes canonical.
-- Browser automation: only when REST/MCP cannot expose the needed UI-only action; capture the network request if possible.
+- Browser automation: only when REST/MCP/mstrio/CLI cannot expose the needed UI-only action; capture the network request if possible and record it as a captured fallback or known gap.
+
+## Coverage discipline
+- Use `reference_strategy_automation_coverage.md` to distinguish wrapped helpers from generic hooks.
+- When adding a new platform surface, update the task catalog with the endpoint family, the preferred hook, and the verification/read-back expectation.
+- If an API is unavailable or tenant-specific, record the tested date, tenant behavior, and workaround instead of promising automation.
 
 ## Verification expectations
 - REST write: follow with `GET` or folder/search lookup.

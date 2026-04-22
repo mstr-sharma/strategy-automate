@@ -177,4 +177,4 @@ mstrio-py's `SecurityFilter.create(...)` wraps `POST /api/model/securityFilters`
 - For security filters: verify the committed object can be read by `/api/model/securityFilters/{id}` and listed by `/api/securityFilters`.
 - For member assignment: verify `/api/securityFilters/{id}/members` contains the new user ID.
 - For user-centric verification: verify `/api/users/{id}/securityFilters` includes the filter under the intended project.
-- Logout with `POST /api/auth/logout` when the task finishes.
+- Logout with `DELETE /api/auth/login` when the task finishes.

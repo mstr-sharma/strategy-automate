@@ -4,7 +4,7 @@ description: Routing matrix for classic semantic objects, Mosaic data-model obje
 type: reference
 originSessionId: codex-session
 ---
-Use this before choosing endpoints. Strategy has overlapping nouns across product generations; route by ownership and runtime surface.
+Use this before choosing endpoints. Strategy has overlapping nouns across product generations; route by ownership and runtime surface. For coverage audits, pair this with `reference_strategy_automation_coverage.md` so each surface is marked as wrapped helper, generic REST hook, specialized hook, captured fallback, or known gap.
 
 ## Routing rule
 

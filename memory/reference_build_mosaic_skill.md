@@ -18,14 +18,14 @@ Invoke directly; auto-reads tenant defaults and requires `MSTR_PASSWORD` (or `--
 - `discover` — probes every endpoint variant; useful when porting to a new MSTR version.
 - `openapi-summary [--out /tmp/strategy-openapi.yaml]` — fetches `{base}/api/openapi.yaml`, prints title/version/path counts, and selected modeling/data-source paths. Does not require login.
 - `openapi-search PATTERN [--context N]` — searches local `openapi.yaml` first, then live OpenAPI; use before coding new endpoint workflows.
-- `api-call --method GET --path /api/projects` — generic authenticated Strategy REST caller. Use `--no-auth` for public paths such as `/api/openapi.yaml`; `DELETE` requires `--yes`.
+- `api-call --method GET --path /api/projects` — generic authenticated Strategy REST caller. Use `--no-auth` for public paths such as `/api/openapi.yaml`; use `--identity-token` only for Mosaic data-model Modeling writes; `DELETE` requires `--yes`.
 - `resolve-users --user NAME_OR_EMAIL` / `--file users.csv` — resolve user IDs before ACL/security/user writes.
 - `search-objects --name NAME [--type N] [--subtype N]` — Quick Search wrapper for object IDs.
 - `get-model-object --kind attribute|fact_metric|legacy_attribute|... --model-id M --object-id O --show-expression-as tokens` — read Mosaic-contained or classic schema object definitions.
 
 **Build subcommand:**
 - `build --name N --source "INSTANCE:SCHEMA:T1,T2,..."` (repeatable, for multi-source) — the main one.
-  Flags: `--data-serve-mode {connect_live|in_memory|hybrid}`, `--dictionary`, `--erd`, `--attr-cols`, `--metric-cols`, `--skip-relationships`, `--security-filter 'NAME=qual|USER,USER'`, `--grant 'trusteeId:rights[:user|user_group]'`, `--deny 'trusteeId:rights[:user|user_group]'`, `--translate 'objectId[:SubType]:locale[:field]=text'`, `--certify`, `--publish`.
+  Flags: `--data-serve-mode {connect_live|in_memory|hybrid}`, `--dictionary`, `--erd`, `--attr-cols`, `--metric-cols`, `--skip-relationships`, `--security-filter 'NAME=ATTR_ID[:FORM_ID]=VALUE|USER,USER'`, `--grant 'trusteeId:rights[:user|user_group]'`, `--deny 'trusteeId:rights[:user|user_group]'`, `--translate 'objectId[:SubType]:locale[:field]=text'`, `--certify`, `--publish`.
 - `build-from-config --config spec.yaml` — declarative JSON/YAML build; accepts `dictionary`, `data_dictionary`, `erd`, and `erds` paths (see `reference_mosaic_config_schema.md`).
 
 **Quality gate (run after every build, and before publish/certify):**
@@ -40,9 +40,9 @@ Invoke directly; auto-reads tenant defaults and requires `MSTR_PASSWORD` (or `--
 - `set-serve-mode --model-id M --mode {connect_live|in_memory|hybrid}`
 - `publish --model-id M`  (for in-memory cubes; tries `POST /api/cubes/{modelId}` first)
 - `refresh --model-id M --refresh-type {update|add|replace|incremental}`
-- `delete-model --model-id M`
+- `delete-model --model-id M --yes`
 - `set-acl --model-id M --object-id O --sub-type fact_metric --grant 'trusteeId:rights' --deny 'trusteeId:rights'`
-- `add-security-filter --model-id M --spec 'NAME=qual|USER,USER'`
+- `add-security-filter --model-id M --spec 'NAME=ATTR_ID[:FORM_ID]=VALUE|USER,USER'`
 - `translate --model-id M --entry 'objectId[:subType]:locale[:name|description]=text'`
 - `certify --object-id O`
 

@@ -12,7 +12,9 @@ Companion to the `strategy-validation` skill (`strategy-validation/SKILL.md`) an
 - Before a production publish/refresh.
 - During any legacy→Mosaic migration.
 
-A build that hasn't been validated is not shippable. The validator's pass rate is part of the release bar, not an optional polish step.
+A build that hasn't been validated is not shippable. The validator's pass rate is part of the release bar, not an optional polish step. If no trusted comparator is available yet, report `validation_status=not_run` and the exact comparator needed instead of implying the build is done.
+
+Validation is reference-dependent. Existing Mosaic models, legacy/classic reports or semantic models, direct warehouse SQL, exported files, and external systems can all be valid truth sources, but each needs a different adapter and query shape.
 
 ## Reference source choice (pluggable — NOT Mosaic-only)
 
@@ -24,7 +26,9 @@ Pick whichever source is closest to trusted ground truth:
 | Classic/legacy project report | Legacy→Mosaic migration, reproducing a known dashboard answer | Classic `/api/reports/{id}/instances` + JSON Data API, or Modeling Service reads per `reference_strategy_legacy_to_mosaic_mining.md` |
 | Flat file (CSV/Parquet/JSON) | Auditor gold set, snapshot export, hand-curated fixture | Local DuckDB/Pandas |
 | Direct warehouse SQL | "Does the semantic layer math match raw warehouse?" | Snowflake/BigQuery/Oracle driver with service creds |
-| REST fixture / prior run | Regression — "does today's build still match yesterday's?" | Saved JSON diff target |
+| External system / REST fixture / prior run | Regression, system-to-system reconciliation, "does today's build still match yesterday's?" | API call, saved JSON diff target, or source-system export |
+
+Do not default to Mosaic-to-Mosaic just because MCP is convenient. Use the most trusted comparator for the business question.
 
 ## Minimum 5-query suite
 
@@ -67,15 +71,27 @@ Both models trace to the same Snowflake `TPCH_SF1` source — matching proves th
 
 ## Helper script (planned / extend)
 
-`skill/scripts/strategy_validate_models.py` — extend existing `strategy_validate.py` scaffolding. Should accept:
+`skill/scripts/strategy_validate_models.py` — pluggable runner. The implemented core compares CSV/JSON result files:
+
+```bash
+python3 skill/scripts/strategy_validate_models.py \
+  --model-file /tmp/model_rows.json \
+  --reference-file /tmp/reference_rows.json \
+  --key region,nation \
+  --measures revenue,orders \
+  --out /tmp/validation.json
+```
+
+Live adapters are intentionally incremental. They should accept:
 
 - `--model <name>` — the model under test (Mosaic by name; resolves via MCP or REST search)
 - `--reference-mosaic <name>` — another Mosaic model
 - `--reference-sql-file <path> --reference-conn <dsn>` — raw warehouse SQL
 - `--reference-file <path> --key cols --measures cols` — flat-file gold set
 - `--reference-classic-report <name>` — classic/legacy project report
+- `--reference-rest-file <path>` or external-system adapter options — REST/API fixture comparison
 - `--query-suite <name>` — named suite (tpch-standard, retail-standard, etc.)
 - `--tolerance <float>` — numeric tolerance (default 1e-6)
 - `--out <json>` — structured validation result
 
-Until the helper exists, run ad-hoc via MCP `query` + Python diffs. The TPC-H validation above was done exactly that way.
+Until a live adapter exists for a source, run ad-hoc through the appropriate source adapter, save both row sets, and feed them into `strategy_validate_models.py`. The TPC-H validation above used MCP `query` because the trusted comparator was another Mosaic model; a legacy migration or external reconciliation should use the legacy report/API/warehouse adapter instead.

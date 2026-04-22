@@ -1,6 +1,6 @@
 # AGENTS.md — entry point for AI coding agents
 
-You are operating inside the **strategy-automation** repo: a one-stop automation brain for **Strategy** (formerly MicroStrategy) that covers Mosaic semantic models, the classic / legacy semantic layer, admin tasks, and data validation.
+You are operating inside the **strategy-automation** repo: a one-stop automation brain for **Strategy** (formerly MicroStrategy) that aims for complete platform automation wherever Strategy exposes an API, SDK, MCP, CLI, or reproducible hook. It covers Mosaic semantic models, the classic / legacy semantic layer, runtime analytics, cubes / datasets, platform admin, AI agents, and data validation.
 
 This file is the cross-tool entry point (Codex CLI, Gemini CLI, Cursor, Cline, etc.). Claude Code also reads `memory/MEMORY.md` directly; the two indexes point at the same content.
 
@@ -14,11 +14,16 @@ This file is the cross-tool entry point (Codex CLI, Gemini CLI, Cursor, Cline, e
    - `strategy-validation/SKILL.md` — paired-query data-correctness validation against any reference source.
 4. **Use environment configuration, never hardcoded values.** `MSTR_BASE`, `MSTR_USER`, `MSTR_PASSWORD`, `MSTR_PROJECT_ID` or `MSTR_PROJECT_NAME`, `MSTR_DEST_FOLDER_ID`. See `.env.example` + `memory/reference_strategy_env.md`.
 5. **Probe live specs when endpoint details matter.** `python3 skill/scripts/build_mosaic.py openapi-summary` and `... openapi-search "<term>"` hit `/api/openapi.yaml` directly.
+6. **Classify automation coverage honestly.** Use `memory/reference_strategy_automation_coverage.md`: wrapped helper, generic REST hook, specialized hook, captured fallback, or known gap. Generic `api-call` reachability is an API hook, but not a finished workflow wrapper.
+
+For Mosaic work, distinguish the entry path:
+- **Legacy-to-Mosaic migration:** mine/read the classic semantic layer first, then use its attributes, forms, facts, metrics, relationships, filters, and reports as the blueprint for the new Mosaic model.
+- **Brand-new Mosaic model:** start from warehouse discovery plus ERD/data dictionary/preflight checks, then build and validate against the best available comparator.
 
 ## Operating rules (apply to every tool)
 
 - **Consumer-grade naming is the ship bar.** Any model you build or modify must pass the checklist in `memory/feedback_consumer_grade_naming.md` — business-named attributes, non-empty form names, business-friendly descriptions, sensible metric formats, no hardcoded example usernames or personal names.
-- **Every Mosaic build closes with data validation.** Route through `strategy-validation/SKILL.md`; the reference source can be another Mosaic model, a classic project report, a flat file, direct warehouse SQL, or a saved REST fixture (NOT Mosaic-to-Mosaic only).
+- **Every Mosaic build closes with data validation or an explicit pending note.** Route through `strategy-validation/SKILL.md`; validation is comparator-dependent, and the reference source can be another Mosaic model, a classic project report/model, a flat file, direct warehouse SQL, an external system/API, or a saved REST fixture (NOT Mosaic-to-Mosaic only). If no trusted comparator is available, say validation is pending and do not call the build shippable.
 - **Changesets are the unit of write.** Open → mutate → commit, or discard on failure. Relationships / ACLs / translations typically require a separate changeset after object creation.
 - **Preserve tenant-verified gotchas.** When a script's endpoint returns 404 or a payload shape changes, update both the script and the corresponding memory file. Never silently work around.
 - **Never hardcode credentials, tenant IDs, or personal names.** Pull from env vars; parameterize security filters.
@@ -42,6 +47,7 @@ See `memory/MEMORY.md` for the full list. The most load-bearing entries:
 - `project_mosaic_build.md` — repo purpose and how to extend it.
 - `reference_strategy_env.md` — env-var + CLI-flag convention.
 - `reference_strategy_automation_playbook.md` — NLQ-to-action loop, safety model.
+- `reference_strategy_automation_coverage.md` — complete-platform coverage levels and gap-register rules.
 - `reference_strategy_surface_matrix.md` — route ambiguous nouns to the right surface.
 - `reference_mosaic_rest_api.md` + `reference_mosaic_modeling_concepts.md` — Mosaic endpoints + payload shapes.
 - `reference_strategy_mosaic_field_study.md` — live portfolio inventory + legacy↔Mosaic translation matrix.
