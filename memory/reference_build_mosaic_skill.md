@@ -28,6 +28,9 @@ Invoke directly; auto-reads tenant defaults and requires `MSTR_PASSWORD` (or `--
   Flags: `--data-serve-mode {connect_live|in_memory|hybrid}`, `--dictionary`, `--erd`, `--attr-cols`, `--metric-cols`, `--skip-relationships`, `--security-filter 'NAME=qual|USER,USER'`, `--grant 'trusteeId:rights[:user|user_group]'`, `--deny 'trusteeId:rights[:user|user_group]'`, `--translate 'objectId[:SubType]:locale[:field]=text'`, `--certify`, `--publish`.
 - `build-from-config --config spec.yaml` — declarative JSON/YAML build; accepts `dictionary`, `data_dictionary`, `erd`, and `erds` paths (see `reference_mosaic_config_schema.md`).
 
+**Quality gate (run after every build, and before publish/certify):**
+- `validate-model --model-id M [--fact-tables TBL,TBL] [--strict-orphans] [--diff-against OTHER_ID] [--json]` — enforces the rules in `feedback_mosaic_build_quality.md` via the checks catalogued in `reference_mosaic_build_validation.md`. Emits FAIL/WARN summary + optional JSON report, exits non-zero on failures. `--diff-against` flags count regressions (attributes/metrics/relationships dropping vs a prior model id).
+
 **User/admin ops:**
 - `create-users --file users.csv` — dry-run user creation from CSV/JSON/YAML; use `--check-existing` to resolve duplicates during dry-run.
 - `create-users --file users.csv --yes` — creates via `POST /api/users`; optional email column creates `/api/users/{id}/addresses`. Default password can come from `MSTR_NEW_USER_PASSWORD`.
