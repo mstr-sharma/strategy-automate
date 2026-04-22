@@ -1596,24 +1596,134 @@ def _certify(m: MSTR, object_id: str):
     else: print(f"  WARN certify: {r.status_code} {r.text[:200]}", file=sys.stderr)
 
 
-def _publish(m: MSTR, model_id: str):
-    for path in [f"/api/cubes/{model_id}",
-                 f"/api/model/dataModels/{model_id}/publish",
-                 f"/api/model/dataModels/{model_id}/import",
-                 f"/api/cubes/{model_id}/publish"]:
-        r = m.post(path, json={})
-        if r.ok:
-            print(f"  ✓ published via {path}", file=sys.stderr); return
-    print(f"  WARN: no publish endpoint accepted", file=sys.stderr)
+def classify_object_surface(m: MSTR, object_id: str) -> dict:
+    """Decide whether an object is Mosaic (subtype 779) vs a classic cube (776) vs other.
+
+    Returns {"subtype": int, "surface": "mosaic_data_model|classic_cube|other", "name": str}.
+    Pure read. Must be called before any endpoint that differs between surfaces (publish,
+    refresh, execute, ACL, security filter, serve mode). See
+    memory/reference_mosaic_vs_legacy_surfaces.md for the full pair cheat sheet.
+    """
+    r = m.get(f"/api/objects/{object_id}?type=3")
+    if not r.ok:
+        die(f"classify_object_surface: cannot GET /api/objects/{object_id}?type=3 "
+            f"({r.status_code}); cannot route legacy-vs-Mosaic safely.")
+    d = r.json()
+    subtype = int(d.get("subtype") or 0)
+    surface = ("mosaic_data_model" if subtype == 779
+               else "classic_cube"   if subtype == 776
+               else "other")
+    return {"subtype": subtype, "surface": surface, "name": d.get("name")}
+
+
+def _mosaic_publish_verified(m: MSTR, model_id: str, *, poll_seconds: int = 180,
+                             poll_interval: float = 5.0) -> None:
+    """Publish a Mosaic data model via the verified 3-step flow and assert completion.
+
+    Flow (see memory/reference_mosaic_vs_legacy_surfaces.md):
+      1. POST /api/dataModels/{id}/instances           -> 204 with X-MSTR-DataModelInstanceId header
+      2. POST /api/dataModels/{id}/publish             body {"tables":[{id,refreshPolicy:replace}]}
+      3. poll GET /api/dataModels/{id}/publishStatus   until every table is "loaded"
+
+    Fails loud on:
+      - missing instance header
+      - non-204 publish response
+      - terminal error status (-2147212544 QueryEngine stall etc.)
+      - timeout before every table is "loaded"
+    Never falls back to /api/cubes/* — that endpoint 2xxs but leaves a Mosaic model unpublished.
+    """
+    # discover tables (ids required in publish body)
+    r = m.get(f"/api/model/dataModels/{model_id}/tables")
+    if not r.ok:
+        die(f"_mosaic_publish_verified: list tables failed {r.status_code} {r.text[:200]}")
+    tables = r.json().get("tables") or []
+    if not tables:
+        die(f"_mosaic_publish_verified: model {model_id} has 0 tables; nothing to publish.")
+    tids = [t["information"]["objectId"] for t in tables]
+
+    # 1. create instance
+    r1 = m.post(f"/api/dataModels/{model_id}/instances")
+    inst = r1.headers.get("X-MSTR-DataModelInstanceId") or r1.headers.get("X-Mstr-Datamodelinstanceid")
+    if not inst:
+        die(f"_mosaic_publish_verified: no X-MSTR-DataModelInstanceId header in "
+            f"/instances response ({r1.status_code}); cannot proceed.")
+
+    # 2. publish with tables[] body
+    hdr = {"X-MSTR-DataModelInstanceId": inst}
+    r2 = m.post(f"/api/dataModels/{model_id}/publish",
+                headers=hdr,
+                json={"tables": [{"id": tid, "refreshPolicy": "replace"} for tid in tids]})
+    if r2.status_code not in (200, 202, 204):
+        die(f"_mosaic_publish_verified: publish POST {r2.status_code} {r2.text[:300]}")
+    print(f"  ✓ mosaic publish started instanceId={inst}", file=sys.stderr)
+
+    # 3. poll until loaded
+    deadline = time.time() + poll_seconds
+    last = None
+    while time.time() < deadline:
+        rs = m.get(f"/api/dataModels/{model_id}/publishStatus", headers=hdr)
+        try: js = rs.json()
+        except Exception: js = {"raw": rs.text}
+        last = js
+        st = js.get("status") if isinstance(js, dict) else None
+        tbl = js.get("tables") or []
+        if isinstance(st, int) and st < 0:
+            die(f"_mosaic_publish_verified: terminal error status={st} body={json.dumps(js)[:400]}")
+        if isinstance(js, dict) and js.get("code"):
+            die(f"_mosaic_publish_verified: server error {js.get('code')}: {js.get('message','')[:300]}")
+        if tbl and all((t.get("status") or "") == "loaded" for t in tbl):
+            print(f"  ✓ mosaic publish COMPLETE: {len(tbl)} tables loaded.", file=sys.stderr)
+            return
+        time.sleep(poll_interval)
+    die(f"_mosaic_publish_verified: timeout after {poll_seconds}s; last status: "
+        f"{json.dumps(last)[:400] if last else 'none'}. "
+        f"This signature historically indicates tenant-side QueryEngineServer trouble; "
+        f"see memory/reference_mosaic_vs_legacy_surfaces.md.")
+
+
+def _classic_cube_publish(m: MSTR, cube_id: str) -> None:
+    """Publish a classic Intelligent Cube (subtype 776). Separate from Mosaic publish."""
+    r = m.post(f"/api/cubes/{cube_id}?cubeAction=publish", json={})
+    if not r.ok:
+        die(f"_classic_cube_publish: {r.status_code} {r.text[:300]}")
+    print(f"  ✓ classic cube publish accepted (202 expected).", file=sys.stderr)
+
+
+def _publish(m: MSTR, model_id: str, *, poll_seconds: int = 180) -> None:
+    """Surface-routed publish: classify subType first, never mix Mosaic/legacy paths."""
+    info = classify_object_surface(m, model_id)
+    if info["surface"] == "mosaic_data_model":
+        _mosaic_publish_verified(m, model_id, poll_seconds=poll_seconds)
+    elif info["surface"] == "classic_cube":
+        _classic_cube_publish(m, model_id)
+    else:
+        die(f"_publish: object {model_id} is subtype {info['subtype']} ({info['name']}); "
+            f"not a Mosaic data model or classic cube. Refusing to guess. See "
+            f"memory/reference_mosaic_vs_legacy_surfaces.md.")
 
 
 def cmd_set_serve_mode(m: MSTR, args):
     m.login(identity=True)
-    r = m.s.patch(f"{m.base}/api/model/dataModels/{args.model_id}",
-                  json={"dataServeMode": args.mode})
-    print(f"HTTP {r.status_code}: {r.text[:300]}")
+    info = classify_object_surface(m, args.model_id)
+    if info["surface"] != "mosaic_data_model":
+        die(f"set-serve-mode: dataServeMode is a Mosaic-only concept; object {args.model_id} "
+            f"is subtype {info['subtype']} ({info['name']}).")
+    cs = open_cs(m)
+    try:
+        r = m.s.patch(f"{m.base}/api/model/dataModels/{args.model_id}",
+                      json={"dataServeMode": args.mode})
+        if not r.ok: die(f"set-serve-mode: {r.status_code} {r.text[:300]}")
+        commit_cs(m, cs)
+        print(f"  ✓ dataServeMode set to {args.mode}", file=sys.stderr)
+    except Exception:
+        # best-effort changeset discard on failure
+        try: m.s.headers.pop("X-MSTR-MS-Changeset", None)
+        except Exception: pass
+        raise
 
-def cmd_publish(m: MSTR, args):  m.login(); _publish(m, args.model_id)
+def cmd_publish(m: MSTR, args):
+    m.login()
+    _publish(m, args.model_id, poll_seconds=args.poll_seconds)
 def cmd_refresh(m: MSTR, args):
     m.login()
     r = m.post(f"/api/cubes/{args.model_id}/refresh",
@@ -2493,6 +2603,8 @@ def build_parser():
     sp.add_argument("--mode", required=True, choices=["connect_live","in_memory","hybrid"])
 
     sp = sub.add_parser("publish"); sp.add_argument("--model-id", required=True)
+    sp.add_argument("--poll-seconds", type=int, default=180,
+                    help="max wait for every table to reach 'loaded' before failing")
 
     sp = sub.add_parser("refresh")
     sp.add_argument("--model-id", required=True)
