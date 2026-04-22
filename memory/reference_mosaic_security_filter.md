@@ -17,7 +17,11 @@ POST /api/model/dataModels/{modelId}/securityFilters
 Headers: X-MSTR-MS-Changeset: <cs>
 ```
 
-Body (verified for a Category ID = 1 filter on Products Hierarchy):
+Body — TWO verified qualification shapes depending on the filter type:
+
+### Shape A: `predicate_form_qualification` — form operator value (scalar compare)
+
+Use for: `Category@ID = 1` style filters where you have a single numeric/string value.
 
 ```json
 {
@@ -36,6 +40,37 @@ Body (verified for a Category ID = 1 filter on Products Hierarchy):
   "topLevel": [], "bottomLevel": []
 }
 ```
+
+### Shape B: `predicate_element_list` — in-list of element IDs (what the UI produces)
+
+Use for: `Category IN (Books, Movies)` style filters. **This is what the Studio UI produces by default** when you pick elements from the Row-Level Security pane.
+
+```json
+{
+  "information": {"name": "Product Sec Filter", "subType": "md_security_filter"},
+  "qualification": {
+    "text": "{Product Category} = Accelerators",
+    "tree": {
+      "type": "predicate_element_list",
+      "predicateTree": {
+        "attribute": {"objectId": "<attribute id>", "subType": "attribute", "name": "Product Category"},
+        "elements": [
+          {"display": "Accelerators", "elementId": "hAccelerators"}
+        ],
+        "function": "in"
+      }
+    }
+  },
+  "topLevel": [], "bottomLevel": []
+}
+```
+
+- `elements[]` is the element list. Each entry has `display` (human label) and `elementId` (the internal key). For attributes whose ID form is non-numeric (string-keyed), `elementId` is `h<display-value>`. For numeric ID forms, `elementId` is the numeric value as a string.
+- `function: "in"` is the semantic (element in the set); a single-element list is equivalent to `equals` on that element.
+- No `form` binding is required — the list is interpreted against whatever the attribute's ID form is.
+- `qualification.text` is human-readable; the server regenerates it on save.
+
+When porting/cloning: if the source filter has `predicate_form_qualification`, do a shape-preserving copy. If it's `predicate_element_list` (which is what the UI writes), use Shape B. Do not mechanically rewrite one into the other — the SQL they generate can differ for compound-key or multi-form attributes.
 
 Gotchas observed:
 - **Do not create a placeholder `predicate_false` filter from free text.** That is a deny-all filter, not a parsed qualification. For automation, require a structured qualification JSON or a constrained form-qualification shorthand such as `ATTR_ID[:FORM_ID]=VALUE`.
@@ -94,6 +129,32 @@ Read back the assigned members:
 ```
 GET /api/dataModels/{modelId}/securityFilters/{sfId}/members
 ```
+
+Response shape (verified):
+
+```json
+{
+  "users": [
+    {
+      "id": "EXAMPLEUSERIDPLACEHOLDER00000002",
+      "username": "asmith",
+      "fullName": "Smith, Alex",
+      "abbreviation": "asmith",
+      "initials": "TO",
+      "subtype": 8704,
+      "type": 34,
+      ...
+    }
+  ],
+  "userGroups": [],
+  "totalUsers": 1,
+  "totalUserGroups": 0
+}
+```
+
+- Users and user groups are split into separate arrays, not a flat list.
+- `totalUsers` + `totalUserGroups` are authoritative counts (paging-safe).
+- The `subtype` field on the user record is `8704` for user, `8705` for user_group (matches the `trusteeSubtype` values seen in ACL responses).
 
 Classic/project security-filter member assignment is similar but not identical: it uses `/api/securityFilters/{id}/members` and the lowercase `/members` patch path documented in `reference_strategy_legacy_semantic_admin.md`. Keep these two surfaces separate in helper code and audit findings.
 
