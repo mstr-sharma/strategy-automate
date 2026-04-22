@@ -18,12 +18,12 @@ Command pattern:
 python3 skill/scripts/strategy_validate.py --yes --keep-security-artifacts --package-holder
 ```
 
-Final tenant run on 2026-04-21:
+Example passing run:
 - run ID: `validation-<YYYYMMDD-HHMM>`
-- project: `MicroStrategy Tutorial` / `<project-id>`
+- project: any tutorial-style project (resolve via `/api/projects`)
 - result: `pass=10 warn=0 skip=0 fail=0`
-- kept requested artifacts: `Books_secFilter_validation` (`<security-filter-id>`) assigned to `validation_duplicate_user` (`<duplicate-user-id>`)
-- optional package holder was created and deleted in the same run.
+- kept requested artifacts: one security filter + one user membership record as sample.
+- optional package holder is created and deleted in the same run.
 
 Live gotchas captured from the run:
 - For these classic/project workflows, use `X-MSTR-AuthToken` plus `X-MSTR-ProjectID`; do not automatically add `X-MSTR-IdentityToken`. On this tenant, adding identity token caused `/api/model/metrics/{id}` to fail with a false "Wrong projectId" error.

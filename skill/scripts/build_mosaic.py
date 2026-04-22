@@ -1990,6 +1990,209 @@ def cmd_attach_transformation(m: MSTR, args):
     print(json.dumps({"ok": True, "metric_id": mid}, indent=2))
 
 
+_FACT_HINT = _re.compile(r"(?:^|_)(FACT|LINEITEM|DETAIL|REL|F|TRANSACTIONS?|ACTIVITY|EVENTS?)(?:_|$)", _re.I)
+_RATE_COL  = _re.compile(r"(?:_RATE|_PCT|_RATIO|DISCOUNT|TAX|_PRICE|_COST|BALANCE)", _re.I)
+
+def _is_fact_like(name: str) -> bool:
+    if not name: return False
+    u = name.upper()
+    return bool(_FACT_HINT.search(u)) or u.endswith("_DETAIL") or u.endswith("_FACT")
+
+def cmd_validate_model(m: MSTR, args):
+    """Run the post-build quality checklist against a Mosaic data model.
+
+    Enforces the rules in memory/feedback_mosaic_build_quality.md and
+    reference_mosaic_relationship_archetypes.md. Exit code non-zero if any
+    FAIL check trips.
+    """
+    m.login()
+    mid = args.model_id
+    forced_facts = {t.strip().upper() for t in (args.fact_tables or "").split(",") if t.strip()}
+
+    def load(ep, key=None):
+        r = m.get(f"/api/model/dataModels/{mid}{ep}")
+        if not r.ok: die(f"{ep}: {r.status_code} {r.text[:200]}")
+        b = r.json()
+        if key and isinstance(b, dict): return b.get(key, [])
+        return b
+
+    root    = load("")
+    tables  = load("/tables", "tables")
+    attrs   = load("/attributes", "attributes")
+    metrics = load("/factMetrics", "factMetrics")
+
+    failures, warnings = [], []
+    def FAIL(check, msg, obj=None): failures.append({"check":check,"message":msg,"object":obj})
+    def WARN(check, msg, obj=None): warnings.append({"check":check,"message":msg,"object":obj})
+
+    # F3 — required top-level fields
+    for f in ("dataServeMode","autoJoin","enableAutoHierarchyRelationships"):
+        if root.get(f) is None:
+            FAIL("F3", f"model.{f} missing")
+    if not (root.get("information",{}) or {}).get("name"):
+        FAIL("F3", "model.information.name missing")
+    if not (root.get("information",{}) or {}).get("description"):
+        WARN("W2", "model has no description — degrades AI/Library discoverability")
+
+    # F2 read-back integrity
+    def readback(ep, objs, kind):
+        for o in objs:
+            oid = (o.get("information") or {}).get("objectId")
+            name = (o.get("information") or {}).get("name", oid)
+            if not oid: continue
+            r = m.get(f"/api/model/dataModels/{mid}/{ep}/{oid}")
+            if not r.ok:
+                FAIL("F2", f"{kind} {name}: GET /{ep}/{oid} -> {r.status_code} (partial commit)", {"name":name,"id":oid,"kind":kind})
+    readback("tables",      tables,  "table")
+    readback("attributes",  attrs,   "attribute")
+    readback("factMetrics", metrics, "factMetric")
+
+    # Detect fact/bridge tables (name-based + usage-based)
+    rel_table_usage = {}
+    for a in attrs:
+        for r in (a.get("relationships") or []):
+            rt = (r.get("relationshipTable") or {}).get("name","")
+            if rt: rel_table_usage[rt] = rel_table_usage.get(rt,0) + 1
+    fact_like = {t["information"]["name"] for t in tables
+                 if _is_fact_like(t["information"]["name"])
+                    or t["information"]["name"].upper() in forced_facts
+                    or rel_table_usage.get(t["information"]["name"],0) >= 2}
+
+    # F1 empty form names + W6 date-hierarchy heuristic + W1 orphan attrs + W5 dup names
+    name_counts = {}
+    date_like_bases = set()
+    for a in attrs:
+        name = (a.get("information") or {}).get("name","")
+        name_counts[name] = name_counts.get(name,0) + 1
+        forms = a.get("forms") or []
+        for i,f in enumerate(forms):
+            if not (f.get("name") or "").strip():
+                FAIL("F1", f"attribute '{name}' form[{i}] has empty name — disables auto-hierarchy and blanks UI labels",
+                     {"attribute": name, "form_index": i})
+        lookup = (a.get("attributeLookupTable") or {}).get("name","")
+        rels = a.get("relationships") or []
+        # Skip W1 for date-style attrs (W6 owns those) and for attrs that themselves end in typical ID patterns (they ARE the grain)
+        is_date_like = bool(_re.search(r"\b(date|timestamp|day|month|quarter|year)\b", name, _re.I))
+        if lookup in fact_like and not rels and not is_date_like:
+            (FAIL if args.strict_orphans else WARN)(
+                "W1", f"orphan attribute '{name}' on fact/bridge table {lookup} has zero relationships",
+                {"attribute": name, "lookup": lookup})
+        # W6 date heuristic: treat any attribute whose name ends in "Date" (not a derived Day/Month/etc) as needing 4 derivatives
+        if _re.search(r"\b(date|timestamp)\b", name, _re.I) and not _re.search(r"\b(day|month|quarter|year)\b", name, _re.I):
+            date_like_bases.add(name)
+    for n,c in name_counts.items():
+        if c > 1:
+            WARN("W5", f"duplicate attribute name '{n}' appears {c}× — likely conformed-dim mis-merge", {"attribute": n})
+    for base in sorted(date_like_bases):
+        have = {g: any(_re.search(rf"\b{g}\b", (a.get('information') or {}).get('name',''), _re.I)
+                       and base.split()[0].lower() in (a.get('information') or {}).get('name','').lower()
+                       for a in attrs) for g in ("Day","Month","Quarter","Year")}
+        missing = [g for g,v in have.items() if not v]
+        if missing:
+            WARN("W6", f"date attribute '{base}' missing derived grains: {missing}", {"attribute": base, "missing": missing})
+
+    # W3 — FK coverage per fact table
+    for t in tables:
+        tname = t["information"]["name"]
+        if tname not in fact_like: continue
+        parents = set()
+        for a in attrs:
+            for r in (a.get("relationships") or []):
+                if (r.get("relationshipTable") or {}).get("name") == tname:
+                    parents.add((r.get("parent") or {}).get("name"))
+        if len(parents) < 2:
+            WARN("W3", f"fact/bridge table {tname} has only {len(parents)} distinct parent dim(s) declared — most fact tables have ≥3 FKs",
+                 {"table": tname, "parents": sorted(p for p in parents if p)})
+
+    # W2 — blank attribute/metric descriptions
+    for a in attrs:
+        info = a.get("information") or {}
+        if not info.get("description"):
+            WARN("W2", f"attribute '{info.get('name')}' has no description", {"attribute": info.get("name")})
+    for mm in metrics:
+        info = mm.get("information") or {}
+        if not info.get("description"):
+            WARN("W2", f"metric '{info.get('name')}' has no description", {"metric": info.get("name")})
+
+    # W4 — suspect aggregation on rate/price metrics
+    for mm in metrics:
+        info = mm.get("information") or {}
+        name = info.get("name","")
+        fn = mm.get("function","").lower()
+        if fn == "sum" and _RATE_COL.search(name):
+            WARN("W4", f"metric '{name}' is SUM but name suggests a rate/price/balance — review vs AVG or derived formula",
+                 {"metric": name, "function": fn})
+
+    counts = {"tables": len(tables), "attributes": len(attrs), "factMetrics": len(metrics),
+              "relationships": sum(len(a.get("relationships") or []) for a in attrs)}
+    report = {
+        "modelId": mid,
+        "modelName": (root.get("information") or {}).get("name"),
+        "counts": counts,
+        "fact_like_tables": sorted(fact_like),
+        "failures": failures,
+        "warnings": warnings,
+    }
+
+    if args.diff_against:
+        r = m.get(f"/api/model/dataModels/{args.diff_against}")
+        if not r.ok: die(f"diff target read: {r.status_code}")
+        prev_attrs = load_other(m, args.diff_against, "/attributes", "attributes")
+        prev_metrics = load_other(m, args.diff_against, "/factMetrics", "factMetrics")
+        prev_counts = {
+            "attributes": len(prev_attrs),
+            "factMetrics": len(prev_metrics),
+            "relationships": sum(len(a.get("relationships") or []) for a in prev_attrs),
+        }
+        prev_names = {(a.get('information') or {}).get('name') for a in prev_attrs}
+        cur_names  = {(a.get('information') or {}).get('name') for a in attrs}
+        report["diff"] = {
+            "prev_counts": prev_counts,
+            "cur_counts": counts,
+            "attributes_removed": sorted(prev_names - cur_names),
+            "attributes_added":   sorted(cur_names  - prev_names),
+        }
+        for k in ("attributes","factMetrics","relationships"):
+            if counts[k] < prev_counts[k]:
+                FAIL("F-diff", f"count regression: {k} {prev_counts[k]} -> {counts[k]}")
+
+    # Pretty print
+    status = "PASS" if not failures else "FAIL"
+    print(f"\n[validate-model:{mid}] {status}")
+    print(f"  name: {report['modelName']}")
+    print(f"  counts: tables={counts['tables']} attributes={counts['attributes']} factMetrics={counts['factMetrics']} relationships={counts['relationships']}")
+    print(f"  fact-like tables: {', '.join(report['fact_like_tables']) or '(none detected)'}")
+    if failures:
+        print(f"\n  FAIL ({len(failures)}):")
+        for f in failures: print(f"    [{f['check']}] {f['message']}")
+    if warnings:
+        print(f"\n  WARN ({len(warnings)}):")
+        by = {}
+        for w in warnings: by.setdefault(w["check"], []).append(w["message"])
+        for k, msgs in by.items():
+            print(f"    [{k}] {len(msgs)} issue(s)")
+            for msg in msgs[:5]: print(f"        - {msg}")
+            if len(msgs) > 5: print(f"        … +{len(msgs)-5} more")
+    if "diff" in report:
+        d = report["diff"]
+        print(f"\n  DIFF vs {args.diff_against}:")
+        print(f"    prev: {d['prev_counts']}")
+        print(f"    cur:  {d['cur_counts']}")
+        if d["attributes_removed"]: print(f"    removed attrs: {d['attributes_removed'][:10]}{' …' if len(d['attributes_removed'])>10 else ''}")
+        if d["attributes_added"]:   print(f"    added attrs:   {d['attributes_added'][:10]}{' …'   if len(d['attributes_added'])>10   else ''}")
+
+    if args.json:
+        print("\n" + json.dumps(report, indent=2, default=str))
+
+    sys.exit(1 if failures else 0)
+
+
+def load_other(m: MSTR, mid: str, ep: str, key: str):
+    r = m.get(f"/api/model/dataModels/{mid}{ep}")
+    if not r.ok: die(f"diff read {ep}: {r.status_code}")
+    return (r.json() or {}).get(key, [])
+
+
 def cmd_build_from_config(m: MSTR, args):
     """Declarative build from a YAML/JSON spec. See memory/reference_mosaic_config_schema.md."""
     spec = load_structured_file(args.config) or {}
@@ -2166,6 +2369,14 @@ def build_parser():
     sp.add_argument("--certify", action="store_true")
     sp.add_argument("--publish", action="store_true", help="publish cube for in_memory mode")
 
+    sp = sub.add_parser("validate-model",
+        help="Run post-build quality checks on a Mosaic data model (see memory/reference_mosaic_build_validation.md).")
+    sp.add_argument("--model-id", required=True)
+    sp.add_argument("--fact-tables", help="comma-separated table names to force-classify as fact/bridge")
+    sp.add_argument("--strict-orphans", action="store_true", help="promote W1 orphan-attributes from WARN to FAIL")
+    sp.add_argument("--diff-against", help="another modelId; emit a count diff and fail on regressions")
+    sp.add_argument("--json", action="store_true", help="also print the full JSON report")
+
     sp = sub.add_parser("build-from-config")
     sp.add_argument("--config", required=True, help="path to YAML/JSON spec file")
     sp.add_argument("--dest-folder", default=DEFAULT_DEST_FOLDER)
@@ -2251,6 +2462,7 @@ def main():
             "patch-model-object":cmd_patch_model_object,
             "build":           cmd_build,
             "build-from-config":cmd_build_from_config,
+            "validate-model":  cmd_validate_model,
             "set-serve-mode":  cmd_set_serve_mode,
             "publish":         cmd_publish,
             "refresh":         cmd_refresh,
