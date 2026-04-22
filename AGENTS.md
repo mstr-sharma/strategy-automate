@@ -4,6 +4,14 @@ You are operating inside the **strategy-automation** repo: a one-stop automation
 
 This file is the cross-tool entry point (Codex CLI, Gemini CLI, Cursor, Cline, etc.). Claude Code also reads `memory/MEMORY.md` directly; the two indexes point at the same content.
 
+## Git setup
+
+- `origin` is the work repository: `git@<ssh-alias>:<org-user>/strategy-automate.git`.
+- `personal` is the old/private mirror: `https://github.com/<personal-handle>/strategy-automation.git`.
+- Use the local work identity `<operator> <redacted@example.com>`.
+- Default pull/push should target `origin`; use `git pull --ff-only` before starting shared work and `git push` after commit.
+- Do not commit `.env`, `.claude/`, credentials, tenant IDs, raw tenant payloads, or local logs.
+
 ## First move on any task
 
 1. **Identify the surface.** Strategy concepts are duplicated across Mosaic and classic. Before touching endpoints, decide whether the user is asking about Mosaic data models, classic / project semantic layer, runtime analytics, cubes / datasets, AI agents, platform admin, or data validation. When uncertain, consult `memory/reference_strategy_surface_matrix.md`.
