@@ -5,7 +5,9 @@ description: Validate a Strategy Mosaic (or any Strategy) model against a truste
 
 # Strategy Data Validation
 
-Use this skill whenever a model (especially a freshly built or modified Mosaic model) needs to be proven data-correct before it's marked shippable. **Every build should close with validation.** The reference source can be whatever trusted artifact is closest to ground truth — this skill is not Mosaic-only.
+Use this skill whenever a model (especially a freshly built or modified Mosaic model) needs to be proven data-correct before it's marked shippable. **Every build should close with validation or an explicit validation-pending note.** The reference source can be whatever trusted artifact is closest to ground truth — this skill is not Mosaic-only.
+
+Validation is always comparative. There is no universal "model is correct" check without first selecting what it should match: an existing Mosaic model, a classic/legacy semantic-layer report or model, a raw warehouse query, a flat file, an external system/API, or a saved REST fixture. If no trusted comparator is available yet, say that clearly and mark the build **not shippable pending validation**.
 
 ## When to invoke
 
@@ -17,13 +19,13 @@ Use this skill whenever a model (especially a freshly built or modified Mosaic m
 
 ## Reference sources (pluggable)
 
-Pick the reference based on what's available and trusted:
+Pick the reference based on what's available and trusted. Record the selected reference type and reference object/source in the validation report.
 
 1. **Another Mosaic model** — clone-reference pattern. Query via MCP Trino (MCP `query`) with `schema="{your project name lowercased}"`. Best when validating a clone-and-remap or an alternate live/in-memory variant of the same source.
 2. **Classic/legacy semantic-layer report** — run the classic report via `/api/reports/{id}/instances` + JSON Data API, or query the classic project attributes/metrics through the Modeling Service. Best during legacy-to-Mosaic migrations; see `memory/reference_strategy_legacy_to_mosaic_mining.md`.
 3. **Flat file** (CSV / Parquet / JSON) — a snapshot export, hand-curated gold set, or auditor-supplied file. Load locally with `csv` / `json` / DuckDB / Pandas. Best when the warehouse is read-once (compliance exports, audit reconciliation).
 4. **Direct warehouse SQL** — bypass the semantic layer entirely and query Snowflake / BigQuery / Oracle / etc. with raw SQL. Best for "does the semantic-layer math match the raw warehouse?" checks.
-5. **REST output** — saved output from a prior run (canary fixture), an externally-hosted reference API, or a previous inventory snapshot. Best for regression: "does today's build still match yesterday's numbers?"
+5. **External system / REST output** — saved output from a prior run (canary fixture), an externally-hosted reference API, a source application, or a previous inventory snapshot. Best for regression: "does today's build still match yesterday's numbers?"
 
 Every source adapter reduces to `run_query(q) -> list[dict]`. The skill diffs structured rows regardless of source.
 
@@ -71,7 +73,18 @@ Final report: `N/N passed` plus a table of any failures with the smallest reprod
 
 ## Helper script
 
-`skill/scripts/strategy_validate_models.py` (planned — reuse `strategy_validate.py` scaffolding):
+`skill/scripts/strategy_validate_models.py` is the pluggable runner. Its first implemented adapter compares model/reference result files (CSV/JSON), which lets Mosaic, classic reports, warehouse SQL, and external systems feed the same diff engine after their query/export step. Live adapters should reduce to that same row-list shape:
+
+```bash
+python3 skill/scripts/strategy_validate_models.py \
+  --model-file /tmp/model_rows.csv \
+  --reference-file /tmp/reference_rows.csv \
+  --key region,nation \
+  --measures revenue,orders \
+  --out /tmp/validation.json
+```
+
+Planned live adapters:
 
 ```bash
 # Validate a new Mosaic model against another Mosaic model (default via MCP Trino).
@@ -102,17 +115,18 @@ python3 skill/scripts/strategy_validate_models.py \
   --project-id {MSTR_PROJECT_ID}
 ```
 
-Until the helper is written, the equivalent ad-hoc flow is: run each query twice (once per source), diff in Python/Pandas, report. The `strategy_validate.py` file in `skill/scripts/` already has the tenant-auth scaffolding and the paired-run harness from the non-Mosaic validation suite — extend that rather than start from scratch.
+Until a live adapter exists for a source, the equivalent ad-hoc flow is: choose the comparator, run each paired query once against the model and once against the reference source, save both row sets, run the file adapter, and report the comparator used. The `strategy_validate.py` file in `skill/scripts/` already has tenant-auth scaffolding from the non-Mosaic validation suite — extend that rather than start from scratch.
 
 ## Integration with build workflows
 
-Every build-mosaic-model invocation should append a validation step:
+Every build-mosaic-model invocation should append a validation decision:
 
 1. Build completes with `model_id` + canonical name.
-2. Validator auto-selects a reference: (a) if the user supplied one, use it; (b) else if a sibling model of the same source is live, use it; (c) else prompt the user.
-3. Run the 5-query minimum suite.
-4. Report aligns with the build report: `✓ model built, 5/5 validation queries match reference <name>`.
+2. Select a reference: (a) if the user supplied one, use it; (b) else if a sibling model/report/source-system extract is trusted and accessible, use it; (c) else mark validation as pending and ask for the comparator.
+3. If a reference is available, run the 5-query minimum suite.
+4. Report aligns with the build report: `model built; validation_status=passed; 5/5 queries match reference <type>:<name>`.
 5. If any query fails: mark the build as **incomplete**, surface the delta rows prominently, and do not tell the user "done" until failures are explained or fixed.
+6. If no comparator exists yet: mark `validation_status=not_run` / `reference_required=true`. That is honest progress, not a pass.
 
 The consumer-grade naming checklist (`memory/feedback_consumer_grade_naming.md`) item 8 requires validation — treat this skill as part of the ship bar.
 

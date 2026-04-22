@@ -150,7 +150,7 @@ Types: `attribute_element` (pick specific elements), `attribute_qualification` (
 
 ## Security filters
 Create — `POST /api/model/dataModels/{id}/securityFilters` with `qualification.tree`.
-Assign — prefer `PATCH /api/dataModels/{dataModelId}/securityFilters/{sfId}/members` with `{operationList:[{op:"addElements",path:"/members",value:[ids...]}]}`; older tenant variants may accept `POST /api/model/dataModels/{id}/securityFilters/{sfId}/members` body `{users:[{id}], userGroups:[{id}]}`.
+Assign — prefer `PATCH /api/dataModels/{dataModelId}/securityFilters/{sfId}/members` with `{operationList:[{op:"addElements",path:"/Members",value:[ids...]}]}`; older tenant variants may accept `POST /api/model/dataModels/{id}/securityFilters/{sfId}/members` body `{users:[{id}], userGroups:[{id}]}`.
 Top/bottom level override how the filter is applied vs report filter.
 
 ## Translations

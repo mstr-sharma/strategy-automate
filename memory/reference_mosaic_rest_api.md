@@ -4,7 +4,7 @@ description: Verified endpoint paths and payload shapes for the {MSTR_BASE host}
 type: reference
 originSessionId: initial-session
 ---
-All paths prefixed with `{BASE} = {MSTR_BASE}`. Unless otherwise noted, send `X-MSTR-AuthToken`, `X-MSTR-ProjectID`, and (for writes) `X-MSTR-IdentityToken` + `X-MSTR-MS-Changeset`.
+All paths prefixed with `{BASE} = {MSTR_BASE}`. Unless otherwise noted, send `X-MSTR-AuthToken`, `X-MSTR-ProjectID`, and for Mosaic data-model writes send `X-MSTR-IdentityToken` + `X-MSTR-MS-Changeset`. Do not generalize this identity-token rule to classic/project Modeling Service endpoints.
 
 ## OpenAPI / docs
 - Raw machine-readable spec: `GET /api/openapi.yaml` (OpenAPI 3.0.1, title `Strategy REST`, version `2026` as of 2026-04-21).
@@ -13,7 +13,7 @@ All paths prefixed with `{BASE} = {MSTR_BASE}`. Unless otherwise noted, send `X-
 
 ## Auth
 - `POST /api/auth/login` body `{username,password,loginMode:1}` → response header `X-MSTR-AuthToken` (lowercase `X-Mstr-Authtoken` on some responses).
-- `POST /api/auth/identityToken` → header `X-MSTR-IdentityToken`. Required before any `/api/model/*` write.
+- `POST /api/auth/identityToken` → header `X-MSTR-IdentityToken`. Required before Mosaic data-model Modeling Service writes; avoid for classic/project Modeling Service unless a specific endpoint proves it needs it.
 - `DELETE /api/auth/login` — logout.
 
 ## Datasources / warehouse catalog (verified 2026-04-20)

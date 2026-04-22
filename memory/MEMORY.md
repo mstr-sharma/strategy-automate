@@ -3,6 +3,7 @@
 - [Environment configuration](reference_strategy_env.md) — env-var convention (`MSTR_BASE`, `MSTR_USER`, `MSTR_PASSWORD`, `MSTR_PROJECT_ID`/`MSTR_PROJECT_NAME`, `MSTR_DEST_FOLDER_ID`); no hardcoded tenants in the repo.
 - [Strategy OpenAPI reference](reference_strategy_openapi.md) — raw `/api/openapi.yaml` discovery, key Modeling / Data Model / ACL / security endpoints, how to probe them.
 - [Strategy automation playbook](reference_strategy_automation_playbook.md) — NLQ-to-action loop, safety model, tool routing, verification expectations.
+- [Strategy automation coverage contract](reference_strategy_automation_coverage.md) — complete-platform automation goal, coverage levels, platform-family checklist, and known-gap rules.
 - [Strategy task catalog](reference_strategy_task_catalog.md) — common Strategy requests mapped to REST / MCP / mstrio / helper surfaces.
 - [Strategy intake patterns](reference_strategy_intake_patterns.md) — turn drop-in ERDs, data dictionaries, user/email rosters, and legacy-object change requests into safe Strategy actions.
 - [Strategy surface matrix](reference_strategy_surface_matrix.md) — route ambiguous nouns (attributes, metrics, security filters, ACLs, cubes, datasets, Mosaic models, AI agents) to the right surface.

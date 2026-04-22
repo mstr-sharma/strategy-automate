@@ -5,19 +5,22 @@ description: Automate Strategy (formerly MicroStrategy) environments from natura
 
 # Strategy Automation
 
-Use this skill when the user asks to automate, inspect, build, modify, secure, publish, query, migrate, monitor, or administer anything in Strategy / MicroStrategy.
+Use this skill when the user asks to automate, inspect, build, modify, secure, publish, query, migrate, monitor, or administer anything in Strategy / MicroStrategy. The coverage goal is platform-wide automation wherever Strategy exposes an API, SDK, MCP, CLI, or reproducible hook; when no hook is verified, state the gap instead of improvising.
 
 ## First Move
 
 1. Read `$REPO/memory/MEMORY.md`.
 2. Identify the task family in `$REPO/memory/reference_strategy_automation_playbook.md`.
-3. Decide the product surface before choosing endpoints: classic project semantic layer/admin, Mosaic data model, runtime analytics, Push Data dataset, cube family, platform admin, or AI/agents. Read `reference_strategy_surface_matrix.md` for ambiguous attributes, metrics, prompts, filters, ACLs/object security, security filters, cubes, datasets, reports, dashboards, documents, users/groups, agents, or project-level requests.
-4. Use live `{Library}/api/openapi.yaml` through the helper when endpoint details matter. Add `?visibility=all` when the Swagger UI shows more detail than the default spec. A local `openapi.yaml` may be generated for temporary caching, but it is not part of the lean repo.
-5. Use credentials from environment (`MSTR_PASSWORD`) or user-provided secure runtime values. Never write secrets to memory, skills, config, or logs.
+3. Read `$REPO/memory/reference_strategy_automation_coverage.md` for broad or audit-style requests, then classify coverage as wrapped helper, generic REST hook, specialized hook, captured fallback, or known gap.
+4. Decide the product surface before choosing endpoints: classic project semantic layer/admin, Mosaic data model, runtime analytics, Push Data dataset, cube family, platform admin, or AI/agents. Read `reference_strategy_surface_matrix.md` for ambiguous attributes, metrics, prompts, filters, ACLs/object security, security filters, cubes, datasets, reports, dashboards, documents, users/groups, agents, or project-level requests.
+5. Use live `{Library}/api/openapi.yaml` through the helper when endpoint details matter. Add `?visibility=all` when the Swagger UI shows more detail than the default spec. A local `openapi.yaml` may be generated for temporary caching, but it is not part of the lean repo.
+6. Use credentials from environment (`MSTR_PASSWORD`) or user-provided secure runtime values. Never write secrets to memory, skills, config, or logs.
 
 ## Tool Router
 
 - **Build or modify a Mosaic model from warehouse tables:** use the `build-mosaic-model` skill (`skill/SKILL.md`) and its helper script.
+- **Legacy-to-Mosaic migration:** first inspect the classic/project semantic layer with `strategy_semantic_inventory.py` or `strategy_semantic_mine.py`, turn the discovered attributes/forms/facts/metrics/relationships into a blueprint/dictionary/ERD, then build the Mosaic model from that evidence. Do not treat migration like a greenfield shared-column inference job unless no legacy semantic source exists.
+- **Brand-new Mosaic model:** use warehouse discovery, ERD/data dictionary intake, `preflight_model_check.py`, then `build_mosaic.py build`; generate business names/descriptions and mark data validation pending until a comparator is chosen.
 - **Classic-to-modern modeling judgment:** read `reference_strategy_design_transition.md` before translating legacy project schema concepts into Mosaic/USL/AI-ready models.
 - **Classic/project semantic-layer or admin workflows:** read `reference_strategy_legacy_semantic_admin.md`; use top-level `/api/model/...` changeset endpoints for legacy objects and `/api/users`, `/api/securityFilters`, `/api/usergroups`, `/api/objects` for admin/member operations.
 - **Deep classic semantic inspection:** read `reference_strategy_tutorial_semantic_field_study.md`; use `skill/scripts/strategy_semantic_inventory.py` to inventory attributes, facts, metrics, filters, prompts, system hierarchy, user hierarchies, fact extensions, metric dimensionality/conditionality, and prompt/filter internals before cloning or modernizing.
@@ -39,6 +42,7 @@ Use this skill when the user asks to automate, inspect, build, modify, secure, p
   python3 skill/scripts/build_mosaic.py openapi-search "<term>" --context 2
   python3 skill/scripts/build_mosaic.py api-call --method GET --path /api/projects
   ```
+  This is a generic API hook, not proof that the workflow has a typed wrapper or full validation.
 - **Users and access targets:** use `resolve-users` before ACL/security/user writes; use `create-users` for roster dry-runs and `--yes` only when the user clearly wants creation.
 - **Existing or legacy schema objects:** use `search-objects`, then `get-model-object --show-expression-as tokens|tree`, then `patch-model-object --before-out ... --yes` after reviewing the payload.
 - **Published-model semantic inspection/query:** use the Mosaic MCP tools when available (`get_projects`, `get_mosaic_models`, `get_semantics`, `query`), or Trino notes in memory.
@@ -53,12 +57,14 @@ Use this skill when the user asks to automate, inspect, build, modify, secure, p
 - Use changesets for Modeling Service writes, commit only after all referenced objects exist, and discard failed changesets.
 - For schema/model writes, print or return the object URL, object IDs, and any skipped/failed operations.
 - Keep durable lessons in `$REPO/memory/feedback_mosaic_gotchas.md` or a specific reference file.
+- For platform coverage audits, update `$REPO/memory/reference_strategy_automation_coverage.md` and `$REPO/memory/reference_strategy_task_catalog.md` with any new wrapped helper, generic hook, specialized hook, captured fallback, or known gap.
 
 ## Memory Map
 
 - Environment and credentials: `reference_strategy_env.md`
 - Raw REST spec usage: `reference_strategy_openapi.md`
 - Broad task routing: `reference_strategy_automation_playbook.md`
+- Automation coverage contract: `reference_strategy_automation_coverage.md`
 - Task-to-endpoint catalog: `reference_strategy_task_catalog.md`
 - Drop-in ERD/dictionary/user-list/legacy-update intake: `reference_strategy_intake_patterns.md`
 - Surface routing matrix: `reference_strategy_surface_matrix.md`

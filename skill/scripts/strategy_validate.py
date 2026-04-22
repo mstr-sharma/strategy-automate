@@ -66,6 +66,14 @@ def ancestor_names(obj: dict[str, Any]) -> list[str]:
     return [str(a.get("name") or "") for a in ancestors if isinstance(a, dict)]
 
 
+def payload_contains_value(value: Any, needle: str) -> bool:
+    if isinstance(value, dict):
+        return any(payload_contains_value(v, needle) for v in value.values())
+    if isinstance(value, list):
+        return any(payload_contains_value(v, needle) for v in value)
+    return str(value or "") == needle
+
+
 def best_named(candidates: list[dict[str, Any]], name: str, preferred_ancestors: tuple[str, ...] = ()) -> dict[str, Any] | None:
     wanted = name.casefold()
     scored: list[tuple[int, dict[str, Any]]] = []
@@ -140,7 +148,7 @@ class MSTR:
 
     def logout(self) -> None:
         try:
-            self.session.post(f"{self.base}/api/auth/logout", timeout=20)
+            self.session.delete(f"{self.base}/api/auth/login", timeout=20)
         except Exception:
             pass
 
@@ -590,6 +598,48 @@ class Runner:
             return user
         raise RuntimeError("create duplicate user returned unexpected payload")
 
+    def created_in_this_run(self, kind: str, object_id: str | None = None, name: str | None = None) -> bool:
+        for item in self.created:
+            if item.get("kind") != kind:
+                continue
+            if object_id and item.get("id") == object_id:
+                return True
+            if name and (item.get("name") == name or item.get("username") == name):
+                return True
+        return False
+
+    def cleanup_security_workflow(self, sf_id: str, dup_id: str, *, remove_membership: bool,
+                                  delete_user: bool, delete_filter: bool) -> list[dict[str, Any]]:
+        cleanup: list[dict[str, Any]] = []
+        if remove_membership:
+            patch = {"operationList": [{"op": "removeElements", "path": "/members", "value": [dup_id]}]}
+            resp = self.m.try_request("PATCH", f"/api/securityFilters/{sf_id}/members", json=patch, ok=(204,))
+            cleanup.append({"target": "securityFilterMembership", "ok": resp is not None,
+                            "status": resp.status_code if resp is not None else "unavailable"})
+        if delete_user:
+            resp = self.m.try_request("DELETE", f"/api/users/{dup_id}", project=False, ok=(200, 202, 204))
+            cleanup.append({"target": "duplicateUser", "ok": resp is not None,
+                            "status": resp.status_code if resp is not None else "unavailable"})
+        if delete_filter:
+            cs = self.m.create_changeset()
+            try:
+                resp = self.m.try_request(
+                    "DELETE",
+                    f"/api/model/securityFilters/{sf_id}",
+                    headers={"X-MSTR-MS-Changeset": cs},
+                    ok=(200, 202, 204),
+                )
+                if resp is not None:
+                    self.m.commit_changeset(cs)
+                    cleanup.append({"target": "securityFilter", "ok": True, "status": resp.status_code})
+                else:
+                    self.m.delete_changeset(cs)
+                    cleanup.append({"target": "securityFilter", "ok": False, "status": "unavailable"})
+            except Exception as exc:
+                self.m.delete_changeset(cs)
+                cleanup.append({"target": "securityFilter", "ok": False, "error": str(exc)[:300]})
+        return cleanup
+
     def workflow_9(self) -> None:
         if not self.args.yes:
             self.add(9, "classic security filter assignment", "skip", "write workflow requires --yes")
@@ -608,20 +658,35 @@ class Runner:
             raise RuntimeError(f"could not determine security filter id: {compact_json(sf)}")
         dup = self.ensure_duplicate_user(source)
         dup_id = dup.get("id")
+        if not dup_id:
+            raise RuntimeError(f"duplicate user id missing: {compact_json(dup)}")
+        members_before = response_json(self.m.request("GET", f"/api/securityFilters/{sf_id}/members", params={"limit": -1}))
+        already_member = payload_contains_value(members_before, dup_id)
         patch = {"operationList": [{"op": "addElements", "path": "/members", "value": [dup_id]}]}
         self.m.request("PATCH", f"/api/securityFilters/{sf_id}/members", json=patch, ok=(204,))
         members = response_json(self.m.request("GET", f"/api/securityFilters/{sf_id}/members", params={"limit": -1}))
         user_filters = self.m.try_request("GET", f"/api/users/{dup_id}/securityFilters", params={"projects.id": self.m.project_id})
+        cleanup = []
+        if self.args.keep_security_artifacts:
+            cleanup = [{"target": "securityArtifacts", "ok": True, "status": "kept_by_request"}]
+        else:
+            cleanup = self.cleanup_security_workflow(
+                sf_id,
+                dup_id,
+                remove_membership=not already_member,
+                delete_user=self.created_in_this_run("user", object_id=dup_id),
+                delete_filter=self.created_in_this_run("securityFilter", object_id=sf_id, name="Books_secFilter_validation"),
+            )
         self.add(
             9,
             "classic security filter assignment",
             "pass",
-            "security filter assigned to duplicate user",
+            "security filter assigned to duplicate user and cleanup handled",
             securityFilter={"id": sf_id, "name": "Books_secFilter_validation"},
             user={"id": dup_id, "username": dup.get("username") or dup.get("name")},
             memberPayloadKeys=sorted(members.keys()) if isinstance(members, dict) else [],
             userFiltersStatus=user_filters.status_code if user_filters is not None else "unavailable",
-            cleanup="kept requested artifacts" if self.args.keep_security_artifacts else "not cleaned automatically",
+            cleanup=cleanup,
         )
 
     def workflow_10(self) -> None:

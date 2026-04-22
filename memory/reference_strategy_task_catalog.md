@@ -4,12 +4,15 @@ description: Map natural-language Strategy automation requests to references, he
 type: reference
 originSessionId: codex-session
 ---
-Use this as a routing table. Confirm exact paths with `openapi-search` when implementing.
+Use this as a routing table. Confirm exact paths with `openapi-search` when implementing. The repo's platform goal is complete automation coverage where hooks exist: if a task has no typed helper yet, route through the generic OpenAPI + `api-call` hook, then promote it to a helper when it becomes repeatable, risky, or multi-step. If no API/SDK/MCP/CLI/captured hook exists, record it as a known gap instead of treating it as implemented.
+
+Coverage levels are defined in `reference_strategy_automation_coverage.md`: wrapped helper, generic REST hook, specialized hook, captured fallback, known gap.
 
 ## Environment/session
 - "Log in", "check auth", "who am I": `auth-probe`, `/api/auth/login`, `/api/auth/identityToken`, `/api/sessions`.
 - "List projects": `/api/projects` via `api-call` or mstrio-py.
 - "Use a different tenant/project": override `MSTR_BASE`, `MSTR_PROJECT_ID`, `MSTR_USER`, `MSTR_PASSWORD`.
+- "Call an endpoint that has no helper yet": `openapi-search`, then `api-call --method ... --path ...`; add `--identity-token` only when the selected surface requires it.
 
 ## Object discovery and metadata
 - "Find object/report/dashboard/model/user": helper `search-objects`, `/api/searches/results`, `/api/folders/{id}`, `/api/objects/{id}`.
@@ -28,7 +31,7 @@ Use this as a routing table. Confirm exact paths with `openapi-search` when impl
 ## Mosaic semantic models
 - "Build model from DB/schema/tables": the `build-mosaic-model` skill.
 - "Set live/in-memory/hybrid": `set-serve-mode` or `PATCH /api/model/dataModels/{id}`.
-- "Publish/refresh/delete model": `publish`, `refresh`, `delete-model`.
+- "Publish/refresh/delete model": `publish`, `refresh`, `delete-model --yes` after enumerating the target ID.
 - "Add tables/attributes/metrics/relationships": Modeling Service under `/api/model/dataModels/{id}/...`; use changesets.
 - "Create derived/compound/conditional/time metric": metric subcommands or clone/remap from existing metric JSON.
 - "Mosaic data-model security filter / row-level security": `/api/model/dataModels/{id}/securityFilters`; assign members with `/api/dataModels/{id}/securityFilters/{sfId}/members`. Use only when the user names a Mosaic data model/model ID or asks to secure a modern data model.

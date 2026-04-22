@@ -194,7 +194,7 @@ Build the base model first, then apply post-build operations against the returne
 - Tenant fallback for derived calculations: create a fact metric with an inline column formula using `character` operator tokens; this is the verified {MSTR_BASE host} pattern when compound metric references fail at commit.
 - Filter-scoped metrics: create/reuse a filter first, then `create-conditional-metric`.
 - Time-shift metrics: `create-transformation`, then `attach-transformation`.
-- Row-level security: `--security-filter 'Name=qualification|memberIdOrName,...'`.
+- Mosaic row-level security: `--security-filter 'Name=ATTR_ID[:FORM_ID]=VALUE|memberIdOrName,...'` or `Name=@qualification.json|...`. Classic/project security filters use the legacy/admin surface, not this build flag.
 - Object access: `--grant` and `--deny` use the data-model ACL endpoint for the model root during `build`; use `set-acl --model-id M --object-id O --sub-type fact_metric` for a metric/attribute/table after build.
 - In-memory publish: pass `--data-serve-mode in_memory --publish`; the helper uses `POST /api/cubes/{modelId}` first.
 
@@ -382,7 +382,7 @@ Endpoint family: `/api/model/dataModels/{id}/factMetrics` (and sometimes `/metri
 - Incremental refresh filter: `PATCH /api/cubes/{id}` with `incrementalRefresh.filterId`.
 
 ### Security & governance
-- Mosaic data-model security filters: `POST /api/model/dataModels/{id}/securityFilters` — row-level security owned by a Mosaic data model. Assign members with `PATCH /api/dataModels/{id}/securityFilters/{sfId}/members` using `{operationList:[{op:"addElements",path:"/members",value:[ids...]}]}`; the helper has an older POST fallback.
+- Mosaic data-model security filters: `POST /api/model/dataModels/{id}/securityFilters` — row-level security owned by a Mosaic data model. Assign members with `PATCH /api/dataModels/{id}/securityFilters/{sfId}/members` using `{operationList:[{op:"addElements",path:"/Members",value:[ids...]}]}`; the helper has an older POST fallback.
 - Classic/project security filters: do **not** use the Mosaic data-model endpoint. Use top-level `/api/model/securityFilters` to create/read the project security-filter object and `/api/securityFilters/{id}/members` to assign users/groups. See `memory/reference_strategy_legacy_semantic_admin.md`.
 - `GET/POST /api/users`, `/api/usergroups`, `/api/users/{id}/privileges`, `/api/users/{id}/securityRoles`.
 - Data-model object ACL: `PATCH /api/model/dataModels/{modelId}/objects/{objectId}/acl?subType=<objectSubType>` with `{acl:{trusteeId:{granted,denied,subType:"user"|"user_group"}}}` inside a changeset.

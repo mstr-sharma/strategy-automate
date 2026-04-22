@@ -22,7 +22,7 @@ Example passing run:
 - run ID: `validation-<YYYYMMDD-HHMM>`
 - project: any tutorial-style project (resolve via `/api/projects`)
 - result: `pass=10 warn=0 skip=0 fail=0`
-- kept requested artifacts: one security filter + one user membership record as sample.
+- write workflow cleanup: by default, remove the validation membership and delete artifacts created by the current run; use `--keep-security-artifacts` only when a human explicitly wants the sample retained.
 - optional package holder is created and deleted in the same run.
 
 Live gotchas captured from the run:
@@ -38,7 +38,7 @@ Live gotchas captured from the run:
 - Use one run ID suffix, e.g. `validation-YYYYMMDD-HHMM`, for any created object.
 - First run every workflow in read-only/probe mode where possible.
 - For write workflows, resolve and print target IDs before writing.
-- Clean up all test-created objects unless the user explicitly asks to keep them.
+- Clean up all test-created objects unless the user explicitly asks to keep them. For workflow 9, remove the validation membership; delete the duplicate user/security filter only if this run created them.
 - If cleanup fails, record the object ID/name and exact endpoint needed for cleanup in the final response.
 - Skip a workflow, rather than forcing it, if required privileges or safe target content are unavailable.
 - Do not execute subscription sends, project unloads, datasource mutations, cache deletions, package imports, or object deletes unless the specific workflow explicitly says they are in scope and the user signs off.
@@ -57,7 +57,7 @@ Core steps:
 - Resolve `MicroStrategy Tutorial`
 - Fetch live `/api/openapi.yaml?visibility=all`
 - Optional `GET /api/sessions` or identity/session endpoints if exposed
-- `POST /api/auth/logout`
+- `DELETE /api/auth/login`
 
 Verification:
 - Auth token received, project ID resolved, OpenAPI reachable, logout succeeds.
