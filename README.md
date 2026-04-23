@@ -1,8 +1,8 @@
-# strategy-automation
+# strategy-automate
 
 A one-stop **Strategy** (formerly MicroStrategy) automation brain for AI coding assistants. The repo is built toward complete platform automation wherever Strategy exposes an API, SDK, MCP, CLI, or reproducible hook: Mosaic models, legacy semantic-layer migration, runtime analytics, cubes/datasets, security/governance, platform admin, AI agents, and data validation — driven from natural-language requests.
 
-Tested with **Claude Code**, **Codex CLI**, and MCP-aware chat apps. The skills and memory are plain Markdown + Python — transportable across any tool that understands skill-style instructions and can run CLI scripts.
+Tested with **Claude Code** and **Codex CLI**. Other harnesses (MCP-aware chat apps, Gemini CLI, Grok, Ollama, Cursor/Cline/Continue/Aider) are supported by design — the skills and memory are plain Markdown + Python and every per-LLM shim points at `AGENTS.md` — but have not been exercised end-to-end yet.
 
 ## What's in here
 
@@ -32,8 +32,8 @@ strategy-automate/
 ### 1. Clone and configure
 
 ```bash
-git clone <this-repo> strategy-automation
-cd strategy-automation
+git clone <this-repo> strategy-automate
+cd strategy-automate
 cp .env.example .env
 # edit .env with your Library URL, username, password, project name/ID, dest folder
 set -a; source .env; set +a
@@ -82,6 +82,8 @@ Tables: <comma-separated>
 ```
 The `build-mosaic-model` skill discovers columns, generates attribute/metric/relationship payloads, commits through a changeset, and applies consumer-grade naming. See `skill/SKILL.md`.
 
+For **multi-DB or mixed-case** builds (e.g., Postgres lowercase + Snowflake uppercase), auto-conformance silently orphans case-mismatched or differently-named FKs, and relationship PUTs then fail with `8004ccdb` / `8004ccc7`. Follow the six-step recipe in [`memory/feedback_mosaic_relationship_wiring.md`](memory/feedback_mosaic_relationship_wiring.md): write the attribute plan first, express conformance via identical `name` in the dictionary, declare relationships only between attributes that do NOT already share a table, verify `forms[*].expressions[*].tables` after build, PATCH missing expressions before issuing relationship PUTs, and close with a Trino rollup check.
+
 **Inspect every Mosaic model in a project:**
 ```bash
 python3 skill/scripts/strategy_mosaic_inventory.py --workers 12
@@ -123,6 +125,7 @@ Generic REST reachability is part of the platform hook coverage. Add typed helpe
 - **Every Mosaic build closes with a consumer-grade-naming pass + data validation, or an explicit validation-pending comparator note.** Validation is reference-dependent: another Mosaic model, a classic report/model, warehouse SQL, a flat file, or an external system can be the comparator. See `memory/feedback_consumer_grade_naming.md` and `strategy-validation/SKILL.md`.
 - **Changesets are the unit of metadata write.** Open, write, commit — or discard on failure. Relationships, ACLs, translations typically need a separate changeset from object creation.
 - **Tenant-specific discoveries get written into memory.** When a script's endpoint 404s, probe `/api/openapi.yaml` via `openapi-search`, fix the script, and update the memory file.
+- **Do not chain `build → publish → add-security-filter → set-acl` as separate shell invocations on Strategy ONE Cloud tenants.** The project-interactive iServer sessions accumulate across invocations and won't reap on `DELETE /api/auth/login` — they only release on a ~30-min idle timer. Fold post-build ops into a single process (use `build-from-config` or an inline Python block). See [`memory/feedback_build_mosaic_session_leak.md`](memory/feedback_build_mosaic_session_leak.md) for the budget rules and the `-2147072486` / `8004cb0a` failure signature.
 
 ## Contributing
 
