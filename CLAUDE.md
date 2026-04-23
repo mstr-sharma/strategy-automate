@@ -4,11 +4,4 @@ Read `AGENTS.md` first, then `memory/MEMORY.md` for the durable Strategy automat
 
 ## Git Workflow
 
-- Work remote: `origin` → `git@<ssh-alias>:<org-user>/strategy-automate.git`
-- Personal mirror/old remote: `personal` → `https://github.com/<personal-handle>/strategy-automation.git`
-- Local Git identity: `<operator> <redacted@example.com>`
-- Use normal commands from the repo root: `git status`, `git pull --ff-only`, `git add`, `git commit`, `git push`.
-- Before committing, run the relevant tests plus `git diff --check`.
-- Never commit `.env`, `.claude/`, credentials, tenant IDs, raw tenant payloads, or local logs.
-
-If SSH push fails, the work GitHub account still needs the public key from `~/.ssh/<ssh-key-name>.pub` added to GitHub.
+See `AGENTS.md` → "Git workflow" for the canonical rules. Remote URLs and git identity are operator-local (`git remote -v`, `git config user.email`) and not recorded in this repo.
