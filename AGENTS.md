@@ -43,6 +43,7 @@ For Mosaic work, distinguish the entry path:
 - **Changesets are the unit of write.** Open → mutate → commit, or discard on failure. Relationships / ACLs / translations typically require a separate changeset after object creation.
 - **Preserve tenant-verified gotchas.** When a script's endpoint returns 404 or a payload shape changes, update both the script and the corresponding memory file. Never silently work around.
 - **Never hardcode credentials, tenant IDs, or personal names.** Pull from env vars; parameterize security filters.
+- **Keep every durable artifact generalizable.** Skills, memories, scripts, examples, and templates in this repo must work against *any* Strategy tenant, DB engine, schema, or domain — concrete tenant / DB / user / model values belong in env vars, CLI flags, user-supplied inputs, or `captures/`, never hardcoded into durable text. See `memory/feedback_generalize_durable_artifacts.md` for the scrub checklist and the self-audit grep.
 - **Prefer `/usr/bin/python3`** on machines whose Anaconda Python has an older OpenSSL — TLS handshakes to some Strategy Cloud tenants hang otherwise.
 - **For destructive operations** (deletes, force patches, migration commits), enumerate the target IDs and confirm before acting unless the user explicitly requested the destruction.
 

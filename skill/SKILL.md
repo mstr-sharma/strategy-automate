@@ -47,7 +47,7 @@ Always use the helper script `scripts/build_mosaic.py` from this skill folder. D
                        "tableName":"<TABLE>",
                        "databaseInstance":{"objectId":"<dbInstanceId>"}}}
      ```
-     Fall back to `type:"normal"` or `type:"pipeline"` if the server rejects; the TPCH reference script (see `<sibling harness dir>/build_tpch_mosaic_model.py`) shows the pipeline shape.
+     Fall back to `type:"normal"` or `type:"pipeline"` if the server rejects; for the pipeline shape, clone-and-remap from any existing Mosaic model via `GET /api/model/dataModels/{refModelId}/tables/{id}` and reuse the returned `physicalTable` envelope. See `memory/reference_mosaic_clone_pattern.md`.
    - For each ID/text column → `POST .../attributes` with one key form pointing to the column, lookupTable = that table.
    - For each numeric column → `POST .../factMetrics` with `function:"sum"`, fact expression = the column.
    - `POST /api/model/changesets/{cs}/commit`.
@@ -74,7 +74,7 @@ Body: `{"relationships":[{"parent":{"objectId","subType":"attribute"},"child":{.
 ### Multi-form attributes (ID + DESC + any number of display forms)
 Attribute body `forms[]` is a list. Each form has `{id?, category, type:"system"|"custom", displayFormat, expressions:[{expression,tables}], lookupTable, alias?}`.
 - Exactly one form is marked as the **key form** via `keyForm.id` referencing the form's id. For the universal ID form the id is `45C11FA478E745FEA08D781CEA190FE5`; for display forms, omit `id` and let the server mint one.
-- `displays.reportDisplays` / `displays.browseDisplays` control which forms appear by default. Set via `PATCH` post-create (see `build_tpch_mosaic_model.py` lines 340–347).
+- `displays.reportDisplays` / `displays.browseDisplays` control which forms appear by default. Set via `PATCH /api/model/dataModels/{id}/attributes/{aid}` post-create inside the same changeset, with body `{"displays":{"reportDisplays":[{"id":"<formId>"}], "browseDisplays":[{"id":"<formId>"}]}}`.
 - For a Customer attribute with id + name + email: one form per column, key form = CUST_ID, display forms = CUST_NAME and EMAIL.
 
 ### Metric aggregations (single-fact)
@@ -84,9 +84,9 @@ Fact metric body:
  "function":"sum"|"avg"|"min"|"max"|"count"|"count_distinct"|"stdev"|"var", "functionProperties":[...],
  "dimty":{...}, "format":{"header":[],"values":[...]}}
 ```
-- `function` drives the outer aggregate. `SUM(sales)` → `"sum"`; `AVG(discount)` → `"avg"` (see TPCH script's `METRIC_OVERRIDES` for the override pattern).
+- `function` drives the outer aggregate. `SUM(sales)` → `"sum"`; `AVG(discount)` → `"avg"`. See `memory/reference_mosaic_business_logic_translation.md` for the full aggregation-function-by-semantic table.
 - `functionProperties` carries distinct-flag and similar modifiers.
-- `format.values` is the number-format token list. TPCH script `_make_metric_format` shows currency/percent/integer templates.
+- `format.values` is the number-format token list. For defaults (currency / percent / integer / fixed), clone an existing metric's `format.values[]` via `GET /api/model/dataModels/{refModelId}/factMetrics/{id}` and reuse the shape.
 
 ### Compound metrics (derived from other metrics)
 Same endpoint, but the body shifts from `fact` to a formula over existing metrics:
@@ -132,17 +132,17 @@ Separate top-level object class, created via `POST /api/model/dataModels/{id}/tr
 
 ### When you don't know the exact payload
 MicroStrategy's Modeling Service accepts whatever `GET` returns. So for anything tricky:
-1. Find an example of the construct in an existing project (the TPCH reference model has multi-form attributes and AVG/SUM metrics).
+1. Find an example of the construct in any existing Mosaic model in the same tenant (search by `--type 3`; any multi-form / AVG-metric / compound-metric example works — no need for a specific seed model).
 2. `GET /api/model/dataModels/{refModelId}/attributes/{id}` (or `/factMetrics/{id}`, `/filters/{id}`).
-3. Post it back with new IDs and remapped table/object references — this is exactly the pattern `build_tpch_mosaic_model.py` uses for cloning.
+3. Post it back with new IDs and remapped table/object references — the full clone-and-remap procedure lives in `memory/reference_mosaic_clone_pattern.md`.
 
 ## Failure modes to watch
 
 - **Missing `X-MSTR-IdentityToken` for Mosaic data-model writes** → changeset commits can return 400. Fetch it only for the Mosaic data-model surface; classic/project workflows can require auth token + project ID without identity token.
 - **Changeset commit failures** are often silent in the logs but loud in stderr text — the helper script prints full response bodies on non-2xx.
 - **Ambiguous DB instance name** — there can be multiple instances with similar names across projects. Script fails closed unless user passes `--db-instance-id` directly.
-- **`dataServeMode:"connect_live"`** is what matches the ref TPCH model; `"in_memory"` creates an importable/cached variant (the `-in_memory` suffix seen in `benchmark_extended_mosaic_trino.py`).
-- **Publishing in-memory Mosaic models on {MSTR_BASE host}** uses `POST /api/cubes/{modelId}` with an empty body. The helper tries this before older/public publish variants.
+- **`dataServeMode:"connect_live"`** pushes SQL to a single warehouse at query time; `"in_memory"` creates an importable/cached variant (visible in Trino with a `-in_memory` suffix on some tenants). Required mode for any multi-DB model.
+- **Publishing in-memory Mosaic models on Strategy ONE Cloud tenants** uses `POST /api/cubes/{modelId}` with an empty body. The helper tries this before older/public publish variants. Always follow with a `publishStatus` poll or Trino smoke query before declaring done.
 - **Multi-source models:** the user can list tables from different DB instances. Pass instance/schema/table triples — the script groups them per instance for warehouse-table lookup, but all tables land in one model.
 
 ## Naming, descriptions, and inputs from ERDs / data dictionaries
@@ -329,7 +329,7 @@ Under `POST /api/model/dataModels/{id}/tables`:
 - `warehouse_partition_table` — reference to a named warehouse table. Body: `{namespace, tableName, databaseInstance:{objectId}}`.
 - `normal` — same as above but non-partitioned.
 - `freeform_sql` — custom SQL table. Body includes `sqlStatement` + column mapping.
-- `pipeline` — the clone form (see TPCH script) — carries preserved pipeline JSON.
+- `pipeline` — the clone-and-remap form, carries preserved pipeline JSON from a source Mosaic model. See `memory/reference_mosaic_clone_pattern.md`.
 - `partition` — logical partition over multiple physical tables.
 
 ### Attributes (all forms)
@@ -418,7 +418,7 @@ Live models are queryable as Trino tables — `host={MSTR_BASE host}:443`, `cata
 4. Remap every `objectId` that points at a table/attribute/metric you've replaced using a `{old_id → new_id}` dict.
 5. `POST` it.
 
-`build_tpch_mosaic_model.py` is the canonical example.
+Full step-by-step with all the gotchas (token shape, commit order, deletion quirks, security-filter clone asymmetries) is in `memory/reference_mosaic_clone_pattern.md` and `memory/reference_strategy_object_cloning.md`.
 
 ## Before trusting any endpoint path in this skill
 
