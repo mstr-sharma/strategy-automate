@@ -16,7 +16,7 @@
 
 ## Mosaic modeling (design-time)
 - [Mosaic build skill](reference_mosaic_build_skill.md) — location + subcommand list for the build helper script.
-- [Mosaic preflight skill](reference_mosaic_preflight_skill.md) — `skill/scripts/preflight_model_check.py` runs 6 categories of contextual checks (naming, attr-vs-metric, datatype, joinability, blueprint-fit, governance) before `build_mosaic.py build`; gates on ERROR-severity findings.
+- [Mosaic preflight check (build-skill gate)](reference_mosaic_preflight_skill.md) — reference for `skill/scripts/preflight_model_check.py`, invoked as step 6 of the `build-mosaic-model` flow. 6 categories: naming, attr-vs-metric, datatype, joinability, blueprint-fit, governance. ERROR findings stop the build.
 - [Mosaic REST API map](reference_mosaic_rest_api.md) — verified endpoint paths (auth, datasources, catalog, data models, changesets, security, translations).
 - [Mosaic modeling concepts](reference_mosaic_modeling_concepts.md) — attributes, metrics (compound/conditional/level/transformation), relationships, filters, transformations — payload shapes.
 - [Mosaic build config schema](reference_mosaic_config_schema.md) — declarative config fields and post-build derived-metric workflow.

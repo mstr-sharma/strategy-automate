@@ -53,7 +53,7 @@ Migration path:
 3. Apply the existing heuristics ONLY for columns the AI didn't return (fallback), or when the AI's confidence is below a threshold.
 4. Allow the user to override both via `--dictionary` / `--erd`.
 
-The existing preflight skill (`preflight_model_check.py`) should also consult `POST /api/aiservice/model/objects/multiFormAttributes` before emitting the "LOCALE_COLUMN_EXPLOSION" ERROR — the AI may already be handling it.
+The existing preflight check script (`preflight_model_check.py`, invoked by the `build-mosaic-model` skill) should also consult `POST /api/aiservice/model/objects/multiFormAttributes` before emitting the "LOCALE_COLUMN_EXPLOSION" ERROR — the AI may already be handling it.
 
 ## Payload shapes (pending capture)
 
