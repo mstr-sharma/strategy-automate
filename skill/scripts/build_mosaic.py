@@ -332,6 +332,48 @@ def cmd_describe_table(m: MSTR, args):
     print(json.dumps(body, indent=2))
 
 
+def cmd_describe_tables(m: MSTR, args):
+    """Describe many tables in ONE login/logout cycle to avoid the project session cap.
+
+    --source accepts `instanceId:namespace:table` (repeatable). Output is a JSON
+    dict keyed by `namespace.table` with the raw describe payload per table.
+    """
+    m.login()
+    out = {}
+    for spec in args.source:
+        try:
+            ins, ns, tb = spec.split(":", 2)
+        except ValueError:
+            die(f"--source must be instanceId:namespace:table, got {spec!r}")
+        ns_id = resolve_namespace_id(m, ins, ns)
+        tb_id = encode_tb_id(ns, tb)
+        path, body = m.try_candidates("describe_table", id=ins, ns_id=ns_id, tb_id=tb_id)
+        out[f"{ns}.{tb}"] = body
+        print(f"# {ns}.{tb} via {path}", file=sys.stderr)
+    print(json.dumps(out, indent=2, default=str))
+
+
+def cmd_kill_sessions(m: MSTR, args):
+    """Best-effort: login + immediate DELETE, repeated, to reap stale auth tokens owned by this user.
+
+    Does not affect interactive project sessions already opened by other processes; those reap on the
+    iServer side (~30 min). Use as a low-risk first response when you hit iServerCode -2147072486.
+    """
+    killed = 0
+    for _ in range(int(args.count)):
+        r = m.s.post(f"{m.base}/api/auth/login",
+                     json={"username": m.user, "password": m.pw, "loginMode": m.mode})
+        if not r.ok:
+            break
+        tok = r.headers.get("X-MSTR-AuthToken") or r.headers.get("X-Mstr-Authtoken","")
+        if not tok:
+            break
+        d = m.s.delete(f"{m.base}/api/auth/login", headers={"X-MSTR-AuthToken": tok})
+        if d.status_code in (200, 204):
+            killed += 1
+    print(json.dumps({"attempted": int(args.count), "killed": killed}))
+
+
 def cmd_discover(m: MSTR, args):
     """Probe every endpoint variant and print which one worked.
     Useful when porting this skill to a new MSTR version/tenant."""
@@ -2466,6 +2508,15 @@ def build_parser():
     sp.add_argument("--namespace", required=True)
     sp.add_argument("--match", help="substring match on table name")
 
+    sp = sub.add_parser("describe-tables",
+                        help="Describe many tables in one login to avoid the project session cap")
+    sp.add_argument("--source", action="append", required=True,
+                    help="Repeatable: instanceId:namespace:table")
+
+    sp = sub.add_parser("kill-sessions",
+                        help="Login/logout repeatedly to reap stale tokens for this user")
+    sp.add_argument("--count", type=int, default=5)
+
     sp = sub.add_parser("describe-table")
     sp.add_argument("--instance"); sp.add_argument("--instance-id")
     sp.add_argument("--namespace", required=True)
@@ -2673,6 +2724,8 @@ def main():
             "list-namespaces": cmd_list_namespaces,
             "list-tables":     cmd_list_tables,
             "describe-table":  cmd_describe_table,
+            "describe-tables": cmd_describe_tables,
+            "kill-sessions":   cmd_kill_sessions,
             "discover":        cmd_discover,
             "openapi-summary": cmd_openapi_summary,
             "openapi-search":  cmd_openapi_search,
