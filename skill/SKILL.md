@@ -35,8 +35,18 @@ Always use the helper script `scripts/build_mosaic.py` from this skill folder. D
 1. **Read memory first.** Confirm the env in memory (base URL, project ID, destination folder, credentials location) still matches what the user wants. If the user names a different project or folder, override via flags. Credentials must come from `MSTR_PASSWORD` or `--password`; do not write secrets into memory or this skill.
 2. **Auth (handled by script).** Login → grab `X-MSTR-AuthToken`; then `POST /api/auth/identityToken` → grab `X-MSTR-IdentityToken` only for Mosaic data-model Modeling Service writes that require it. Classic/project semantic-layer workflows may fail if identity token is added; route those through the `strategy-automation` skill (`strategy-automation/SKILL.md`).
 3. **Resolve DB instance.** `GET /api/datasources` (or `/api/dbobjects/databaseInstances` on older instances) — filter by name. Fail loudly if ambiguous.
-4. **Discover warehouse tables.** Use the helper's `list-namespaces`, `list-tables`, and `describe-table`. On current Strategy Library servers this is `GET /api/datasources/{id}/catalog/namespaces/{namespaceId}/tables` and `GET /api/datasources/{id}/catalog/tables/{tableId}` where namespace/table IDs are base64 JSON. The script includes `discover` for live path variants and `openapi-summary` for the raw spec.
-5. **Build in one changeset:**
+4. **Discover warehouse tables.** Use the helper's `list-namespaces`, `list-tables`, and `describe-tables` (plural — one login per run; see `memory/feedback_build_mosaic_session_leak.md`). On current Strategy Library servers the endpoints are `GET /api/datasources/{id}/catalog/namespaces/{namespaceId}/tables` and `GET /api/datasources/{id}/catalog/tables/{tableId}` where namespace/table IDs are base64 JSON. The script includes `discover` for live path variants and `openapi-summary` for the raw spec.
+5. **Translate business logic → build plan.** Before writing any changeset, produce the artifact described in `memory/reference_mosaic_business_logic_translation.md`: entities, grain, attributes, metrics (with aggregation function per semantic), relationships, and an assumptions log. This is mandatory even when no business context was supplied (`memory/feedback_business_logic_pass_mandatory.md`) — the inspection-only inference path is still a pass, not a skip.
+6. **Preflight gate (ERROR-severity = stop).** Run the preflight contextual check on the tables + any blueprint the user supplied:
+   ```bash
+   python3 scripts/preflight_model_check.py \
+     --instance "<DB Instance>" --schema <SCHEMA> \
+     --tables <T1> <T2> ... \
+     [--blueprint /tmp/blueprint.json] \
+     --out /tmp/preflight.json --fail-on ERROR
+   ```
+   Exit code 1 = stop and fix the input (bad naming, unresolvable FK chain, missing blueprint entity, PII without access rule) before calling `build`. Full detail in `memory/reference_mosaic_preflight_skill.md`; tunable lists (`LOCALE_SUFFIXES`, `AUDIT_COLS`, `PII_HINTS`) live at the top of the script.
+7. **Build in one changeset:**
    - `POST /api/model/changesets` (empty body) → `X-MSTR-MS-Changeset`
    - `POST /api/model/dataModels` with `{information:{name, destinationFolderId}, dataServeMode:"connect_live"}`. Use `"in_memory"` only when the user explicitly asks for an imported/cached model; use `"hybrid"` only when the tenant supports it and the user asks for it.
    - `POST /api/model/dataModels/{id}/tables` per input table. Body uses a `physicalTable` that references the warehouse table — prefer the `object` form over hand-rolled pipelines when creating fresh (no ref model to clone from):
@@ -51,8 +61,8 @@ Always use the helper script `scripts/build_mosaic.py` from this skill folder. D
    - For each ID/text column → `POST .../attributes` with one key form pointing to the column, lookupTable = that table.
    - For each numeric column → `POST .../factMetrics` with `function:"sum"`, fact expression = the column.
    - `POST /api/model/changesets/{cs}/commit`.
-6. **Relationships pass (second changeset).** For every column name shared between two tables, assume parent→child and create a `one_to_many` relationship via `PUT /api/model/dataModels/{id}/attributes/{childAttrId}/relationships`. Tell the user which ones were inferred and which ones to review.
-7. **Print the model URL:** `{BASE}/app/library#/model/{modelId}`.
+8. **Relationships pass (second changeset).** For every column name shared between two tables, assume parent→child and create a `one_to_many` relationship via `PUT /api/model/dataModels/{id}/attributes/{childAttrId}/relationships`. Tell the user which ones were inferred and which ones to review.
+9. **Print the model URL:** `{BASE}/app/library#/model/{modelId}`.
 
 ## Subtype codes (needed to filter folder listings)
 

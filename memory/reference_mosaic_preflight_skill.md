@@ -1,10 +1,12 @@
 ---
 name: Mosaic preflight contextual data check
-description: Pre-build validation script that catches naming/classification/relationship/blueprint-fit issues before a Mosaic model is created. Runs in CI or ad-hoc to gate `build_mosaic.py build`.
+description: Reference for `skill/scripts/preflight_model_check.py`. This is the gate the `build-mosaic-model` skill runs BEFORE build; it is not a standalone skill. Documents the 6 check categories, blueprint JSON schema, invocation syntax, and tunable lists.
 type: reference
 ---
 
-Location: `skill/scripts/preflight_model_check.py` in this repo.
+Preflight is step 6 of the `build-mosaic-model` execution flow (see `skill/SKILL.md`). It is not wrapped as its own `SKILL.md` — the script is invoked directly, and ERROR-severity findings stop the build.
+
+Location: `skill/scripts/preflight_model_check.py`.
 
 ## When to run
 
@@ -76,7 +78,7 @@ Without preflight, the default `build_mosaic.py build` inference produces unusab
 - numeric ID columns (`Total X ID` junk metrics)
 - FK columns without a corresponding dim table (missing entity attributes → cartesian at query time)
 
-Each of these was caught empirically on a real retail-style Mosaic build against a Snowflake-backed datasource. The preflight codifies those lessons so they don't recur.
+Each of these was caught empirically on prior Mosaic builds across different warehouse schemas. The preflight codifies those lessons so they don't recur. Applicable to any DB engine — the checks are driven by column names, datatypes, and relationship topology, not a specific vendor.
 
 ## Contextual-sense validation (the "does this make sense?" question)
 
