@@ -42,3 +42,64 @@ When exercising any of the below, capture the body and append to this file under
 - History list subscription with format=`pdf`.
 - Mobile subscription.
 - Cache-update subscription on a classic cube.
+
+## Verified payloads
+
+### UMA 2026-04-23: report email subscription with immediate preview
+
+Verified against UMA tenant `https://<env-id>.customer.cloud.microstrategy.com/MicroStrategyLibrary` in project `MicroStrategy Tutorial` for report `<report-id>` (`View Filter Report`).
+
+Working `POST /api/subscriptions` body shape:
+
+```json
+{
+  "name": "View Filter Report Monday Morning",
+  "sendNow": true,
+  "schedules": [
+    { "id": "FF7BB3B311D501F0C00051916B98494F" }
+  ],
+  "contents": [
+    {
+      "id": "<report-id>",
+      "type": "report",
+      "projectId": "<project-id>",
+      "personalization": {
+        "formatType": "PDF",
+        "formatMode": "DEFAULT",
+        "viewMode": "DEFAULT"
+      }
+    }
+  ],
+  "recipients": [
+    {
+      "id": "<user-id>",
+      "type": "user",
+      "includeType": "TO",
+      "addressId": "<address-id>"
+    }
+  ],
+  "delivery": {
+    "mode": "EMAIL",
+    "email": {
+      "subject": "View Filter Report",
+      "message": "Preview delivery for View Filter Report",
+      "sendContentAs": "data"
+    }
+  }
+}
+```
+
+Observed server response / behavior:
+
+- `sendNow` is a write-only field on the `Subscription` body. On this tenant there was no separate `/api/subscriptions/{id}/sendNow` path in `/api/openapi.yaml`, so immediate preview should be requested during create/update, not assumed as a follow-up endpoint.
+- Passing recipient `type:"user"` plus `addressId` worked, but the saved subscription normalized the recipient to `type:"personal_address"` with recipient `id` equal to the address ID, not the user ID.
+- The server accepted `formatMode:"DEFAULT"` and `viewMode:"DEFAULT"` but persisted the report content as `formatMode:"CURRENT_PAGE"` and `viewMode:"BOTH"`. Treat the GET-after-create response as source of truth.
+- A valid auth token alone was not enough for follow-up reads in ad hoc probes; the client needed the login session cookies (`JSESSIONID`, `iSession`) preserved as well. `requests.Session()` matched tenant behavior; bare header-only urllib probes returned `ERR009` session expired on subsequent calls.
+- `GET /api/objects/{id}` on this tenant required `type` query param for classic objects; `GET /api/objects/{reportId}?type=3` worked for the report lookup.
+- `GET /api/schedules` returned the reusable built-in schedule `Monday Morning` with ID `FF7BB3B311D501F0C00051916B98494F` and next delivery `2026-04-27T04:00:00+0000`.
+- `GET /api/users/{userId}/addresses` returned the target email address. For user `<user-id>` (`arpan`), the default email address was `<address-id>` / `redacted@example.com`.
+
+Follow-up hardening ideas:
+
+- Add a typed `create-subscription` helper to `skill/scripts/build_mosaic.py` so the repo stops relying on ad hoc REST payload assembly for subscriptions/schedules.
+- After helper creation, capture additional verified variants: prompt-bearing reports, dossier email deliveries, history list deliveries, and explicit send-preview status inspection if the tenant exposes run history endpoints.
