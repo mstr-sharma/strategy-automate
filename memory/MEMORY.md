@@ -49,7 +49,8 @@
 - [Mosaic publishable dataTypes](feedback_mosaic_publishable_datatypes.md) — warehouse-catalog types silently break in-memory publish on Strategy ONE Cloud; clone UI-created types (`utf8_char`, `integer`, `double`, `int64`, `time_stamp`) instead.
 - [Multi-DB connect_live forbidden](feedback_mosaic_multi_db_connect_live.md) — Mosaic rejects ≥2 DB instances under connect_live (code 8004d232); use in_memory or split.
 - [Conformance is case-sensitive + same-name-only](feedback_build_mosaic_conforming_attr_rules.md) — mixed-case warehouses or differently-named FKs yield an under-joined model silently; declare relationships explicitly.
-- [build_mosaic.py session leak + batched describe](feedback_build_mosaic_session_leak.md) — iServer holds a project session independent of DELETE /api/auth/login; use `describe-tables` (plural) helper to stay under the cap.
+- [Mosaic relationship wiring recipe](feedback_mosaic_relationship_wiring.md) — six-step recipe: attribute plan → dictionary conformance via identical `name` → relationships for non-shared attrs only → post-build expression verify → PATCH-before-PUT → Trino rollup check. Avoids 8004ccdb / 8004ccc7 / disconnected-star failures on multi-DB builds.
+- [build_mosaic.py session leak + batched describe](feedback_build_mosaic_session_leak.md) — iServer holds a project session independent of DELETE /api/auth/login; use `describe-tables` (plural) helper to stay under the cap; NEVER chain build→publish→SF as separate shell invocations on Strategy ONE Cloud tenants (cap trips before publish's classify preflight can complete).
 
 ## Classic / legacy, AI, runtime, and admin
 - [Legacy semantic / admin workflows](reference_strategy_legacy_semantic_admin.md) — classic project semantic layer + admin; distinguishes legacy SFs from Mosaic data-model SFs and AI/agent surfaces.

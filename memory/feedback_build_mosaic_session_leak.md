@@ -33,3 +33,27 @@ Modeling-Service wrapper returns the same with `8004cb0a`. Each helper run creat
 **Operational rule:** whenever preflighting >1 table or running any multi-step discovery, use `describe-tables` (or write a single-process Python script that logs in once, does everything, logs out). Never loop `describe-table` from shell. Never chain `auth-probe → list-datasources → list-namespaces → list-tables → describe-table × N` in separate invocations on Studio — it will cap the user within 5-6 subcommands.
 
 **Still missing:** an admin-scope force-close endpoint. If you hit the cap mid-workflow, there is no fast recovery; wait or contact a platform admin with `Bypass ACL` to reset the user.
+
+## 2026-04-23 update — build → publish sequencing is the #1 repeat offender
+
+**Pattern observed (Strategy ONE Cloud tenant, second session-cap incident in the same day):**
+`build_mosaic.py build …` (successful, commits, returns model_id)
+→ within ~2 min, `build_mosaic.py publish --model-id …`
+→ `publish` starts by calling `classify_object_surface()` which issues `GET /api/objects/{id}?type=3` — this is **project-scoped** and opens a fresh interactive IServer session each helper invocation.
+→ Because the build already opened 4–6 project-scoped sessions (datasource resolution, describe-table × N, changeset open, commit, relationships changeset), the publish's classify call trips `-2147072486` = `8004cb0a`. Recovery is a ~30-min wait.
+
+**Why:** the default project interactive-session cap on most Strategy ONE Cloud tenants is 5 per user, and iServer does not reap them on `DELETE /api/auth/login` — only on a 30-min idle timer. Each helper invocation that touches `/api/objects/...`, `/api/model/...`, `/api/dataModels/...`, or `/api/cubes/...` counts; `/api/projects`, `/api/datasources`, `/api/users`, `/api/auth/*` do NOT count.
+
+**How to apply — operational rules when you're already past discovery:**
+1. **Never chain `build` → `publish` → `add-security-filter` → `set-acl` as separate shell invocations.** Even if each subcommand has its own try/finally logout, the project-interactive sessions accumulate at the iServer tier and won't reap in time. Use one of:
+   - `build-from-config` subcommand (handles security_filter, acl, publish, certify in the same process — one session, clean exit).
+   - A single ad-hoc Python block that imports `build_mosaic` as a module (or instantiates `MSTR` directly) and does build/publish/SF/ACL back-to-back inside a single `with`/try-finally. Do NOT `subprocess.run(...)` the helper repeatedly from that script — that re-opens a new session each time.
+2. **Avoid `publish` entirely when the only consumer is the Trino layer.** For `connect_live` models, publish is a no-op. For `in_memory` models, check whether the downstream task actually needs the materialized cube (Trino query, dashboard, subscription) — if the user only needs the model to exist + security filter assigned, skip publish until the user asks for it.
+3. **Save the model_id immediately after build and treat it as idempotent.** If you hit the cap between build and publish, wait ~30 min then re-invoke publish alone — don't re-run build.
+4. **Suppress the classify preflight on known-Mosaic models.** In ad-hoc scripts, skip `classify_object_surface` and call `_mosaic_publish_verified()` directly when you already know the model is subType 779 (e.g., you just created it). One fewer project-scoped call = one fewer session.
+5. **Proactively probe session count before risky writes.** `GET /api/sessions` is not project-scoped; if you see a high session count and a long-running `dateCreated`, pause.
+6. **Order of operations to minimize cap pressure**: discovery (list-datasources, list-namespaces, describe-tables plural) → build-from-config with all post-build ops folded in → validate via Trino (separate, single session). Do not interleave `api-call` probes against `/api/model/...` between the steps.
+
+**Failure signature to grep for:** `iServerCode":-2147072486` OR `"Maximum number of interactive session per user"`. If present, **stop retrying immediately** — every retry keeps the timeout window from starting. Wait the full 30 minutes from the LAST attempted project-scoped call.
+
+**Helper-script gap (known):** `publish` subcommand does not accept a `--skip-classify` flag. Adding one is the single highest-value hardening; until then, route through `build-from-config` or an inline Python block.
