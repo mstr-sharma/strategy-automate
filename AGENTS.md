@@ -1,8 +1,15 @@
-# AGENTS.md — entry point for AI coding agents
+# AGENTS.md — canonical, LLM-agnostic entry point
 
 You are operating inside the **strategy-automation** repo: a one-stop automation brain for **Strategy** (formerly MicroStrategy) that aims for complete platform automation wherever Strategy exposes an API, SDK, MCP, CLI, or reproducible hook. It covers Mosaic semantic models, the classic / legacy semantic layer, runtime analytics, cubes / datasets, platform admin, AI agents, and data validation.
 
-This file is the cross-tool entry point (Codex CLI, Gemini CLI, Cursor, Cline, etc.). Claude Code also reads `memory/MEMORY.md` directly; the two indexes point at the same content.
+This file is the **canonical cross-tool entry point**. Every LLM-specific shim at the repo root (`CLAUDE.md`, `GEMINI.md`, `CODEX.md`, `GROK.md`, `OLLAMA.md`, `CURSOR.md`, etc.) points here. If you are a model or tool not listed there, read this file + `memory/MEMORY.md` and proceed — nothing else is tool-specific.
+
+**Harness assumptions (apply across LLMs):**
+- The repo is plain Markdown + Python 3 (standard library + `requests`). No Anthropic-specific, OpenAI-specific, or Google-specific SDK calls — every helper is `requests` against Strategy REST or subprocess to `mstrio-py`.
+- `SKILL.md` frontmatter (`name`, `description`) follows Anthropic's skill convention, but any harness that reads Markdown with YAML frontmatter can use it. A skill-unaware LLM can read each `SKILL.md` as a normal instruction file.
+- `memory/MEMORY.md` is a flat index with one-line hooks; any LLM can `grep` or keyword-match to find the relevant memory file on demand.
+- Shell helpers live in `skill/scripts/`. Invoke them via whatever tool-call mechanism your harness exposes (Bash, shell, execute_command, tool-use-bash, etc.).
+- Credentials come from env vars (`MSTR_BASE`, `MSTR_USER`, `MSTR_PASSWORD`, `MSTR_PROJECT_ID`/`MSTR_PROJECT_NAME`, `MSTR_DEST_FOLDER_ID`) — see `memory/reference_strategy_env.md`. Never hardcode.
 
 ## Git setup
 
@@ -75,3 +82,21 @@ Each AI tool configures MCP servers through its own settings — this repo does 
 - `query` — execute a Trino-compatible SQL query against the published Mosaic layer.
 
 The memory writes say "MCP" — don't hunt for a server-id prefix. If your tool exposes these four tool names under any namespace, you're good.
+
+**If your harness has no MCP support**, every MCP tool has a REST fallback:
+- `get_projects` → `GET /api/projects`
+- `get_mosaic_models` → folder walk for `subtype==779` via `/api/folders/{id}` + `/api/searches`
+- `get_semantics` → `GET /api/model/dataModels/{id}/attributes` + `/factMetrics`
+- `query` → direct Trino HTTPS connection (host `<tenant>:443`, catalog `sql`, schema `<project-name-lower>`, basic auth with MSTR creds), or `POST /api/dataModels/{id}/instances` + report/cube execution APIs for result-set equivalents.
+
+## Running under specific LLM harnesses
+
+All harnesses follow the same contract: read this file, load `memory/MEMORY.md`, invoke `skill/scripts/build_mosaic.py` (and siblings) via whatever tool-call mechanism is available. Per-harness notes:
+
+- **Claude Code** (`CLAUDE.md`) — skills in `skill/`, `strategy-automation/`, `strategy-validation/` auto-discovered by `SKILL.md` frontmatter. Memory auto-loaded via `memory/MEMORY.md` index.
+- **Codex CLI** (`CODEX.md`) — reads `AGENTS.md` on `cd`. Scripts run under its shell tool.
+- **Gemini CLI** (`GEMINI.md`) — reads `GEMINI.md` → `AGENTS.md`.
+- **Grok / xAI CLIs** (`GROK.md`) — same contract; if no skills concept, treat each `SKILL.md` as a long-form instruction file.
+- **Ollama local models** (`OLLAMA.md`) — load this file + targeted memory files into the system prompt. Call scripts via subprocess. Works with any tool-calling model (`llama3.2`, `qwen2.5-coder`, `mistral-small`, `devstral`).
+- **Cursor / Cline / Continue / Aider** (`CURSOR.md`) — point the agent at `AGENTS.md` as the root instruction; skills and memories are ordinary Markdown files.
+- **Any other LLM** — no configuration needed. Read this file + memory index; follow the routing.
