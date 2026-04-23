@@ -34,7 +34,7 @@ See `reference_mosaic_clone_pattern.md` for the full working script pattern. Hig
 - Attribute/metric expressions: use text-only `column_reference` tokens (`{"type":"column_reference","value":"COL_NAME"}` — no `target.objectId`) to let the server re-bind by name on commit.
 - Tables need at least one attribute or metric per table BEFORE commit, else `8004e42f`.
 - Attributes need `displays.reportDisplays` PATCHed before commit, else `8004cf06`.
-- Deletes via `DELETE /api/objects/{id}?type=3` (NOT `/api/model/dataModels/{id}`, which 404s on studio.strategy.com).
+- Deletes via `DELETE /api/objects/{id}?type=3` (NOT `/api/model/dataModels/{id}`, which 404s on the Strategy ONE Cloud tenant family observed; recheck on other iServer builds).
 
 ### Classic schema objects (attributes, facts, metrics, filters in a project)
 

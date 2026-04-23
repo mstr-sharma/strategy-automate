@@ -6,7 +6,7 @@ type: feedback
 
 **Why this exists.** This memory's core value is the **object-classification rule** (779 Mosaic data model vs 776 classic Intelligent Cube) and the table of endpoint pairs that LOOK interchangeable but aren't. Read it before any publish/refresh/execute/ACL/security-filter write so you pick the right URL prefix for the object family.
 
-**Note on the publish endpoint (2026-04-23 correction).** An earlier version of this memory said `/api/cubes/{id}?cubeAction=publish` "is NOT the publish path for a Mosaic data model" — that was half wrong. On studio.strategy.com the Studio UI's Publish button routes through `POST /api/cubes/{modelId}?cubeAction=publish` (HTTP 202) for Mosaic models (subtype 779) AND it's the reliable trigger path. See `reference_mosaic_publish_path.md` for the verified flow and trade-offs between that endpoint and the Modeling-native 3-step `/api/dataModels/{id}/instances` → `/publish` → `/publishStatus` flow. Publishability also depends on the physical-table `dataType` shape — see `feedback_mosaic_publishable_datatypes.md`. Either publish path silently no-ops if the columns carry warehouse-catalog sentinels (`variable_length_string` precision=-1, `decimal` scale=-MIN_INT, etc.).
+**Note on the publish endpoint (2026-04-23 correction).** An earlier version of this memory said `/api/cubes/{id}?cubeAction=publish` "is NOT the publish path for a Mosaic data model" — that was half wrong. On Strategy ONE Cloud tenants the Studio UI's Publish button routes through `POST /api/cubes/{modelId}?cubeAction=publish` (HTTP 202) for Mosaic models (subtype 779) AND it's the reliable trigger path. See `reference_mosaic_publish_path.md` for the verified flow and trade-offs between that endpoint and the Modeling-native 3-step `/api/dataModels/{id}/instances` → `/publish` → `/publishStatus` flow. Publishability also depends on the physical-table `dataType` shape — see `feedback_mosaic_publishable_datatypes.md`. Either publish path silently no-ops if the columns carry warehouse-catalog sentinels (`variable_length_string` precision=-1, `decimal` scale=-MIN_INT, etc.). Behavior may differ on other iServer build families — re-verify before asserting the rule.
 
 The original incident (2026-04-22) still matters: a 2xx on `/api/cubes` does not guarantee materialization — always poll `publishStatus` or confirm via Trino `get_mosaic_models`/`query` before declaring success.
 
@@ -42,7 +42,7 @@ Never call a legacy endpoint on a Mosaic object, or a Mosaic endpoint on a legac
 
 ## Implication for `build_mosaic.py publish` (updated 2026-04-23)
 
-The helper's current `/api/cubes/{id}` fallback is actually correct for Mosaic on studio.strategy.com — the UI uses the same path. What's missing is a **post-202 confirmation step**. Required fix:
+The helper's current `/api/cubes/{id}` fallback is actually correct for Mosaic on Strategy ONE Cloud tenants — the UI uses the same path. What's missing is a **post-202 confirmation step**. Required fix:
 - Detect subType first (`GET /api/objects/{id}?type=3`).
 - If subType is 779 (Mosaic): call `POST /api/cubes/{id}?cubeAction=publish`, then confirm completion by either (a) polling the 3-step Modeling flow (`/api/dataModels/{id}/instances` + `/publish` + `/publishStatus`) until every table is `loaded`, or (b) a smoke query via MCP `query` / Trino. Do not declare success on the 202 alone.
 - If subType is 776 (classic cube): use `/api/cubes/*` directly (no data-model instance needed).

@@ -88,7 +88,7 @@ See `reference_mosaic_relationship_archetypes.md` for the 6 canonical shapes. Th
 - **Conformed dimensions.** If a column name (e.g. `region`) appears in ≥2 fact tables as a descriptor, promote it to a single conformed attribute rather than per-fact duplicates.
 - **Degenerate dimensions.** A code that lives only on the fact row with no lookup table (e.g. `severity = 'low|med|high'` on `incidents`) is still an attribute — just with its lookup table = the fact table.
 - **Bridges.** An all-FK table (no descriptors, no measures) between two entities is a many-to-many. Declare explicitly; the auto-build heuristic will not infer it.
-- **Cross-DB joins.** Mosaic in-memory materialization happily joins Postgres + Snowflake on a shared attribute key (e.g. `tenant_id` in Neon vs `TENANT_ID` in Snowflake). Declare the shared attribute explicitly; column-name case mismatches break auto-conformance (`feedback_build_mosaic_conforming_attr_rules.md`).
+- **Cross-DB joins.** Mosaic in-memory materialization happily joins tables across distinct DB instances on a shared attribute key (e.g. `<entity>_id` lowercase on one instance vs `<ENTITY>_ID` uppercase on another). Declare the shared attribute explicitly; column-name case mismatches break auto-conformance (`feedback_build_mosaic_conforming_attr_rules.md`). Applies to any pair of supported engines — Postgres, Snowflake, Oracle, BigQuery, SQL Server, Redshift, Databricks, Teradata.
 
 ## Inspection-only inference (no business context at all)
 
@@ -126,30 +126,34 @@ A build plan is not shippable until all three pass or every failure is mapped to
 
 ```json
 {
-  "model": {"name": "...", "data_serve_mode": "in_memory"},
-  "sources": [{"instance": "Neon PostgreSQL", "schema": "public", "tables": ["incidents", "tenant_service_hourly"]},
-              {"instance": "WACSE Snowflake", "schema": "WACSE", "tables": ["TENANTS", "USAGE_HOURLY"]}],
+  "model": {"name": "<model name>", "data_serve_mode": "in_memory"},
+  "sources": [
+    {"instance": "<db-instance-1 name>", "schema": "<schema-1>", "tables": ["<fact-table>", "<lookup-table>"]},
+    {"instance": "<db-instance-2 name>", "schema": "<schema-2>", "tables": ["<dim-table>", "<other-fact-table>"]}
+  ],
   "tables": {
-    "public.incidents": {
-      "grain": ["incident_id"],
-      "entities": ["Incident"],
-      "attributes": [...],
-      "metrics": [...]
+    "<schema-1>.<fact-table>": {
+      "grain": ["<natural-key-col>"],
+      "entities": ["<BusinessEntity>"],
+      "attributes": [{"name": "<Business Entity>", "columns": ["<id-col>"], "display_forms": ["<desc-col>"]}],
+      "metrics": [{"name": "<Measure>", "column": "<numeric-col>", "function": "sum", "format": "integer"}]
     },
-    "WACSE.USAGE_HOURLY": {
-      "grain": ["tenant_id", "cluster_id", "service_ts"],
-      "entities": ["Tenant x Cluster x Hour"],
-      ...
+    "<schema-2>.<other-fact-table>": {
+      "grain": ["<dim-fk>", "<secondary-fk>", "<time-col>"],
+      "entities": ["<Dim> x <Secondary> x <TimeGrain>"],
+      "attributes": [],
+      "metrics": []
     }
   },
   "relationships": [
-    {"parent": "Tenant", "child": "Usage Hour", "type": "one_to_many",
-     "relationship_table": "WACSE.USAGE_HOURLY", "reason": "tenant_id shared FK"}
+    {"parent": "<Parent Dim>", "child": "<Child Entity>", "type": "one_to_many",
+     "relationship_table": "<schema>.<fact-table>",
+     "reason": "<shared-fk-col> shared FK"}
   ],
-  "derived_metrics": [...],
+  "derived_metrics": [],
   "assumptions": [
-    {"scope": "USAGE_HOURLY.jobs_failed", "assumption": "sum-aggregated as a count",
-     "signal": "name matches `*_failed` count pattern", "tier": "inspection-only"}
+    {"scope": "<schema>.<table>.<col>", "assumption": "<what was inferred>",
+     "signal": "<why — column pattern, sample stats, etc.>", "tier": "inspection-only"}
   ]
 }
 ```

@@ -117,7 +117,7 @@ Similar to attributes:
 `POST /api/model/changesets/{cs}/commit` — should return 201 with `status:"Ready"`. Failure modes you may hit:
 - `8004e42f` — a table has no attribute/metric. You skipped or failed a metric/attr for that table.
 - `8004cf06` — an attribute has no report display. Step 4's PATCH was missed.
-- `8004ccfc` — duplicate model name in folder. Delete the old one via `DELETE /api/objects/{oldMID}?type=3` (the `/api/model/dataModels/{id}` DELETE path does NOT work on studio.strategy.com — uses the generic objects endpoint).
+- `8004ccfc` — duplicate model name in folder. Delete the old one via `DELETE /api/objects/{oldMID}?type=3` (the `/api/model/dataModels/{id}` DELETE path does NOT work on the observed Strategy ONE Cloud tenant family — uses the generic objects endpoint; verify on other iServer builds before relying on one or the other).
 
 ### 7. Relationships (new changeset)
 
@@ -142,7 +142,7 @@ Follow `reference_mosaic_security_filter.md` — create via Modeling-Service pat
 
 ### 9. Publish
 
-Per `reference_mosaic_publish_path.md`: `POST /api/cubes/{MID}?cubeAction=publish` is the reliable trigger on studio.strategy.com (matches the UI). Poll via the Modeling-native 3-step flow if you need per-table confirmation.
+Per `reference_mosaic_publish_path.md`: `POST /api/cubes/{MID}?cubeAction=publish` is the reliable trigger on Strategy ONE Cloud tenants (matches the UI). Poll via the Modeling-native 3-step flow if you need per-table confirmation.
 
 ## What this pattern does NOT carry over
 

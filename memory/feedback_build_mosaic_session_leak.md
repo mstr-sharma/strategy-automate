@@ -4,7 +4,7 @@ description: The helper creates a session via POST /api/auth/login but never cal
 type: feedback
 ---
 
-**Observed 2026-04-23.** After ~10–15 `build_mosaic.py` invocations against `studio.strategy.com` (`build`, `api-call`, `delete-model`, `publish`, `add-security-filter`, etc.), subsequent calls returned:
+**Observed 2026-04-23 on a Strategy ONE Cloud tenant (studio.strategy.com).** After ~10–15 `build_mosaic.py` invocations (`build`, `api-call`, `delete-model`, `publish`, `add-security-filter`, etc.), subsequent calls returned:
 
 ```
 500 {"code":"ERR001","iServerCode":-2147072486,

@@ -1,6 +1,6 @@
 ---
 name: Mosaic in-memory publish requires clean pipeline dataTypes (not warehouse-catalog types)
-description: Confirmed 2026-04-23 on studio.strategy.com — when the publishable columns carry warehouse-catalog sentinels (precision=-1 or scale=-2147483648, `variable_length_string`, `fixed_length_string`, `binary`, `unsigned`, `decimal` with warehouse precision), the Mosaic in-memory publish accepts the request but the cube never materializes (status=1 with empty tables, or -2147212544 stall). A reference model built by the UI wizard shows normalized types (`utf8_char(32000,0)`, `integer(4,0)`, `integer(2,0)`, `double(P,S)`, `int64(8,0)`, `date(10,0)`, `time_stamp(26,6)` or `(23,9)`) — cloning those dataTypes into an otherwise-identical model fixes publish end-to-end.
+description: Confirmed 2026-04-23 on a Strategy ONE Cloud tenant — when the publishable columns carry warehouse-catalog sentinels (precision=-1 or scale=-2147483648, `variable_length_string`, `fixed_length_string`, `binary`, `unsigned`, `decimal` with warehouse precision), the Mosaic in-memory publish accepts the request but the cube never materializes (status=1 with empty tables, or -2147212544 stall). A reference model built by the UI wizard shows normalized types (`utf8_char(32000,0)`, `integer(4,0)`, `integer(2,0)`, `double(P,S)`, `int64(8,0)`, `date(10,0)`, `time_stamp(26,6)` or `(23,9)`) — cloning those dataTypes into an otherwise-identical model fixes publish end-to-end. Recheck on other iServer build families before asserting this as universal.
 type: feedback
 ---
 

@@ -45,22 +45,20 @@ When exercising any of the below, capture the body and append to this file under
 
 ## Verified payloads
 
-### UMA 2026-04-23: report email subscription with immediate preview
+### Report email subscription with immediate preview (verified 2026-04-23)
 
-Verified against UMA tenant `https://<env-id>.customer.cloud.microstrategy.com/MicroStrategyLibrary` in project `MicroStrategy Tutorial` for report `<report-id>` (`View Filter Report`).
-
-Working `POST /api/subscriptions` body shape:
+Working `POST /api/subscriptions` body shape for a single-report email subscription sent immediately via `sendNow`:
 
 ```json
 {
-  "name": "View Filter Report Monday Morning",
+  "name": "<subscription display name>",
   "sendNow": true,
   "schedules": [
-    { "id": "FF7BB3B311D501F0C00051916B98494F" }
+    { "id": "<schedule-object-id>" }
   ],
   "contents": [
     {
-      "id": "<report-id>",
+      "id": "<report-object-id>",
       "type": "report",
       "projectId": "<project-id>",
       "personalization": {
@@ -72,34 +70,38 @@ Working `POST /api/subscriptions` body shape:
   ],
   "recipients": [
     {
-      "id": "<user-id>",
+      "id": "<user-object-id>",
       "type": "user",
       "includeType": "TO",
-      "addressId": "<address-id>"
+      "addressId": "<user-address-id>"
     }
   ],
   "delivery": {
     "mode": "EMAIL",
     "email": {
-      "subject": "View Filter Report",
-      "message": "Preview delivery for View Filter Report",
+      "subject": "<email subject>",
+      "message": "<email body>",
       "sendContentAs": "data"
     }
   }
 }
 ```
 
-Observed server response / behavior:
+Resolve the ID placeholders at run time:
+- `<schedule-object-id>` — `GET /api/schedules`; pick by `name` (common built-in: `Monday Morning`). Schedule IDs are tenant-scoped; do not reuse across tenants.
+- `<project-id>` — `GET /api/projects`; match by `name`.
+- `<report-object-id>` — `GET /api/objects/{id}?type=3` to confirm, or search the target folder.
+- `<user-object-id>` and `<user-address-id>` — `GET /api/users?nameBegins=…` and `GET /api/users/{userId}/addresses`; the default address is flagged on the response.
 
-- `sendNow` is a write-only field on the `Subscription` body. On this tenant there was no separate `/api/subscriptions/{id}/sendNow` path in `/api/openapi.yaml`, so immediate preview should be requested during create/update, not assumed as a follow-up endpoint.
-- Passing recipient `type:"user"` plus `addressId` worked, but the saved subscription normalized the recipient to `type:"personal_address"` with recipient `id` equal to the address ID, not the user ID.
-- The server accepted `formatMode:"DEFAULT"` and `viewMode:"DEFAULT"` but persisted the report content as `formatMode:"CURRENT_PAGE"` and `viewMode:"BOTH"`. Treat the GET-after-create response as source of truth.
-- A valid auth token alone was not enough for follow-up reads in ad hoc probes; the client needed the login session cookies (`JSESSIONID`, `iSession`) preserved as well. `requests.Session()` matched tenant behavior; bare header-only urllib probes returned `ERR009` session expired on subsequent calls.
-- `GET /api/objects/{id}` on this tenant required `type` query param for classic objects; `GET /api/objects/{reportId}?type=3` worked for the report lookup.
-- `GET /api/schedules` returned the reusable built-in schedule `Monday Morning` with ID `FF7BB3B311D501F0C00051916B98494F` and next delivery `2026-04-27T04:00:00+0000`.
-- `GET /api/users/{userId}/addresses` returned the target email address. For user `<user-id>` (`arpan`), the default email address was `<address-id>` / `redacted@example.com`.
+Observed server behaviors (tenant-family: Strategy ONE Cloud, library version current on 2026-04-23 — recheck on tenants with different iServer build):
 
-Follow-up hardening ideas:
+- `sendNow` is a **write-only** field on the `Subscription` body. There is no separate `/api/subscriptions/{id}/sendNow` path in `/api/openapi.yaml` on this tenant family — immediate preview must be requested during create/update, not as a follow-up endpoint.
+- Passing recipient `type:"user"` plus `addressId` is accepted on write, but the saved subscription **normalizes** the recipient to `type:"personal_address"` with `id` equal to the address ID, not the user ID. Always re-read via `GET` after create if downstream code depends on the recipient shape.
+- `formatMode:"DEFAULT"` and `viewMode:"DEFAULT"` are accepted on write but **persisted** as `formatMode:"CURRENT_PAGE"` and `viewMode:"BOTH"`. Treat the GET-after-create response as source of truth.
+- A bare auth-token header is not enough for follow-up reads — the client must preserve the login session cookies (`JSESSIONID`, `iSession`). `requests.Session()` in Python matches tenant behavior; bare `urllib` probes return `ERR009 session expired` on subsequent calls.
+- `GET /api/objects/{id}` requires the `type` query param for classic objects (e.g. `?type=3` for reports).
 
-- Add a typed `create-subscription` helper to `skill/scripts/build_mosaic.py` so the repo stops relying on ad hoc REST payload assembly for subscriptions/schedules.
-- After helper creation, capture additional verified variants: prompt-bearing reports, dossier email deliveries, history list deliveries, and explicit send-preview status inspection if the tenant exposes run history endpoints.
+Follow-up hardening (recorded as a gap, not yet implemented):
+
+- Add a typed `create-subscription` helper to `skill/scripts/build_mosaic.py` (or a sibling) so subscription payloads stop being assembled ad hoc. Helper should take `--report-id`, `--project-id`, `--schedule`, `--recipient-user`, and resolve addresses server-side.
+- After helper creation, capture additional verified variants under `captures/`: prompt-bearing reports, dossier email deliveries, history-list deliveries, and explicit send-preview status inspection when the tenant exposes run-history endpoints.

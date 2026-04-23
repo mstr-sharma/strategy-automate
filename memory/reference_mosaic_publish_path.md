@@ -1,12 +1,12 @@
 ---
-name: Mosaic in-memory publish — verified endpoint sequence on Studio ONE
-description: Two publish endpoints exist for a Mosaic data model (subType 779) on studio.strategy.com; the UI uses the legacy-named `/api/cubes/{id}?cubeAction=publish` (202). The Modeling-native 3-step flow (`/api/dataModels/{id}/instances` + `/api/dataModels/{id}/publish` + `/publishStatus`) also works — but the 204-on-publish is a fire-and-forget and silently no-ops unless the table payload is well-formed (see also feedback_mosaic_publishable_datatypes.md). Both paths assume the tables carry clean, non-warehouse-catalog dataTypes.
+name: Mosaic in-memory publish — verified endpoint sequence on Strategy ONE Cloud
+description: Two publish endpoints exist for a Mosaic data model (subType 779) on Strategy ONE Cloud tenants; the UI uses the legacy-named `/api/cubes/{id}?cubeAction=publish` (202). The Modeling-native 3-step flow (`/api/dataModels/{id}/instances` + `/api/dataModels/{id}/publish` + `/publishStatus`) also works — but the 204-on-publish is a fire-and-forget and silently no-ops unless the table payload is well-formed (see also feedback_mosaic_publishable_datatypes.md). Both paths assume the tables carry clean, non-warehouse-catalog dataTypes.
 type: reference
 ---
 
 ## Background — a 2026-04-22 memory was half wrong
 
-`reference_mosaic_vs_legacy_surfaces.md` declared "`/api/cubes/*` is NOT the publish path for a Mosaic data model — use `POST /api/dataModels/{id}/publish`." After 2026-04-23, corrected: both paths work for a properly-typed Mosaic model. The real failure mode that memory captured was the dirty dataTypes — not the endpoint choice. Keep that memory for the classification rules (subType 779 vs 776) but read this one for the actual publish trigger.
+`reference_mosaic_vs_legacy_surfaces.md` declared "`/api/cubes/*` is NOT the publish path for a Mosaic data model — use `POST /api/dataModels/{id}/publish`." After 2026-04-23, corrected: both paths work for a properly-typed Mosaic model. The real failure mode that memory captured was the dirty dataTypes — not the endpoint choice. Keep that memory for the classification rules (subType 779 vs 776) but read this one for the actual publish trigger. Observations here are from a Strategy ONE Cloud tenant; recheck endpoint choice on different iServer build families.
 
 ## What the Studio UI calls when you click "Publish"
 
@@ -48,7 +48,7 @@ Top-level statuses observed:
 - `1` — job queued/running. Tables list may be empty for the first tens of seconds.
 - `5` — reserved.
 - `6` — schema comparison completed.
-- `-2147212544` — CubeServer parallel-mode stall. With REF-clean dataTypes this is rare; with warehouse-catalog types it is the default outcome on Studio ONE.
+- `-2147212544` — CubeServer parallel-mode stall. With REF-clean dataTypes this is rare; with warehouse-catalog types it is the default outcome on the observed Strategy ONE Cloud tenant family.
 
 Per-table statuses: `reserved` → `schema_comparison_completed` → `loaded` (happy), or terminate at `error`.
 
@@ -67,8 +67,9 @@ Per-table statuses: `reserved` → `schema_comparison_completed` → `loaded` (h
 
 `build_mosaic.py publish` currently tries `/api/cubes/{id}` first and accepts the 202 as success — which is correct for Mosaic now that we've verified the UI uses this path. But it does NOT follow up with a publish-status poll. Add a poll via the 3-step instance flow after the 202 (or just wait and query via Trino) before reporting success. Otherwise validation can run before the cube finishes materializing.
 
-## Verified on 2026-04-23
+## Verified on 2026-04-23 (tenant-family: Strategy ONE Cloud)
 
-Model `<mosaic-model-id-2>` ("Tenant GPU Analysis-20260423T185208Z"):
-- `/api/cubes/{id}?cubeAction=publish` → 202, followed by Trino query success (`SELECT … FROM "tenant gpu analysis-20260423t185208z" …`).
-- `/api/dataModels/{id}/publish` with per-table bodies → 204, followed by `publishStatus` returning `status=1 tables:[]` while a parallel `/api/cubes` publish completed. Conclusion: the Modeling-native publish accepts the request but queues it in a way the Studio ONE CubeServer may not always drain — the `/api/cubes` path is the reliable one on this tenant.
+- `/api/cubes/{id}?cubeAction=publish` → 202, followed by Trino query success on the materialized model.
+- `/api/dataModels/{id}/publish` with per-table bodies → 204, followed by `publishStatus` returning `status=1 tables:[]` while a parallel `/api/cubes` publish completed. Conclusion: the Modeling-native publish accepts the request but queues it in a way the CubeServer may not always drain on this tenant family — the `/api/cubes` path is the reliable one here. Recheck on other iServer build families.
+
+(Raw reproduction, including model IDs and query text, lives under `captures/` on the run date. Link the capture from the follow-up ticket rather than re-embedding IDs here.)

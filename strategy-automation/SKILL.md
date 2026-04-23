@@ -80,5 +80,5 @@ Use this skill when the user asks to automate, inspect, build, modify, secure, p
 - AI agents/bots/chats: `reference_strategy_ai_agents.md`
 - Live validation suite: `reference_strategy_validation_workflows.md`
 - Mosaic modeling payloads: `reference_mosaic_modeling_concepts.md`
-- Mosaic build CLI: `reference_build_mosaic_skill.md`
+- Mosaic build CLI: `reference_mosaic_build_skill.md`
 - mstrio-py role: `reference_mstrio_py.md`
