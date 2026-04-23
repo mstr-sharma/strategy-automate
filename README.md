@@ -20,8 +20,9 @@ strategy-automate/
 ├── strategy-automation/SKILL.md   # NLQ router — pick the right surface + memory
 ├── strategy-validation/SKILL.md   # paired-query data-correctness validator
 ├── memory/                        # MEMORY.md index + typed memory files
-├── AGENTS.md                      # entry point for Codex-style agents
-├── GEMINI.md                      # entry point for Gemini CLI
+├── AGENTS.md                      # canonical, LLM-agnostic entry point
+├── CLAUDE.md CODEX.md GEMINI.md   # thin per-LLM shims (all point to AGENTS.md)
+├── GROK.md OLLAMA.md CURSOR.md    # additional LLM shims
 ├── .env.example                   # env-var template
 └── README.md
 ```
@@ -57,15 +58,19 @@ python3 skill/scripts/build_mosaic.py list-datasources
 
 ### 4. Wire the repo into your AI tool
 
-**Claude Code** — drop or symlink the repo under a project that Claude Code sees. The skills in `skill/`, `strategy-automation/`, `strategy-validation/` are auto-discovered by their `SKILL.md` frontmatter. The `memory/` directory is the durable knowledge base (structured per Claude Code's auto-memory conventions in `memory/MEMORY.md`).
+The repo is **LLM-agnostic**. `AGENTS.md` is the canonical entry point and every tool-specific shim at the repo root (`CLAUDE.md`, `CODEX.md`, `GEMINI.md`, `GROK.md`, `OLLAMA.md`, `CURSOR.md`) points there.
 
-**Codex CLI** — `AGENTS.md` at repo root is the entry point. Codex reads it when you `cd` into the repo. Everything under `memory/` and the `SKILL.md` files are referenced from `AGENTS.md`.
+| Harness | Entry file | Notes |
+|---|---|---|
+| Claude Code | [`CLAUDE.md`](CLAUDE.md) | Skills auto-discovered via `SKILL.md` frontmatter; memory auto-loaded from `memory/MEMORY.md`. |
+| OpenAI Codex CLI | [`CODEX.md`](CODEX.md) | Reads `AGENTS.md` on `cd`; skills loaded on demand. |
+| Google Gemini CLI | [`GEMINI.md`](GEMINI.md) | Same contract as Codex. |
+| xAI Grok / Grok Code | [`GROK.md`](GROK.md) | Each `SKILL.md` treated as long-form instruction. |
+| Ollama local models | [`OLLAMA.md`](OLLAMA.md) | Includes a bootstrap system-prompt template for harnesses that don't auto-load Markdown. |
+| Cursor / Cline / Continue / Aider / Windsurf | [`CURSOR.md`](CURSOR.md) | Point IDE agent at `AGENTS.md` as rules file. |
+| Any other LLM | [`AGENTS.md`](AGENTS.md) | No configuration needed — read the file + memory index and proceed. |
 
-**Gemini CLI** — `GEMINI.md` at repo root points to the same content.
-
-**Cursor / Cline / Continue** — open the repo as your workspace. Point your agent at `AGENTS.md` as the primary instruction file, or source the memory files explicitly in the system prompt.
-
-**MCP-aware chat apps** — connect the Strategy Mosaic MCP server (whatever connector your vendor provides) to get `get_projects`, `get_mosaic_models`, `get_semantics`, `query`. The memory and skills reference those tools by name; any correctly-configured MCP session works.
+**MCP-aware chat apps** — connect the Strategy Mosaic MCP server (whatever connector your vendor provides) to get `get_projects`, `get_mosaic_models`, `get_semantics`, `query`. The memory and skills reference those tools by name; any correctly-configured MCP session works. Without MCP, every tool has a REST fallback documented in `AGENTS.md`.
 
 ## Typical tasks
 
