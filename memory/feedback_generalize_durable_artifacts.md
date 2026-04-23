@@ -15,7 +15,13 @@ type: feedback
 
 **How to apply.** Before creating or editing any durable artifact, run this checklist:
 
-1. **Scan for concrete identifiers.** Grep the draft for: tenant hostnames (`<tenant>.customer.cloud.microstrategy.com`, `studio.strategy.com`, `env-*`, `tutorial.*`), project names (`Shared Studio`, `MicroStrategy Tutorial`, `Shared Reports/…`), DB instance names (`Neon …`, `WACSE …`, `Snowflake Prod`), schema names (`WACSE`, `public`, `SALES`), table names (`USAGE_HOURLY`, `TENANTS`, `incidents`), user identifiers (`<operator-user>`, real full names, email addresses, user IDs), model / report / folder / schedule / address IDs (32-hex strings), domain-specific entity names (`<tenant-a>`, `Lumina`, `customer_id`).
+1. **Scan for concrete identifiers.** Grep the draft for:
+   - **Tenant / environment**: hostnames (`<tenant>.customer.cloud.microstrategy.com`, `studio.strategy.com`, `env-*`, `tutorial.*`), project names (`Shared Studio`, `MicroStrategy Tutorial`, `Shared Reports/…`).
+   - **Warehouse**: DB instance names (`Neon …`, `WACSE …`, `Snowflake Prod`), schema names (`WACSE`, `public`, `SALES`), table names (`USAGE_HOURLY`, `TENANTS`, `incidents`).
+   - **User / PII**: usernames, real full names (first-last or last-first), email addresses (corporate or personal), user IDs.
+   - **Object IDs**: 32-hex strings for models, reports, folders, schedules, addresses, facts, metrics, filters — anything minted per-tenant.
+   - **Domain entities**: customer-specific tenant names (`<tenant-a>`, `Lumina`), product names, internal project codenames.
+   - **Developer identity / git infrastructure**: personal / work GitHub handles (`<user>/strategy-*`), SSH host aliases (`github-<org>-<user>`), SSH key filenames (`id_ed25519_<org>_<user>.pub`), remote URLs for personal mirrors, `git config user.name` / `user.email` values, any reference to "my fork" or "my mirror". These belong in the operator's local `~/.ssh/config` and `git config --local`, not in the repo.
 2. **Replace with placeholders or parameters.** Options, in preference order:
    - Env var or CLI flag (`$MSTR_BASE`, `--instance`, `--dest-folder`)
    - User-supplied dictionary / ERD / config file

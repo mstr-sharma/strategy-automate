@@ -9,7 +9,7 @@ type: feedback
 ```
 500 {"code":"ERR001","iServerCode":-2147072486,
      "message":"(Maximum number of interactive session per user for project exceeded
-                while trying to login user <operator> to project Shared Studio.)"}
+                while trying to login user <full name> to project <project name>.)"}
 ```
 
 Modeling-Service wrapper returns the same with `8004cb0a`. Each helper run creates a Session + X-MSTR-AuthToken; `MSTR.logout()` exists in the script (`scripts/build_mosaic.py` line 199) but **no subcommand ever calls it**. The session then ages out after `timeout=1800s` (30 min, from `/api/sessions`).

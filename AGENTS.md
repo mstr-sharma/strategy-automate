@@ -11,13 +11,12 @@ This file is the **canonical cross-tool entry point**. Every LLM-specific shim a
 - Shell helpers live in `skill/scripts/`. Invoke them via whatever tool-call mechanism your harness exposes (Bash, shell, execute_command, tool-use-bash, etc.).
 - Credentials come from env vars (`MSTR_BASE`, `MSTR_USER`, `MSTR_PASSWORD`, `MSTR_PROJECT_ID`/`MSTR_PROJECT_NAME`, `MSTR_DEST_FOLDER_ID`) — see `memory/reference_strategy_env.md`. Never hardcode.
 
-## Git setup
+## Git workflow
 
-- `origin` is the work repository: `git@<ssh-alias>:<org-user>/strategy-automate.git`.
-- `personal` is the old/private mirror: `https://github.com/<personal-handle>/strategy-automation.git`.
-- Use the local work identity `<operator> <redacted@example.com>`.
-- Default pull/push should target `origin`; use `git pull --ff-only` before starting shared work and `git push` after commit.
-- Do not commit `.env`, `.claude/`, credentials, tenant IDs, raw tenant payloads, or local logs.
+- Operator configures their own remotes and git identity locally (`git remote -v`, `git config user.email`) — do not hardcode remote URLs or identities here.
+- Default pull/push targets `origin`. Run `git pull --ff-only` before starting shared work and `git push` after commit.
+- Before committing, run the relevant tests plus `git diff --check`.
+- Never commit `.env`, `.claude/`, credentials, SSH keys, tenant IDs, raw tenant payloads, personal names, corporate email addresses, local logs, or anything else enumerated in `memory/feedback_generalize_durable_artifacts.md`.
 
 ## First move on any task
 
