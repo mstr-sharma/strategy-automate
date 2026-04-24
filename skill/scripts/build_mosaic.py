@@ -692,6 +692,81 @@ def commit_cs(m: MSTR, cs: str):
         die(f"commit {cs}: {r.status_code} {r.text[:400]}")
 
 
+def _apply_conformance_map(dictionary: dict, path: str) -> None:
+    """Merge a conformance-map file into the dictionary's attributes block.
+
+    File shape (JSON or YAML) — one entry per logical attribute:
+        {"<Logical Name>": ["<TABLE>.<COLUMN>", "<TABLE>.<COLUMN>", ...]}
+
+    Each table.column listed will receive an attributes entry with the shared
+    `name`, which triggers the conformance-via-identical-name grouping at build
+    time (see feedback_mosaic_relationship_wiring.md step 2). Existing dictionary
+    entries keep their description; only `name` is overwritten.
+    """
+    if not path: return
+    data = load_structured_file(path) or {}
+    if not isinstance(data, dict):
+        die(f"--conformance-map: {path} must be a mapping of logical_name → [table.col, …]")
+    attrs = dictionary.setdefault("attributes", {})
+    added = 0
+    for logical, cols in data.items():
+        if not isinstance(cols, list): continue
+        for col in cols:
+            key = str(col).strip()
+            if not key: continue
+            entry = attrs.get(key) or {}
+            entry["name"] = logical
+            attrs[key] = entry
+            added += 1
+    if added:
+        print(f"→ --conformance-map: applied {added} TABLE.COLUMN → logical-name overrides",
+              file=sys.stderr)
+
+
+def _apply_fk_map(dictionary: dict, path: str) -> None:
+    """Merge an fk-map file: maps child FKs to their parent PK so differently-named
+    columns conform to the parent's logical attribute.
+
+    File shape (JSON or YAML):
+        {"<CHILD_TABLE>.<CHILD_COL>": "<PARENT_TABLE>.<PARENT_COL>", ...}
+
+    For each mapping, the child column inherits the parent column's logical name
+    (resolved via the dictionary's existing attributes entry, falling back to
+    title-cased parent column name if no entry exists yet). Relationships still
+    need to be declared separately if the conformance grouping doesn't join the
+    tables on its own.
+    """
+    if not path: return
+    data = load_structured_file(path) or {}
+    if not isinstance(data, dict):
+        die(f"--fk-map: {path} must be a mapping of child.col → parent.col")
+    attrs = dictionary.setdefault("attributes", {})
+    added = 0
+    for child, parent in data.items():
+        child_key  = str(child).strip()
+        parent_key = str(parent).strip()
+        if not (child_key and parent_key): continue
+        parent_entry = attrs.get(parent_key) or {}
+        parent_name = parent_entry.get("name")
+        if not parent_name:
+            # Fall back to the parent's column name, title-cased (mirrors the
+            # helper's default inference). Keep simple.
+            parent_col = parent_key.rsplit(".", 1)[-1]
+            parent_name = parent_col.replace("_", " ").title()
+        child_entry = attrs.get(child_key) or {}
+        child_entry["name"] = parent_name
+        attrs[child_key] = child_entry
+        # Also set the parent's name if it's not already set, so the two sides
+        # conform on the same string.
+        if not parent_entry.get("name"):
+            parent_entry["name"] = parent_name
+            attrs[parent_key] = parent_entry
+        added += 1
+    if added:
+        print(f"→ --fk-map: applied {added} child→parent FK conformance hint(s)",
+              file=sys.stderr)
+
+
 def cmd_build(m: MSTR, args):
     m.login(identity=True)
     sources = [parse_source(s) for s in args.source]
@@ -702,6 +777,8 @@ def cmd_build(m: MSTR, args):
 
     # Load optional overrides / ERD
     dictionary = load_dictionary(getattr(args,"dictionary",None))
+    _apply_conformance_map(dictionary, getattr(args, "conformance_map", None))
+    _apply_fk_map(dictionary, getattr(args, "fk_map", None))
     explicit_rels = list(dictionary.get("relationships",[]))
     for erd_path in (getattr(args,"erd",[]) or []):
         explicit_rels.extend(load_erd(erd_path))
@@ -1731,8 +1808,19 @@ def _classic_cube_publish(m: MSTR, cube_id: str) -> None:
     print(f"  ✓ classic cube publish accepted (202 expected).", file=sys.stderr)
 
 
-def _publish(m: MSTR, model_id: str, *, poll_seconds: int = 180) -> None:
-    """Surface-routed publish: classify subType first, never mix Mosaic/legacy paths."""
+def _publish(m: MSTR, model_id: str, *, poll_seconds: int = 180,
+             skip_classify: bool = False) -> None:
+    """Surface-routed publish: classify subType first, never mix Mosaic/legacy paths.
+
+    skip_classify=True bypasses GET /api/objects/{id}?type=3 and assumes the caller
+    already knows the target is a Mosaic data model (subType 779). Use this when
+    chaining build→publish in the same session to save one project-scoped call
+    against the session cap — see feedback_build_mosaic_session_leak.md.
+    """
+    if skip_classify:
+        print("  ↳ skip-classify: assuming Mosaic data model (subType 779)", file=sys.stderr)
+        _mosaic_publish_verified(m, model_id, poll_seconds=poll_seconds)
+        return
     info = classify_object_surface(m, model_id)
     if info["surface"] == "mosaic_data_model":
         _mosaic_publish_verified(m, model_id, poll_seconds=poll_seconds)
@@ -1765,12 +1853,211 @@ def cmd_set_serve_mode(m: MSTR, args):
 
 def cmd_publish(m: MSTR, args):
     m.login()
-    _publish(m, args.model_id, poll_seconds=args.poll_seconds)
+    _publish(m, args.model_id, poll_seconds=args.poll_seconds,
+             skip_classify=getattr(args, "skip_classify", False))
 def cmd_refresh(m: MSTR, args):
     m.login()
     r = m.post(f"/api/cubes/{args.model_id}/refresh",
                params={"refreshType": args.refresh_type})
     print(f"HTTP {r.status_code}: {r.text[:300]}")
+
+
+# ── wire-relationships ─────────────────────────────────────────────────────────
+# Post-build relationship wiring. Validates step-3 and step-5 prerequisites from
+# feedback_mosaic_relationship_wiring.md before issuing any PUT, so we don't
+# burn the session cap retrying on 8004ccdb (self-ref) or 8004ccc7 (invalid
+# join table).
+
+def _fetch_attribute(m: MSTR, model_id: str, attr_id: str) -> dict:
+    r = m.s.get(f"{m.base}/api/model/dataModels/{model_id}/attributes/{attr_id}")
+    if not r.ok:
+        die(f"wire-relationships: GET attribute {attr_id}: {r.status_code} {r.text[:200]}")
+    return r.json()
+
+
+def _attr_table_ids(attr: dict) -> set:
+    """Return the set of logical-table ids that this attribute's forms touch."""
+    tids = set()
+    for form in attr.get("forms", []) or []:
+        for exp in form.get("expressions", []) or []:
+            for t in exp.get("tables", []) or []:
+                tid = t.get("objectId") or t.get("id")
+                if tid:
+                    tids.add(tid)
+    return tids
+
+
+def _list_model_attributes(m: MSTR, model_id: str) -> list:
+    r = m.s.get(f"{m.base}/api/model/dataModels/{model_id}/attributes")
+    if not r.ok:
+        die(f"wire-relationships: list attributes: {r.status_code} {r.text[:200]}")
+    d = r.json()
+    return d.get("attributes") or d.get("items") or []
+
+
+def _list_model_tables(m: MSTR, model_id: str) -> dict:
+    r = m.s.get(f"{m.base}/api/model/dataModels/{model_id}/tables")
+    if not r.ok:
+        die(f"wire-relationships: list tables: {r.status_code} {r.text[:200]}")
+    d = r.json()
+    tbls = d.get("tables") or d.get("items") or []
+    by_name = {}
+    for t in tbls:
+        nm = (t.get("information") or {}).get("name") or t.get("name") or ""
+        tid = (t.get("information") or {}).get("objectId") or t.get("id") or t.get("objectId")
+        if nm and tid:
+            by_name[nm] = tid
+    return by_name
+
+
+def cmd_wire_relationships(m: MSTR, args):
+    """Wire attribute relationships with step-3/step-5 validation.
+
+    Reads a JSON/YAML FK-hint file listing parent→child attribute pairs plus the
+    relationship_table, validates each against the live model, and issues only
+    the PUTs that will succeed.
+
+    Hint file shape:
+      {"relationships": [
+         {"parent_attribute": "<name or id>",
+          "child_attribute":  "<name or id>",
+          "relationship_table": "<name or id>",
+          "type": "one_to_many"|"many_to_many"|"one_to_one"}]}
+    """
+    m.login(identity=True)
+    model_id = args.model_id
+
+    hints = _read_wire_hints(args.hints)
+    if not hints:
+        die("wire-relationships: no relationships found in --hints file.")
+
+    attrs = _list_model_attributes(m, model_id)
+    by_name = {}
+    by_id = {}
+    for a in attrs:
+        info = a.get("information") or {}
+        aid = info.get("objectId") or a.get("id")
+        nm  = info.get("name") or a.get("name") or ""
+        if aid:
+            by_id[aid] = a
+            if nm:
+                by_name.setdefault(nm.lower(), a)
+    tables_by_name = _list_model_tables(m, model_id)
+
+    def _resolve_attr(ref: str) -> dict:
+        if not ref: return None
+        if ref in by_id: return by_id[ref]
+        return by_name.get(ref.lower())
+
+    def _resolve_table(ref: str) -> str:
+        if not ref: return None
+        if ref in tables_by_name.values(): return ref
+        return tables_by_name.get(ref)
+
+    plan = []   # rows ready to PUT
+    skips = []  # rows skipped with reason
+
+    for h in hints:
+        parent = _resolve_attr(h.get("parent_attribute"))
+        child  = _resolve_attr(h.get("child_attribute"))
+        rtbl_id = _resolve_table(h.get("relationship_table"))
+        rtype  = h.get("type","one_to_many")
+        label = f"{h.get('parent_attribute')}→{h.get('child_attribute')} via {h.get('relationship_table')}"
+
+        if not parent:
+            skips.append((label, f"parent attribute {h.get('parent_attribute')!r} not found"))
+            continue
+        if not child:
+            skips.append((label, f"child attribute {h.get('child_attribute')!r} not found"))
+            continue
+        if not rtbl_id:
+            skips.append((label, f"relationship_table {h.get('relationship_table')!r} not found in model"))
+            continue
+
+        # Step-3: forbid self-reference.
+        p_id = (parent.get("information") or {}).get("objectId") or parent.get("id")
+        c_id = (child.get("information")  or {}).get("objectId") or child.get("id")
+        if p_id == c_id:
+            skips.append((label, "parent and child resolve to same attribute (would trip 8004ccdb)"))
+            continue
+
+        # Fetch full attribute definitions (/attributes list may omit forms[].expressions details).
+        p_full = _fetch_attribute(m, model_id, p_id)
+        c_full = _fetch_attribute(m, model_id, c_id)
+        p_tids = _attr_table_ids(p_full)
+        c_tids = _attr_table_ids(c_full)
+
+        # Step-5: both endpoints must have an expression on the relationship table.
+        missing = []
+        if rtbl_id not in p_tids: missing.append("parent")
+        if rtbl_id not in c_tids: missing.append("child")
+        if missing:
+            skips.append((label,
+                f"{'+'.join(missing)} has no expression on relationship_table (would trip 8004ccc7); "
+                f"PATCH to add the missing expression first — see reference_mosaic_clone_pattern.md"))
+            continue
+
+        plan.append((p_id, c_id, rtbl_id, rtype, label))
+
+    # Report plan.
+    print(f"→ wire-relationships plan: {len(plan)} to write, {len(skips)} skipped", file=sys.stderr)
+    for label, reason in skips:
+        print(f"  ✗ SKIP {label}: {reason}", file=sys.stderr)
+    if args.dry_run:
+        print(f"→ dry-run; exiting without PUTs", file=sys.stderr)
+        for p_id, c_id, rtbl_id, rtype, label in plan:
+            print(f"  ✓ would PUT {label} [{rtype}]", file=sys.stderr)
+        return
+
+    if not plan:
+        die("wire-relationships: nothing to write after validation. See skip reasons above.")
+
+    cs = open_cs(m)
+    ok = 0
+    try:
+        for p_id, c_id, rtbl_id, rtype, label in plan:
+            body = {"relationships": [{
+                "parent": {"objectId": p_id, "subType": "attribute"},
+                "child":  {"objectId": c_id, "subType": "attribute"},
+                "relationshipType": rtype,
+                "relationshipTable": {"objectId": rtbl_id, "subType": "logical_table"},
+            }]}
+            r = m.put(f"/api/model/dataModels/{model_id}/attributes/{c_id}/relationships?changesetId={cs}",
+                      json=body)
+            if r.ok:
+                ok += 1
+                print(f"  ✓ {label} [{rtype}]", file=sys.stderr)
+            else:
+                print(f"  ✗ {label}: {r.status_code} {r.text[:300]}", file=sys.stderr)
+        commit_cs(m, cs)
+    except Exception:
+        try: m.s.headers.pop("X-MSTR-MS-Changeset", None)
+        except Exception: pass
+        raise
+    print(f"→ wire-relationships committed: {ok}/{len(plan)} succeeded, {len(skips)} skipped pre-flight",
+          file=sys.stderr)
+
+
+def _read_wire_hints(path: str) -> list:
+    """Read JSON or YAML FK-hint file. Accepts either a {relationships:[...]}
+    envelope or a bare list."""
+    if not path: return []
+    with open(path) as f:
+        text = f.read()
+    data = None
+    try:
+        data = json.loads(text)
+    except Exception:
+        try:
+            import yaml  # type: ignore
+            data = yaml.safe_load(text)
+        except Exception:
+            die(f"wire-relationships: cannot parse --hints file {path} as JSON or YAML")
+    if isinstance(data, dict):
+        return data.get("relationships") or []
+    if isinstance(data, list):
+        return data
+    return []
 def cmd_delete_model(m: MSTR, args):
     if not args.yes:
         die("delete-model requires --yes after verifying the Mosaic data model id")
@@ -2514,7 +2801,12 @@ def build_parser():
                     help="Repeatable: instanceId:namespace:table")
 
     sp = sub.add_parser("kill-sessions",
-                        help="Login/logout repeatedly to reap stale tokens for this user")
+                        help="Reap stale AUTH TOKENS via login/logout loop. "
+                             "Does NOT reap iServer project-interactive sessions — those "
+                             "are the ones that trip the 8004cb0a cap and they can only "
+                             "time out (~30 min). Run this only to clean up orphaned auth "
+                             "tokens; it cannot rescue a capped-state. See "
+                             "memory/feedback_build_mosaic_session_leak.md.")
     sp.add_argument("--count", type=int, default=5)
 
     sp = sub.add_parser("describe-table")
@@ -2626,6 +2918,14 @@ def build_parser():
     sp.add_argument("--dictionary", help="JSON/YAML/CSV file of attribute+metric name/description overrides and relationships")
     sp.add_argument("--erd", action="append", default=[],
                     help="ERD file (JSON/YAML list of relationships, DBML, Mermaid, or SQL DDL). Repeatable.")
+    sp.add_argument("--conformance-map",
+                    help="JSON/YAML {logical_name: [TABLE.COLUMN, ...]} — forces those columns to collapse "
+                         "into one conformed attribute. Overrides column-name inference. See "
+                         "feedback_mosaic_relationship_wiring.md.")
+    sp.add_argument("--fk-map",
+                    help="JSON/YAML {child_table.child_col: parent_table.parent_col} — normalizes "
+                         "semantically-same-but-differently-named FKs so they conform to the parent's "
+                         "logical name. Useful for multi-DB builds with e.g. primary_<entity>_id vs <entity>_id.")
     sp.add_argument("--security-filter", action="append", default=[],
                     help="Mosaic data-model SF: 'NAME=ATTR_ID[:FORM_ID]=VALUE|USER,USER' or 'NAME=@qualification.json|USER,USER' (repeatable)")
     sp.add_argument("--grant", action="append", default=[],
@@ -2656,6 +2956,18 @@ def build_parser():
     sp = sub.add_parser("publish"); sp.add_argument("--model-id", required=True)
     sp.add_argument("--poll-seconds", type=int, default=180,
                     help="max wait for every table to reach 'loaded' before failing")
+    sp.add_argument("--skip-classify", action="store_true",
+                    help="skip GET /api/objects/{id}?type=3 surface classification; "
+                         "assume Mosaic data model. Saves one project-scoped call to "
+                         "stay under the session cap when chaining build→publish.")
+
+    sp = sub.add_parser("wire-relationships",
+        help="Post-build relationship wiring with step-3/step-5 validation; avoids 8004ccdb/8004ccc7 retry loops. See memory/feedback_mosaic_relationship_wiring.md.")
+    sp.add_argument("--model-id", required=True)
+    sp.add_argument("--hints", required=True,
+                    help="JSON/YAML file: {relationships:[{parent_attribute, child_attribute, relationship_table, type}]}")
+    sp.add_argument("--dry-run", action="store_true",
+                    help="validate + print plan without issuing PUTs")
 
     sp = sub.add_parser("refresh")
     sp.add_argument("--model-id", required=True)
@@ -2740,6 +3052,7 @@ def main():
             "validate-model":  cmd_validate_model,
             "set-serve-mode":  cmd_set_serve_mode,
             "publish":         cmd_publish,
+            "wire-relationships": cmd_wire_relationships,
             "refresh":         cmd_refresh,
             "delete-model":    cmd_delete_model,
             "set-acl":         cmd_set_acl,

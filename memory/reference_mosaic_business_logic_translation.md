@@ -1,7 +1,8 @@
 ---
 name: Business-logic translation into a Mosaic model
-description: How to turn business intent (entities, dimensions, measures, aggregation, relationships) into a correct Mosaic data-model spec. Covers both supplied-context and inspection-only inference paths, with the decision rules for each object type.
+description: How to turn business intent (entities, dimensions, measures, aggregation, relationships) into a correct Mosaic data-model spec. Covers both supplied-context and inspection-only inference paths, with the decision rules for each object type. Kimball-first — classifies every table as fact/dim/bridge and declares the star/snowflake/galaxy topology before picking functions or relationships.
 type: reference
+tags: [mosaic, modeling, kimball, grain, build, translation]
 ---
 
 This memory sits upstream of `build-mosaic-model`, `reference_mosaic_modeling_concepts.md`, `reference_mosaic_relationship_archetypes.md`, and `feedback_mosaic_forms_and_formats.md`. Those documents describe *what Mosaic supports*. This one describes *how to decide what the model should contain* before writing a single changeset.
@@ -10,10 +11,13 @@ This memory sits upstream of `build-mosaic-model`, `reference_mosaic_modeling_co
 
 Produce a single `build-plan.json` (or a dictionary + ERD pair) that answers, for every table:
 
-- **Grain** — the natural unique row-key combination, written as `[cols]`.
-- **Entities** — which business nouns does this table represent (tenant, cluster, incident, hour-of-service…).
+- **Topology** — `star | snowflake | galaxy | bridge-heavy | non-Kimball`. One-line declaration of the overall schema shape, chosen before individual-table decisions. Non-Kimball stops the build.
+- **Table role** — `fact | dim | bridge | snowflake_parent_dim | degenerate_dim | noise` per input table.
+- **Grain** — the natural unique row-key combination for each fact, written as `[cols]`.
+- **Entities** — which business nouns does this table represent (customer, product, order, event, hour-of-service…).
+- **Conformed dims** — any entity that appears in ≥2 tables. Modeled as ONE attribute with multi-table expressions.
 - **Attribute list** — for each non-measure column: key form, descriptor forms, display format, and whether it is a per-row descriptor or a dimension-table attribute surfaced on this table.
-- **Metric list** — for each measure: function (`sum/avg/min/max/count/count_distinct/stdev/median/p95…`), format token, and a one-line business definition.
+- **Metric list** — for each measure: function (`sum/avg/min/max/count/count_distinct/stdev/median/p95…`), additivity class (`additive | semi-additive | non-additive | derived`), format token, and a one-line business definition.
 - **Relationships** — parent→child pairs with the relationship table and type (`one_to_many`, `many_to_many`, `one_to_one`), plus the reason (shared FK, compound FK, bridge).
 - **Derived metrics** — compound/conditional/level/transformation, each with the formula in business terms + the referenced base metrics.
 - **Assumptions log** — every inference not explicitly given by the user, so the validation pass can target those assumptions specifically.
@@ -24,7 +28,7 @@ The assumptions log is the single most important artifact when context is thin. 
 
 Work top-down; stop at the first tier that answers the question, but always record which tier was used for each decision.
 
-1. **Stakeholder narrative** — "each row of USAGE_HOURLY is one (tenant, cluster, hour) triple; GPU Hours Consumed is billable utilization; Average GPU Utilization is a percent". Binding and wins over everything else.
+1. **Stakeholder narrative** — "each row of `<fact-table>` is one (`<entity-a>`, `<entity-b>`, hour) triple; `<measure-A>` is a billable count; `<rate-column>` is a percent". Binding and wins over everything else.
 2. **Data dictionary / ERD** — column-level business names, descriptions, types, keys, FK relationships. Apply as dictionary JSON (`reference_mosaic_config_schema.md`). ERD overrides inferred joins.
 3. **Classic / reference semantic model** — if a legacy project or a Mosaic REF model already covers these tables, mirror its shape (see `feedback_mosaic_legacy_as_blueprint.md`).
 4. **Reference query / report output** — a validation CSV, a canonical report, or a saved dashboard. Treat its column names as the *business* names and its aggregate totals as the ground truth to hit.
@@ -88,7 +92,7 @@ See `reference_mosaic_relationship_archetypes.md` for the 6 canonical shapes. Th
 - **Conformed dimensions.** If a column name (e.g. `region`) appears in ≥2 fact tables as a descriptor, promote it to a single conformed attribute rather than per-fact duplicates.
 - **Degenerate dimensions.** A code that lives only on the fact row with no lookup table (e.g. `severity = 'low|med|high'` on `incidents`) is still an attribute — just with its lookup table = the fact table.
 - **Bridges.** An all-FK table (no descriptors, no measures) between two entities is a many-to-many. Declare explicitly; the auto-build heuristic will not infer it.
-- **Cross-DB joins.** Mosaic in-memory materialization happily joins tables across distinct DB instances on a shared attribute key (e.g. `<entity>_id` lowercase on one instance vs `<ENTITY>_ID` uppercase on another). Declare the shared attribute explicitly; column-name case mismatches break auto-conformance (`feedback_build_mosaic_conforming_attr_rules.md`). Applies to any pair of supported engines — Postgres, Snowflake, Oracle, BigQuery, SQL Server, Redshift, Databricks, Teradata.
+- **Cross-DB joins.** Mosaic in-memory materialization happily joins tables across distinct DB instances on a shared attribute key (e.g. `<entity>_id` lowercase on one instance vs `<ENTITY>_ID` uppercase on another). Declare the shared attribute explicitly; column-name case mismatches break auto-conformance (see `feedback_mosaic_relationship_wiring.md`). Applies to any pair of supported engines — Postgres, Snowflake, Oracle, BigQuery, SQL Server, Redshift, Databricks, Teradata.
 
 ## Inspection-only inference (no business context at all)
 
@@ -110,7 +114,7 @@ If any of these fire, pause and ask the user before building:
 - A "fact" table has fewer rows than the dimension it supposedly hangs off → roles probably reversed.
 - Two columns with the same business meaning but different types across tables (`tenant_id` BIGINT vs `TENANT_ID` VARCHAR) → conformance will fail silently.
 - A timestamp column whose distinct count equals the row count → dimension-only table, no real time grain.
-- Negative values in a column named like a count or duration → data-quality issue or wrong semantic; do not SUM until clarified (the validation CSV in the 2026-04-23 GPU run had `jobs_failed = -34` broadcast across 17k rows).
+- Negative values in a column named like a count or duration → data-quality issue or wrong semantic; do not SUM until clarified (a previous validation CSV contained a negative count broadcast across tens of thousands of rows, which would have summed to a misleading value had it been treated as a plain additive measure).
 
 ## Validation hooks — prove the translation was right
 

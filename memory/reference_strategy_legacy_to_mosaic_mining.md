@@ -1,9 +1,23 @@
 ---
-name: Strategy legacy semantic mining for Mosaic candidates
-description: Read classic attributes, facts, metrics, filters, prompts, reports, documents, and tables to recommend source tables and objects for a Mosaic data model.
+name: Legacy → Mosaic migration hub + semantic mining
+description: Start-here hub for classic-to-Mosaic migrations. Sequences the four related memories (mining → field study → blueprint → clone-and-remap) and documents the read-only discovery lane for classic attributes, facts, metrics, filters, prompts, reports, documents, and tables.
 type: reference
-originSessionId: codex-session
+tags: [mosaic, classic, migration, kimball]
 ---
+
+## Start here — the 4-step classic → Mosaic workflow
+
+Legacy-to-Mosaic work always flows through these four memory files in order. Load them as needed; do not skip.
+
+1. **Inspect the classic project** — THIS file (`reference_strategy_legacy_to_mosaic_mining.md`). Run `strategy_semantic_mine.py` top-down from reports/documents or reverse from tables to discover the attributes / facts / metrics / filters / prompts / hierarchies already in play.
+2. **Read the live classic inventory** — [`reference_strategy_tutorial_semantic_field_study.md`](reference_strategy_tutorial_semantic_field_study.md). Captures actual REST payload shapes for every object class; use as a Rosetta Stone when translating to Mosaic.
+3. **Pick the migration pattern** — [`feedback_mosaic_legacy_as_blueprint.md`](feedback_mosaic_legacy_as_blueprint.md) (blueprint-driven: mirror the classic shape into a new Mosaic model) OR [`reference_mosaic_clone_pattern.md`](reference_mosaic_clone_pattern.md) (clone-and-remap: copy an existing Mosaic model as a starting point). Blueprint-driven is correct when the classic project has meaningful semantics worth preserving; clone-and-remap is correct when a similar Mosaic model already exists in the tenant.
+4. **Build the Mosaic target** — route through `strategy-data-modeling/SKILL.md` (planning, Kimball-first) and `skill/SKILL.md` (execution). Validate with `strategy-validation/SKILL.md` against the original classic reports as the comparator.
+
+Related: [`reference_strategy_design_transition.md`](reference_strategy_design_transition.md) covers conceptual differences between classic and Mosaic; read it when a 1:1 mapping breaks down (e.g., compound metrics, fact extensions, consolidations).
+
+## When to use this file
+
 Use this when the user asks to modernize a legacy project into Mosaic, find the warehouse tables behind important reports/documents, clone legacy semantics into a new model, or start from a table and discover which attributes/facts/metrics/reports depend on it.
 
 This is a read-only discovery lane until the user approves an actual Mosaic build.

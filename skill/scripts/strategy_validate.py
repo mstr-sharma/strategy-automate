@@ -21,25 +21,41 @@ from typing import Any
 
 import requests
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _client import (  # noqa: E402
+    BaseMSTR, compact_json, response_json,
+    normalize_id, normalize_name, ancestor_names,
+)
+
 
 DEFAULT_BASE = os.environ.get("MSTR_BASE", "")
 DEFAULT_USER = os.environ.get("MSTR_USER", "")
 DEFAULT_PROJECT_NAME = os.environ.get("MSTR_PROJECT_NAME", "")
+
+# Subject-matter overrides. Defaults target the MicroStrategy Tutorial project so
+# the runner works out-of-the-box there; override via env to point at any project
+# with an attribute + element + metrics to validate. See
+# memory/feedback_generalize_durable_artifacts.md.
+VALIDATE_ATTR       = os.environ.get("MSTR_VALIDATE_ATTR", "Category")
+VALIDATE_ELEMENT    = os.environ.get("MSTR_VALIDATE_ELEMENT", "Books")
+VALIDATE_METRICS    = [m.strip() for m in os.environ.get(
+    "MSTR_VALIDATE_METRICS", "Revenue,Profit,Cost").split(",") if m.strip()]
+VALIDATE_SEARCH_TERMS = [t.strip() for t in os.environ.get(
+    "MSTR_VALIDATE_SEARCH_TERMS", "Revenue,Sales,Category,Profit,Inventory").split(",") if t.strip()]
+VALIDATE_DASHBOARD_TERMS = [t.strip() for t in os.environ.get(
+    "MSTR_VALIDATE_DASHBOARD_TERMS", "Tutorial Home,Dashboard,Sales,Revenue").split(",") if t.strip()]
+VALIDATE_SF_NAME    = os.environ.get("MSTR_VALIDATE_SF_NAME",
+    f"{VALIDATE_ATTR} in {VALIDATE_ELEMENT} — secFilter_validation")
 
 
 def now_run_id() -> str:
     return "run-" + datetime.now().strftime("%Y%m%d-%H%M%S")
 
 
-def compact_json(value: Any, limit: int = 800) -> str:
-    try:
-        text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-    except TypeError:
-        text = str(value)
-    return text if len(text) <= limit else text[: limit - 3] + "..."
-
-
 def items_from_search(payload: Any) -> list[dict[str, Any]]:
+    """Narrow variant of items_from_payload — only the top-level search-result
+    containers, never the modeling-object containers (attributes/metrics/etc).
+    Keeps this script from accidentally unwrapping sub-lists in a search envelope."""
     if isinstance(payload, list):
         return [x for x in payload if isinstance(x, dict)]
     if not isinstance(payload, dict):
@@ -49,21 +65,6 @@ def items_from_search(payload: Any) -> list[dict[str, Any]]:
         if isinstance(val, list):
             return [x for x in val if isinstance(x, dict)]
     return []
-
-
-def normalize_id(obj: dict[str, Any]) -> str | None:
-    return obj.get("id") or obj.get("objectId") or obj.get("object_id")
-
-
-def normalize_name(obj: dict[str, Any]) -> str:
-    return str(obj.get("name") or obj.get("username") or obj.get("display") or obj.get("title") or "")
-
-
-def ancestor_names(obj: dict[str, Any]) -> list[str]:
-    ancestors = obj.get("ancestors")
-    if not isinstance(ancestors, list):
-        return []
-    return [str(a.get("name") or "") for a in ancestors if isinstance(a, dict)]
 
 
 def payload_contains_value(value: Any, needle: str) -> bool:
@@ -101,18 +102,6 @@ def exact_named(candidates: list[dict[str, Any]], name: str) -> dict[str, Any] |
     return best_named(candidates, name)
 
 
-def response_json(resp: requests.Response) -> Any:
-    if not resp.text:
-        return {}
-    ctype = resp.headers.get("content-type", "")
-    if "json" in ctype:
-        return resp.json()
-    try:
-        return resp.json()
-    except Exception:
-        return {"_text": resp.text[:500]}
-
-
 @dataclass
 class StepResult:
     workflow: int
@@ -122,63 +111,8 @@ class StepResult:
     evidence: dict[str, Any] = field(default_factory=dict)
 
 
-class MSTR:
-    def __init__(self, base: str, username: str, password: str, login_mode: int, project_name: str):
-        self.base = base.rstrip("/")
-        self.username = username
-        self.password = password
-        self.login_mode = login_mode
-        self.project_name = project_name
-        self.project_id: str | None = None
-        self.session = requests.Session()
-        self.session.headers.update({"Accept": "application/json", "Content-Type": "application/json"})
-
-    def login(self) -> None:
-        resp = self.session.post(
-            f"{self.base}/api/auth/login",
-            json={"username": self.username, "password": self.password, "loginMode": self.login_mode},
-            timeout=60,
-        )
-        if resp.status_code != 204:
-            raise RuntimeError(f"login failed: {resp.status_code} {resp.text[:300]}")
-        token = resp.headers.get("X-MSTR-AuthToken") or resp.headers.get("X-Mstr-Authtoken")
-        if not token:
-            raise RuntimeError("login succeeded but no X-MSTR-AuthToken header was returned")
-        self.session.headers["X-MSTR-AuthToken"] = token
-
-    def logout(self) -> None:
-        try:
-            self.session.delete(f"{self.base}/api/auth/login", timeout=20)
-        except Exception:
-            pass
-
-    def request(self, method: str, path: str, *, project: bool = True, ok: tuple[int, ...] | None = None, **kwargs) -> requests.Response:
-        headers = dict(kwargs.pop("headers", {}) or {})
-        if project and self.project_id:
-            headers.setdefault("X-MSTR-ProjectID", self.project_id)
-        resp = self.session.request(method, f"{self.base}{path}", headers=headers, timeout=90, **kwargs)
-        if ok is None:
-            ok = tuple(range(200, 300))
-        if resp.status_code not in ok:
-            raise RuntimeError(f"{method} {path} -> {resp.status_code}: {resp.text[:600]}")
-        return resp
-
-    def try_request(self, method: str, path: str, *, project: bool = True, **kwargs) -> requests.Response | None:
-        try:
-            return self.request(method, path, project=project, **kwargs)
-        except Exception:
-            return None
-
-    def resolve_project(self) -> dict[str, Any]:
-        projects = response_json(self.request("GET", "/api/projects", project=False))
-        if not isinstance(projects, list):
-            raise RuntimeError(f"unexpected projects payload: {compact_json(projects)}")
-        for project in projects:
-            if project.get("name") == self.project_name or project.get("id") == self.project_name:
-                self.project_id = project["id"]
-                self.session.headers["X-MSTR-ProjectID"] = self.project_id
-                return project
-        raise RuntimeError(f"project not found: {self.project_name}")
+class MSTR(BaseMSTR):
+    """Live-validation client — BaseMSTR + search/read/changeset helpers."""
 
     def search(self, name: str, obj_type: int | None = None, limit: int = 20, pattern: int = 4) -> list[dict[str, Any]]:
         params: dict[str, Any] = {"name": name, "pattern": pattern, "limit": limit, "getAncestors": "true"}
@@ -271,13 +205,13 @@ class Runner:
         )
 
     def workflow_2(self) -> None:
-        attrs = self.m.search("Category", obj_type=12, limit=100)
+        attrs = self.m.search(VALIDATE_ATTR, obj_type=12, limit=100)
         if not attrs:
-            raise RuntimeError("Category attribute not found via quick search")
-        attr = best_named(attrs, "Category", ("Schema Objects", "Attributes"))
+            raise RuntimeError(f"{VALIDATE_ATTR} attribute not found via quick search")
+        attr = best_named(attrs, VALIDATE_ATTR, ("Schema Objects", "Attributes"))
         if not attr:
             names = [normalize_name(a) for a in attrs[:10]]
-            raise RuntimeError(f"exact Category attribute not found; first matches were {names}")
+            raise RuntimeError(f"exact {VALIDATE_ATTR} attribute not found; first matches were {names}")
         attr_id = normalize_id(attr)
         obj = self.m.read_object(attr_id, int(attr.get("type") or 12))
         folders = []
@@ -287,7 +221,7 @@ class Runner:
                 folders = items_from_search(response_json(resp)) or [response_json(resp)]
                 break
         meta_status = "not-run"
-        meta = self.m.try_request("POST", "/api/metadataSearches/results", params={"name": "Category", "pattern": 4, "type": 12, "limit": 10})
+        meta = self.m.try_request("POST", "/api/metadataSearches/results", params={"name": VALIDATE_ATTR, "pattern": 4, "type": 12, "limit": 10})
         if meta is not None:
             meta_status = str(meta.status_code)
         self.cache["category_attr"] = attr
@@ -295,7 +229,7 @@ class Runner:
             2,
             "search/browse/object metadata",
             "pass",
-            "Category resolved and object metadata read",
+            f"{VALIDATE_ATTR} resolved and object metadata read",
             object={"id": attr_id, "name": normalize_name(attr), "type": attr.get("type"), "subtype": attr.get("subtype")},
             aclEntries=len(obj.get("acl") or []),
             folderProbe=len(folders),
@@ -307,12 +241,12 @@ class Runner:
         if attr and normalize_name(attr).casefold() != "category":
             attr = None
         if not attr:
-            attrs = self.m.search("Category", obj_type=12, limit=100)
-            attr = best_named(attrs, "Category", ("Schema Objects", "Attributes"))
+            attrs = self.m.search(VALIDATE_ATTR, obj_type=12, limit=100)
+            attr = best_named(attrs, VALIDATE_ATTR, ("Schema Objects", "Attributes"))
         if not attr:
-            raise RuntimeError("Category attribute not found")
+            raise RuntimeError(f"{VALIDATE_ATTR} attribute not found")
         attr_id = normalize_id(attr)
-        elems = response_json(self.m.request("GET", f"/api/attributes/{attr_id}/elements", params={"searchTerm": "Books", "limit": 20}))
+        elems = response_json(self.m.request("GET", f"/api/attributes/{attr_id}/elements", params={"searchTerm": VALIDATE_ELEMENT, "limit": 20}))
         candidates = items_from_search(elems)
         if isinstance(elems, dict) and isinstance(elems.get("elements"), list):
             candidates = elems["elements"]
@@ -325,9 +259,9 @@ class Runner:
             if isinstance(vals, list):
                 return " ".join(str(v.get("value", "")) if isinstance(v, dict) else str(v) for v in vals)
             return str(e.get("name") or e.get("display") or e.get("elementId") or e.get("id") or "")
-        books = next((e for e in candidates if "Books" in elem_name(e)), candidates[0] if candidates else None)
+        books = next((e for e in candidates if VALIDATE_ELEMENT in elem_name(e)), candidates[0] if candidates else None)
         if not books:
-            raise RuntimeError(f"Books element not found: {compact_json(elems)}")
+            raise RuntimeError(f"{VALIDATE_ELEMENT} element not found: {compact_json(elems)}")
         self.cache["category_attr"] = attr
         self.cache["books_element"] = books
         return attr, books
@@ -342,20 +276,20 @@ class Runner:
             3,
             "classic attribute and element inspection",
             "pass",
-            "Category attribute and Books element resolved",
+            f"{VALIDATE_ATTR} attribute and {VALIDATE_ELEMENT} element resolved",
             attribute={"id": attr_id, "name": normalize_name(attr), "forms": len(details.get("forms") or []) if isinstance(details, dict) else None},
             element={"elementId": elem_id, "display": display},
         )
 
     def workflow_4(self) -> None:
         candidates = []
-        for term in ("Revenue", "Profit", "Cost"):
+        for term in VALIDATE_METRICS:
             candidates.extend(self.m.search(term, obj_type=4, limit=25))
             if candidates:
                 break
         if not candidates:
-            raise RuntimeError("No candidate metric found for Revenue/Profit/Cost")
-        preferred = [best_named(candidates, name, ("Schema Objects", "Metrics")) for name in ("Revenue", "Profit", "Cost")]
+            raise RuntimeError(f"No candidate metric found for any of {VALIDATE_METRICS}")
+        preferred = [best_named(candidates, name, ("Schema Objects", "Metrics")) for name in VALIDATE_METRICS]
         ordered = [m for m in preferred if m]
         ordered.extend(candidates)
         attempted = []
@@ -386,7 +320,7 @@ class Runner:
         raise RuntimeError(f"no searched metric could be read by Modeling Service: {compact_json(attempted, 1000)}")
 
     def find_report(self) -> dict[str, Any] | None:
-        for term in ("Revenue", "Sales", "Category", "Profit", "Inventory"):
+        for term in VALIDATE_SEARCH_TERMS:
             for obj in self.m.search(term, obj_type=3, limit=20):
                 if normalize_id(obj):
                     return obj
@@ -449,7 +383,7 @@ class Runner:
 
     def workflow_7(self) -> None:
         docs = []
-        for term in ("Tutorial Home", "Dashboard", "Sales", "Revenue"):
+        for term in VALIDATE_DASHBOARD_TERMS:
             docs.extend(self.m.search(term, obj_type=55, limit=10))
             if docs:
                 break
@@ -526,7 +460,7 @@ class Runner:
         return None
 
     def create_security_filter(self, attr: dict[str, Any], books: dict[str, Any]) -> dict[str, Any]:
-        existing = self.find_security_filter("Books_secFilter_validation")
+        existing = self.find_security_filter(VALIDATE_SF_NAME)
         if existing:
             return existing
         folder_id = self.find_public_folder_id()
@@ -534,10 +468,10 @@ class Runner:
             raise RuntimeError("could not resolve Public Objects folder for security filter destination")
         attr_id = normalize_id(attr)
         elem_id = books.get("elementId") or books.get("id")
-        elem_display = books.get("display") or books.get("name") or "Books"
+        elem_display = books.get("display") or books.get("name") or VALIDATE_ELEMENT
         body = {
             "information": {
-                "name": "Books_secFilter_validation",
+                "name": VALIDATE_SF_NAME,
                 "description": f"Codex validation security filter, run {self.args.run_id}",
                 "destinationFolderId": folder_id,
             },
@@ -545,9 +479,9 @@ class Runner:
                 "tree": {
                     "type": "predicate_element_list",
                     "predicateId": "p1",
-                    "predicateText": "Category in Books",
+                    "predicateText": f"{VALIDATE_ATTR} in {VALIDATE_ELEMENT}",
                     "predicateTree": {
-                        "attribute": {"objectId": attr_id, "subType": "attribute", "name": normalize_name(attr) or "Category"},
+                        "attribute": {"objectId": attr_id, "subType": "attribute", "name": normalize_name(attr) or VALIDATE_ATTR},
                         "elements": [{"display": elem_display, "elementId": elem_id}],
                         "function": "in",
                     },
@@ -569,9 +503,9 @@ class Runner:
             self.m.commit_changeset(cs)
             if isinstance(sf, dict):
                 sf_id = sf.get("id") or (sf.get("information") or {}).get("objectId")
-                self.created.append({"kind": "securityFilter", "id": sf_id, "name": "Books_secFilter_validation"})
+                self.created.append({"kind": "securityFilter", "id": sf_id, "name": VALIDATE_SF_NAME})
                 return sf
-            return {"name": "Books_secFilter_validation"}
+            return {"name": VALIDATE_SF_NAME}
         except Exception:
             self.m.delete_changeset(cs)
             raise
@@ -652,7 +586,7 @@ class Runner:
         sf = self.create_security_filter(attr, books)
         sf_id = sf.get("id") or (sf.get("information") or {}).get("objectId")
         if not sf_id:
-            existing = self.find_security_filter("Books_secFilter_validation")
+            existing = self.find_security_filter(VALIDATE_SF_NAME)
             sf_id = existing and normalize_id(existing)
         if not sf_id:
             raise RuntimeError(f"could not determine security filter id: {compact_json(sf)}")
@@ -675,14 +609,14 @@ class Runner:
                 dup_id,
                 remove_membership=not already_member,
                 delete_user=self.created_in_this_run("user", object_id=dup_id),
-                delete_filter=self.created_in_this_run("securityFilter", object_id=sf_id, name="Books_secFilter_validation"),
+                delete_filter=self.created_in_this_run("securityFilter", object_id=sf_id, name=VALIDATE_SF_NAME),
             )
         self.add(
             9,
             "classic security filter assignment",
             "pass",
             "security filter assigned to duplicate user and cleanup handled",
-            securityFilter={"id": sf_id, "name": "Books_secFilter_validation"},
+            securityFilter={"id": sf_id, "name": VALIDATE_SF_NAME},
             user={"id": dup_id, "username": dup.get("username") or dup.get("name")},
             memberPayloadKeys=sorted(members.keys()) if isinstance(members, dict) else [],
             userFiltersStatus=user_filters.status_code if user_filters is not None else "unavailable",

@@ -1,7 +1,8 @@
 ---
-name: Strategy data validation reference
-description: How to validate a Mosaic/Strategy model's numeric correctness against a trusted reference source (other Mosaic, legacy report, flat file, warehouse SQL, REST fixture). Pointer to the strategy-validation skill.
+name: Strategy model + data validation reference
+description: Minimum validation suite for any Strategy / Mosaic model — comparator selection, 5-query numeric-correctness suite, 10-check design-time checklist, tolerance rules, and failure triage. Pointer to the strategy-validation skill.
 type: reference
+tags: [validation, mosaic, classic, build, migration, kimball]
 ---
 Companion to the `strategy-validation` skill (`strategy-validation/SKILL.md`) and the consumer-grade naming checklist (`feedback_consumer_grade_naming.md`).
 
@@ -22,7 +23,7 @@ Pick whichever source is closest to trusted ground truth:
 
 | Source | When to pick | How to read |
 | --- | --- | --- |
-| Another Mosaic model | Clone-and-remap variants, live/in-memory pair, sibling project model | MCP MCP `query` Trino, or REST `/api/v2/cubes/{id}/instances` |
+| Another Mosaic model | Clone-and-remap variants, live/in-memory pair, sibling project model | MCP `query` Trino, or REST `/api/v2/cubes/{id}/instances` |
 | Classic/legacy project report | Legacy→Mosaic migration, reproducing a known dashboard answer | Classic `/api/reports/{id}/instances` + JSON Data API, or Modeling Service reads per `reference_strategy_legacy_to_mosaic_mining.md` |
 | Flat file (CSV/Parquet/JSON) | Auditor gold set, snapshot export, hand-curated fixture | Local DuckDB/Pandas |
 | Direct warehouse SQL | "Does the semantic layer math match raw warehouse?" | Snowflake/BigQuery/Oracle driver with service creds |
@@ -30,15 +31,30 @@ Pick whichever source is closest to trusted ground truth:
 
 Do not default to Mosaic-to-Mosaic just because MCP is convenient. Use the most trusted comparator for the business question.
 
-## Minimum 5-query suite
+## Design-time 10-check suite (before build + during validation planning)
 
-Every validation runs these shapes at minimum:
+Every shippable model must be validated against a trusted comparator at least across:
 
-1. Grand-total + row count.
-2. One-dim descriptor breakdown.
-3. Two-dim hierarchical rollup (proves relationships).
-4. Filtered subset (proves filter semantics + SF isolation).
-5. Time-based split (proves date coercion + timezone).
+1. Row count or event count at declared grain.
+2. Total of each core additive metric.
+3. Metric by primary time level.
+4. Metric by top business dimension.
+5. Drill-path rollup from child to parent (Kimball conformed-dimension proof).
+6. Null and orphan key counts.
+7. Many-to-one relationship violations (rollup inflation/deflation).
+8. Distinct counts for high-risk attributes.
+9. Top-N comparison against a trusted reference.
+10. Security-filter smoke test when security is applied.
+
+## Runnable 5-query minimum suite
+
+Every validation run executes these shapes at minimum:
+
+1. **Grand-total + row count.** Proves overall additivity and grain.
+2. **One-dim descriptor breakdown.** Proves a single conformed dim rolls up correctly.
+3. **Two-dim hierarchical rollup.** Proves relationships — the Kimball "facts join dims cleanly" check.
+4. **Filtered subset.** Proves filter semantics + security-filter isolation.
+5. **Time-based split.** Proves date coercion + timezone handling.
 
 Rotate specific queries each run so regressions in untested corners surface over time.
 
@@ -50,28 +66,58 @@ Rotate specific queries each run so regressions in untested corners surface over
 - NULL == NULL for compare; treat missing dim values as `<NULL>` sentinel.
 - Report `matched`, `reference_only`, `model_only`, `delta_rows`, `worst_delta_pct`.
 
-## Verified run (TPC-H, 2026-04-21)
+## Result shape
 
-Validated `Snowflake TPCH-Built_By_Claude-20260421T2305Z` against live reference `Snowflake TPCH_SF1` via Mosaic MCP Trino. All 5 queries matched byte-for-byte:
+Recommended durable output shape:
 
-- Q1 grand total: 1,500,000 orders, $226,829,306,447.46 ✓
-- Q2 market-segment breakdown (5 rows) ✓
-- Q3 Region × Nation revenue (10 rows) ✓
-- Q4 Europe supplier rollup (5 nations) ✓
-- Q5 Year × Ship-mode (14 rows across 1995-1996) ✓
+```yaml
+validation_result:
+  model:
+  comparator:
+  status: pass | fail | warning
+  checks:
+    - name:
+      model_value:
+      reference_value:
+      tolerance:
+      status:
+      issue:
+      likely_cause:
+```
 
-Both models trace to the same Snowflake `TPCH_SF1` source — matching proves the clone-and-remap faithfully reproduced the reference semantics.
+## Failure triage — common causes
+
+Cross-reference each failure to the likely Kimball / Strategy-engine root cause:
+
+- **Wrong grain** — fact table joined at the wrong natural key; re-declare grain per `reference_data_modeling_foundations.md`.
+- **Many-to-many duplication** — bridge table missing or an implicit cartesian via an unconformed dim.
+- **Orphan foreign keys** — fact rows without a matching dim row; reject or quarantine upstream.
+- **Incomplete attribute conformance** — the conformed-dim promise is broken; see `feedback_mosaic_relationship_wiring.md`.
+- **Level metric mismatch** — `dimty` scope wrong; metric is rolling up at a different grain than the user expects.
+- **Fiscal vs calendar mismatch** — wrong date role / transformation; see `reference_strategy_time_modeling.md`.
+- **Security filter over- or under-constraint** — qualification doesn't match business intent; verify element IDs vs display values.
+
+## Shipping rule
+
+Do NOT call a new build shippable if:
+
+- Totals disagree and no cause is documented.
+- Rollup checks fail.
+- Relationship cardinality is unverified.
+- Security behavior is untested where required.
 
 ## Gotchas observed
 
-- **`ERR001 "Maximum number of interactive session per user for project exceeded"`** — fired after ~10 consecutive REST logins on {MSTR_BASE host}. Mitigation: (a) reuse sessions via a single helper process, (b) explicit `DELETE /api/auth/login` on exit, (c) route read validations through MCP `query` which uses a pool. Do not loop-login per-query.
-- **Column names over Trino use `"<attribute name lowercase> (<form name lowercase>)"`** — e.g., `"region (region name)"`, `"customer market segment (customer market segment)"`. Entity IDs appear as `"order (order key)"`. Metric columns use just the metric name, lowercase, with spaces preserved (`"order total price"`).
+- **`ERR001 iServerCode -2147072486` / `8004cb0a`** — fires after ~10 consecutive REST logins. Mitigation: (a) reuse sessions via a single helper process, (b) explicit `DELETE /api/auth/login` on exit, (c) route read validations through MCP `query` which uses a pool. See `feedback_build_mosaic_session_leak.md`. Do not loop-login per-query.
+- **Column names over Trino** use `"<attribute name lowercase> (<form name lowercase>)"` — e.g., `"region (region name)"`, `"customer market segment (customer market segment)"`. Entity IDs appear as `"order (order key)"`. Metric columns use just the metric name, lowercase, with spaces preserved (`"order total price"`).
 - **Missing expected column** returns Trino `Column 'X' cannot be resolved` — check form-category naming before blaming the model.
 - **Connect-live models don't need a publish step.** `POST /api/cubes/{id}` returns "no publish endpoint accepted" for `connect_live` models; that's expected, not an error.
 
-## Helper script (planned / extend)
+## Helper script
 
-`skill/scripts/strategy_validate_models.py` — pluggable runner. The implemented core compares CSV/JSON result files:
+`skill/scripts/strategy_validate_models.py` — pluggable runner.
+
+**File adapter (any comparator — dump rows first).** Compares CSV/JSON result files:
 
 ```bash
 python3 skill/scripts/strategy_validate_models.py \
@@ -82,16 +128,33 @@ python3 skill/scripts/strategy_validate_models.py \
   --out /tmp/validation.json
 ```
 
-Live adapters are intentionally incremental. They should accept:
+**Live Mosaic-to-Mosaic adapter (implemented).** Runs the same SQL against two Mosaic models through the Strategy Trino endpoint in one call:
 
-- `--model <name>` — the model under test (Mosaic by name; resolves via MCP or REST search)
-- `--reference-mosaic <name>` — another Mosaic model
-- `--reference-sql-file <path> --reference-conn <dsn>` — raw warehouse SQL
-- `--reference-file <path> --key cols --measures cols` — flat-file gold set
-- `--reference-classic-report <name>` — classic/legacy project report
-- `--reference-rest-file <path>` or external-system adapter options — REST/API fixture comparison
-- `--query-suite <name>` — named suite (tpch-standard, retail-standard, etc.)
-- `--tolerance <float>` — numeric tolerance (default 1e-6)
-- `--out <json>` — structured validation result
+```bash
+python3 skill/scripts/strategy_validate_models.py \
+  --model "<new_model>" \
+  --reference-mosaic "<reference_model>" \
+  --query 'SELECT "<attr> (<form>)", SUM("<metric>") FROM %s GROUP BY 1' \
+  --key '<attr> (<form>)' \
+  --measures '<metric>' \
+  --out /tmp/validation.json
+```
 
-Until a live adapter exists for a source, run ad-hoc through the appropriate source adapter, save both row sets, and feed them into `strategy_validate_models.py`. The TPC-H validation above used MCP `query` because the trusted comparator was another Mosaic model; a legacy migration or external reconciliation should use the legacy report/API/warehouse adapter instead.
+Trino host defaults to the `MSTR_BASE` host; schema defaults to `MSTR_PROJECT_NAME` lowercased. Basic auth reuses `MSTR_USER` / `MSTR_PASSWORD`. Use `%s` or `{{MODEL}}` as the placeholder for the model-as-table name — it gets replaced per side with the correctly-quoted model name.
+
+**Still-pending adapters** (accepted → honest error, pointed at the file adapter workaround):
+
+- `--reference-sql-file` / `--reference-conn` — raw warehouse SQL
+- `--reference-classic-report` — classic/legacy project report
+- `--reference-rest-file` — REST/API fixture comparison
+- `--query-suite` — named suite (tpch-standard, retail-standard, etc.)
+
+Until a live adapter exists for a source, run ad-hoc through the appropriate source adapter, save both row sets, and feed them into the file adapter.
+
+## Related
+
+- `strategy-validation/SKILL.md` — runnable paired-query validator skill.
+- `reference_mosaic_build_validation.md` — runnable post-build gate invoked via `build_mosaic.py validate-model`; F/W checks + diff/regression mode.
+- `feedback_mosaic_relationship_wiring.md` — fixes the #1 cause of validation failures (broken conformance).
+- `reference_data_modeling_foundations.md` — Kimball grain + conformed-dim principles that underpin every validation check.
+- `reference_rollup_consistency_validation.md` — the canonical Trino rollup-consistency pattern.

@@ -1,61 +1,67 @@
 ---
 name: strategy-data-modeling
-description: Design, review, migrate, and operationalize Strategy semantic models: business process, grain, attributes, facts, metrics, relationships, hierarchies, time semantics, and validation plans for Mosaic and classic surfaces.
+description: Design, review, migrate, and operationalize Strategy semantic models — Kimball-first. Business process, grain, conformed dimensions, attributes, facts, metrics, relationships, hierarchies, time semantics, and validation plans for Mosaic and classic surfaces. Strategy's SQL engine is built for star/snowflake schemas; this skill enforces that invariant before any REST write.
 ---
 
-# Strategy Data Modeling
+# Strategy Data Modeling (Kimball-first planning layer)
 
-Use this skill when the user asks to design, inspect, explain, review, migrate, validate, or improve a Strategy / MicroStrategy semantic model. This skill is the planning layer that sits before execution skills such as `build-mosaic-model`, classic semantic mining, or `strategy-validation`.
+Use this skill when the user asks to design, inspect, explain, review, migrate, validate, or improve a Strategy / MicroStrategy semantic model. This skill is the **planning layer** that sits between `strategy-automation` (which classifies the surface) and execution skills (`skill/SKILL.md`, `strategy-validation/SKILL.md`).
 
-## Required memory
+**Skill precedence (one-way, no loops):**
 
-Read these first:
+```
+strategy-automation (classify surface)
+  └─► strategy-data-modeling (plan — this skill)
+        └─► skill/SKILL.md (build-mosaic-model) OR legacy mining
+              └─► strategy-validation (verify)
+```
 
-- `memory/reference_data_modeling_foundations.md`
-- `memory/reference_strategy_schema_objects.md`
+Do NOT route back up the chain. This skill calls execution skills; execution skills do not call this one.
+
+## Required memory (load on entry)
+
+Kimball foundations (load first, every time):
+
+- `memory/reference_data_modeling_foundations.md` — grain, conformed dims, star/snowflake topology, additivity, anti-patterns
+- `memory/reference_strategy_schema_objects.md` — Kimball → Strategy object mapping
 - `memory/reference_strategy_attribute_design.md`
 - `memory/reference_strategy_fact_metric_design.md`
 - `memory/reference_strategy_relationship_design.md`
 - `memory/reference_strategy_hierarchy_design.md`
 - `memory/reference_strategy_time_modeling.md`
-- `memory/reference_strategy_model_validation.md`
+- `memory/reference_strategy_data_validation.md` — 10-check design suite + 5-query runnable suite
 
-For Mosaic work also read:
+Mosaic work (additional):
 
 - `memory/reference_strategy_mosaic_modeling.md`
-- `memory/feedback_mosaic_relationship_wiring.md`
+- `memory/feedback_mosaic_relationship_wiring.md` — conformed-dim encoding + error-code fix recipes
 - `memory/feedback_consumer_grade_naming.md`
 
-For classic / migration work also read:
+Classic / migration (additional):
 
 - `memory/reference_strategy_legacy_semantic_modeling.md`
 - `memory/reference_strategy_legacy_to_mosaic_mining.md`
 
-## Use this before execution
-
-Route through this skill before:
-
-- `skill/SKILL.md` when building or patching a Mosaic model from tables
-- `strategy-validation/SKILL.md` when defining what to validate
-- legacy semantic mining when the user has not yet declared the target business process, grain, or object map
-
-## Output contract
+## Output contract — Kimball-first model plan
 
 For any modeling request, produce or update a model plan containing:
 
-1. Business process
-2. Declared grain
-3. Source systems and tables
-4. Attributes and forms
-5. Facts
-6. Governed metrics
-7. Relationships
-8. Hierarchies
-9. Time roles and transformations
-10. Security / governance notes
-11. Assumptions and open questions
-12. Validation suite
-13. Build sequence
+1. **Topology declaration** — `star | snowflake | galaxy | bridge-heavy | non-Kimball`. Non-Kimball stops the work and confirms with the user.
+2. **Table classification** — every input table labeled `fact | dim | bridge | snowflake_parent_dim | degenerate_dim | noise`.
+3. Business process
+4. Declared grain (per fact table)
+5. Conformed-dim enumeration — every entity that appears in ≥2 tables, with the list of (table, column) expressions it must span
+6. Source systems and tables
+7. Attributes and forms
+8. Facts
+9. Governed metrics (each tagged with additivity class: `additive | semi-additive | non-additive | derived`)
+10. Relationships (parent/child/relationship_table/type, and the archetype from `reference_mosaic_relationship_archetypes.md`)
+11. Hierarchies
+12. Time roles and transformations
+13. Security / governance notes
+14. Assumptions and open questions
+15. Validation suite
+16. Build sequence
 
 Prefer the templates in `skill/examples/`:
 

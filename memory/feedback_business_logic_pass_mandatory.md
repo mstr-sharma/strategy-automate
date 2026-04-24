@@ -8,11 +8,11 @@ type: feedback
 
 **Why:** the helper's built-in inference (friendly-title column names, SUM per numeric column, shared-column relationships) ships models that look complete but are semantically wrong in common ways:
 
-- Percent and rate columns get SUMmed, so any rollup of `SLA Uptime Percentage` or `Average GPU Utilization` is off by factors of the rollup size.
-- Per-dimension constants that happen to be numeric (`monthly_commit_usd` on a tenant row replicated to every hourly fact) become sum-metrics and grow linearly with row count.
+- Percent and rate columns get SUMmed, so any rollup of a percentage or utilization column is off by factors of the rollup size.
+- Per-dimension constants that happen to be numeric (e.g., a contract amount on a customer row replicated to every hourly fact) become sum-metrics and grow linearly with row count.
 - Pre-aggregated statistics (`p95_*`, `median_*`) are SUMmed, producing meaningless totals that still numerically "look like" metrics.
-- Flag columns end up both as attributes (good) and SUM-aggregated metrics named `Total Sla Breach Flag (Incidents)` (bad naming, unclear semantic).
-- Shared column names across DBs with different casing (`tenant_id` vs `TENANT_ID`) silently fail to conform, so the model under-joins and totals are wrong — but the build helper reports success.
+- Flag columns end up both as attributes (good) and SUM-aggregated metrics named `Total <Flag Name> (<Table>)` (bad naming, unclear semantic).
+- Shared column names across DBs with different casing (`<entity>_id` vs `<ENTITY>_ID`) silently fail to conform, so the model under-joins and totals are wrong — but the build helper reports success.
 - Conformed dimensions (region, severity) get duplicated across tables instead of promoted to a single attribute, fragmenting slicing.
 
 Each of these failure modes completes the build with 2xx status codes. The first time anyone queries the model, the numbers disagree with the reference source by amounts that are hard to debug after the fact.

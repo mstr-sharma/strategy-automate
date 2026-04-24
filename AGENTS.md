@@ -18,11 +18,34 @@ This file is the **canonical cross-tool entry point**. Every LLM-specific shim a
 - Before committing, run the relevant tests plus `git diff --check`.
 - Never commit `.env`, `.claude/`, credentials, SSH keys, tenant IDs, raw tenant payloads, personal names, corporate email addresses, local logs, or anything else enumerated in `memory/feedback_generalize_durable_artifacts.md`.
 
+## Cold-start routing — pick the right branch FIRST
+
+```
+User task → which branch?
+0. Error code in the transcript (8004…, iServerCode -2147…)?
+     → memory/reference_strategy_error_codes.md   (fastest path symptom → fix)
+1. Building a NEW model?
+     → strategy-data-modeling/SKILL.md  (plan grain, dims, conformance, topology)
+     → skill/SKILL.md                  (execute via build_mosaic.py)
+2. Modifying an existing model / admin / runtime task?
+     → strategy-automation/SKILL.md    (NLQ router)
+3. Validating numbers / checking data correctness?
+     → strategy-validation/SKILL.md
+4. Legacy (classic) → Mosaic migration?
+     → strategy-data-modeling/SKILL.md → legacy-mining refs → skill/SKILL.md
+5. Unknown endpoint / unfamiliar payload shape?
+     → openapi-summary / openapi-search → clone-and-remap (reference_mosaic_clone_pattern.md)
+```
+
+**Skill precedence is strict: classify (automation) → plan (data-modeling) → execute (build) → verify (validation).** No skill routes back up the chain. `strategy-automation` and `strategy-data-modeling` do NOT route to each other in a loop.
+
+**Kimball first on every modeling task.** Strategy's SQL engine is built for star / snowflake schemas and conformed dimensions. Declare topology (`star | snowflake | galaxy | bridge-heavy | non-Kimball`) and classify every table (fact / dim / bridge / snowflake-parent / degenerate / noise) BEFORE writing any payload. Non-Kimball topologies stop-and-confirm — see `memory/reference_data_modeling_foundations.md`.
+
 ## First move on any task
 
 1. **Identify the surface.** Strategy concepts are duplicated across Mosaic and classic. Before touching endpoints, decide whether the user is asking about Mosaic data models, classic / project semantic layer, runtime analytics, cubes / datasets, AI agents, platform admin, or data validation. When uncertain, consult `memory/reference_strategy_surface_matrix.md`.
 2. **Read the relevant memory file.** `memory/MEMORY.md` is the index — every other file has a `type` frontmatter (`user`, `project`, `feedback`, `reference`) and a one-line description. Load only the files you need.
-3. **Use the skills when they fit.**
+3. **Use the skills when they fit** (precedence above).
    - `strategy-data-modeling/SKILL.md` — the modeling-planning layer: declare business process, grain, attributes, facts, metrics, relationships, hierarchies, time semantics, and validation before build / migration / review work.
    - `skill/SKILL.md` — the `build-mosaic-model` skill (discovery + build + ACL + security filter + publish + post-build edits).
    - `strategy-automation/SKILL.md` — the NLQ router: points you at the right memory + helper for any Strategy task.
@@ -30,6 +53,7 @@ This file is the **canonical cross-tool entry point**. Every LLM-specific shim a
 4. **Use environment configuration, never hardcoded values.** `MSTR_BASE`, `MSTR_USER`, `MSTR_PASSWORD`, `MSTR_PROJECT_ID` or `MSTR_PROJECT_NAME`, `MSTR_DEST_FOLDER_ID`. See `.env.example` + `memory/reference_strategy_env.md`.
 5. **Probe live specs when endpoint details matter.** `python3 skill/scripts/build_mosaic.py openapi-summary` and `... openapi-search "<term>"` hit `/api/openapi.yaml` directly.
 6. **Classify automation coverage honestly.** Use `memory/reference_strategy_automation_coverage.md`: wrapped helper, generic REST hook, specialized hook, captured fallback, or known gap. Generic `api-call` reachability is an API hook, but not a finished workflow wrapper.
+7. **On any REST failure, grep `memory/reference_strategy_error_codes.md` FIRST.** Every observed `8004cc##` / iServerCode maps to the memory file with the fix. Do not retry blind — all observed codes are class-of-error, not transient.
 
 For Mosaic work, distinguish the entry path:
 - **Modeling design / review first:** if the request is still deciding business process, grain, facts, dimensions, relationships, hierarchies, time semantics, or validation scope, route through `strategy-data-modeling/SKILL.md` before touching build helpers.
@@ -65,7 +89,8 @@ See `memory/MEMORY.md` for the full list. The most load-bearing entries:
 - `user_profile.md` — typical operator (Strategy Sales Engineer) and style expectations.
 - `project_mosaic_build.md` — repo purpose and how to extend it.
 - `reference_strategy_env.md` — env-var + CLI-flag convention.
-- `reference_data_modeling_foundations.md` — dimensional modeling foundations and anti-patterns.
+- `reference_strategy_error_codes.md` — flat index of every observed Strategy error code → memory with the fix. Grep here first on any 4xx/5xx.
+- `reference_data_modeling_foundations.md` — Kimball dimensional modeling foundations: grain, conformed dims, star/snowflake topology, additivity, anti-patterns.
 - `reference_strategy_schema_objects.md` — Strategy schema object map for tables, attributes, facts, metrics, relationships, hierarchies, and transformations.
 - `reference_strategy_attribute_design.md` — attribute design, forms, conformance, role-playing dimensions, and naming.
 - `reference_strategy_fact_metric_design.md` — fact and metric behavior, additive patterns, ratios, and governed measures.
@@ -74,7 +99,7 @@ See `memory/MEMORY.md` for the full list. The most load-bearing entries:
 - `reference_strategy_time_modeling.md` — calendar, fiscal, date-role, and transformation guidance.
 - `reference_strategy_mosaic_modeling.md` — Mosaic-specific sequencing, conformance, and validation expectations.
 - `reference_strategy_legacy_semantic_modeling.md` — classic semantic-layer interpretation and migration framing.
-- `reference_strategy_model_validation.md` — minimum validation suite and failure triage.
+- `reference_strategy_data_validation.md` — 10-check design-time validation suite + 5-query runnable suite + failure triage.
 - `reference_strategy_automation_playbook.md` — NLQ-to-action loop, safety model.
 - `reference_strategy_automation_coverage.md` — complete-platform coverage levels and gap-register rules.
 - `reference_strategy_surface_matrix.md` — route ambiguous nouns to the right surface.
