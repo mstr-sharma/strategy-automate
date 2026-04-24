@@ -1,0 +1,22 @@
+attribute_plan:
+  - name:
+    business_definition:
+    semantic_role:
+    source_tables: []
+    forms:
+      - name: ID
+        table:
+        column:
+        purpose: stable_key
+      - name: DESC
+        table:
+        column:
+        purpose: display
+    conformance:
+      shared_entity_name:
+      compatible_with: []
+      risks: []
+    role_playing_as: []
+    scd_type:
+    hierarchy_candidates: []
+    notes:

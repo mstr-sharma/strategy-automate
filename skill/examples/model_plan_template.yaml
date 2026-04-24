@@ -1,0 +1,69 @@
+model:
+  name:
+  purpose:
+  business_process:
+  grain:
+  source_systems: []
+  source_tables: []
+
+attributes:
+  - name:
+    business_definition:
+    id_form:
+    description_form:
+    additional_forms: []
+    lookup_table:
+    expressions:
+      - table:
+        column:
+    parent_attributes: []
+    notes:
+
+facts:
+  - name:
+    business_definition:
+    expression:
+      table:
+      column:
+    additive_type: additive
+    default_aggregation:
+    notes:
+
+metrics:
+  - name:
+    expression:
+    business_definition:
+    aggregation_behavior:
+    null_handling:
+    format:
+
+relationships:
+  - child_attribute:
+    parent_attribute:
+    cardinality:
+    source_table:
+    validation_sql:
+    notes:
+
+hierarchies:
+  - name:
+    levels: []
+    entry_points: []
+    drill_notes:
+
+time:
+  calendar_type: calendar
+  date_roles: []
+  transformations: []
+
+security:
+  row_level_security:
+  object_acl:
+  sensitive_attributes: []
+
+validation:
+  comparator:
+  checks: []
+
+assumptions: []
+open_questions: []

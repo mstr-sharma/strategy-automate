@@ -1,0 +1,18 @@
+relationship_plan:
+  - name:
+    child:
+    parent:
+    relationship_type: many_to_one
+    source_evidence:
+      tables: []
+      columns: []
+      profiling_queries: []
+    expected_behavior:
+      drill_up:
+      drill_down:
+      filter_propagation:
+    risk:
+    validation:
+      cardinality_check:
+      orphan_check:
+      rollup_check:
