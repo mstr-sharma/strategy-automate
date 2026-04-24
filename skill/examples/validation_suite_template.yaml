@@ -1,0 +1,32 @@
+validation_suite:
+  model:
+  comparator:
+  grain_check:
+    query_or_method:
+    expected_behavior:
+  checks:
+    - name:
+      type: total
+      metric:
+      slice:
+      tolerance:
+      reference:
+    - name:
+      type: rollup
+      metric:
+      child_level:
+      parent_level:
+      tolerance:
+      reference:
+    - name:
+      type: cardinality
+      query:
+      expected_zero_rows: true
+    - name:
+      type: orphan
+      query:
+      expected_zero_rows: true
+  security_smoke_test:
+    required: false
+    notes:
+  notes: []

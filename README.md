@@ -10,6 +10,11 @@ Tested with **Claude Code** and **Codex CLI**. Other harnesses (MCP-aware chat a
 strategy-automate/
 ├── skill/                         # build-mosaic-model skill + helper scripts
 │   ├── SKILL.md
+│   ├── examples/
+│   │   ├── model_plan_template.yaml
+│   │   ├── attribute_plan_template.yaml
+│   │   ├── relationship_plan_template.yaml
+│   │   └── validation_suite_template.yaml
 │   └── scripts/
 │       ├── build_mosaic.py             # REST CLI: auth, catalog, build, patch, publish
 │       ├── strategy_mosaic_inventory.py  # walk every Mosaic data model (subType 779)
@@ -17,6 +22,7 @@ strategy-automate/
 │       ├── strategy_semantic_mine.py   # top-down / reverse lineage for legacy → Mosaic
 │       ├── strategy_validate_models.py  # compare model result sets to trusted references
 │       └── strategy_validate.py        # live-tenant workflow validator
+├── strategy-data-modeling/SKILL.md # modeling-planning layer before build / migration / review
 ├── strategy-automation/SKILL.md   # NLQ router — pick the right surface + memory
 ├── strategy-validation/SKILL.md   # paired-query data-correctness validator
 ├── memory/                        # MEMORY.md index + typed memory files
@@ -80,7 +86,7 @@ Build a mosaic model. Instance: <your datasource name>
 Schema: <schema>
 Tables: <comma-separated>
 ```
-The `build-mosaic-model` skill discovers columns, generates attribute/metric/relationship payloads, commits through a changeset, and applies consumer-grade naming. See `skill/SKILL.md`.
+Route through `strategy-data-modeling/SKILL.md` first when the business process, grain, dimensions, facts, relationships, hierarchies, or validation scope still need to be decided. The `build-mosaic-model` skill then discovers columns, generates attribute / metric / relationship payloads, commits through a changeset, and applies consumer-grade naming. See `skill/SKILL.md`.
 
 For **multi-DB or mixed-case** builds (e.g., Postgres lowercase + Snowflake uppercase), auto-conformance silently orphans case-mismatched or differently-named FKs, and relationship PUTs then fail with `8004ccdb` / `8004ccc7`. Follow the six-step recipe in [`memory/feedback_mosaic_relationship_wiring.md`](memory/feedback_mosaic_relationship_wiring.md): write the attribute plan first, express conformance via identical `name` in the dictionary, declare relationships only between attributes that do NOT already share a table, verify `forms[*].expressions[*].tables` after build, PATCH missing expressions before issuing relationship PUTs, and close with a Trino rollup check.
 
@@ -100,6 +106,9 @@ See `memory/reference_strategy_legacy_to_mosaic_mining.md`.
 **Validate a model's numbers:**
 Route through the `strategy-validation` skill (`strategy-validation/SKILL.md`). Reference source can be another Mosaic model, a classic project report, a flat file, direct warehouse SQL, or a saved REST fixture. See `memory/reference_strategy_data_validation.md` for the 5-query minimum suite.
 
+**Review or design a semantic model before building it:**
+Route through `strategy-data-modeling/SKILL.md`. It turns free-form modeling requests into a reusable plan covering business process, grain, attributes, facts, metrics, relationships, hierarchies, time roles, security notes, and validation checks, with templates in `skill/examples/`.
+
 **Automate an API surface that has no typed helper yet:**
 ```bash
 python3 skill/scripts/build_mosaic.py openapi-search "<domain word>" --context 3
@@ -109,7 +118,7 @@ Generic REST reachability is part of the platform hook coverage. Add typed helpe
 
 ## What lives in memory
 
-`memory/MEMORY.md` is the index. Each pointed-to file captures durable knowledge — tenant-agnostic patterns, REST endpoint maps, gotchas, consumer-grade naming rules, the classic ↔ Mosaic translation matrix, etc. Read the index once to orient; load specific files on demand.
+`memory/MEMORY.md` is the index. Each pointed-to file captures durable knowledge — tenant-agnostic patterns, modeling foundations, REST endpoint maps, gotchas, consumer-grade naming rules, the classic ↔ Mosaic translation matrix, and validation guidance. Read the index once to orient; load specific files on demand.
 
 ## Security
 
@@ -121,6 +130,7 @@ Generic REST reachability is part of the platform hook coverage. Add typed helpe
 ## Conventions
 
 - **Every script reads env vars or CLI flags.** No tenant defaults baked in.
+- **Modeling plans come before metadata writes.** For model design, review, or migration work, declare business process, grain, facts, dimensions, relationships, hierarchies, and validation before calling build helpers.
 - **Automation coverage is explicit.** Classify each platform capability as wrapped helper, generic REST hook, specialized hook, captured fallback, or known gap. See `memory/reference_strategy_automation_coverage.md`.
 - **Every Mosaic build closes with a consumer-grade-naming pass + data validation, or an explicit validation-pending comparator note.** Validation is reference-dependent: another Mosaic model, a classic report/model, warehouse SQL, a flat file, or an external system can be the comparator. See `memory/feedback_consumer_grade_naming.md` and `strategy-validation/SKILL.md`.
 - **Changesets are the unit of metadata write.** Open, write, commit — or discard on failure. Relationships, ACLs, translations typically need a separate changeset from object creation.

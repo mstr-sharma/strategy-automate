@@ -23,6 +23,7 @@ This file is the **canonical cross-tool entry point**. Every LLM-specific shim a
 1. **Identify the surface.** Strategy concepts are duplicated across Mosaic and classic. Before touching endpoints, decide whether the user is asking about Mosaic data models, classic / project semantic layer, runtime analytics, cubes / datasets, AI agents, platform admin, or data validation. When uncertain, consult `memory/reference_strategy_surface_matrix.md`.
 2. **Read the relevant memory file.** `memory/MEMORY.md` is the index — every other file has a `type` frontmatter (`user`, `project`, `feedback`, `reference`) and a one-line description. Load only the files you need.
 3. **Use the skills when they fit.**
+   - `strategy-data-modeling/SKILL.md` — the modeling-planning layer: declare business process, grain, attributes, facts, metrics, relationships, hierarchies, time semantics, and validation before build / migration / review work.
    - `skill/SKILL.md` — the `build-mosaic-model` skill (discovery + build + ACL + security filter + publish + post-build edits).
    - `strategy-automation/SKILL.md` — the NLQ router: points you at the right memory + helper for any Strategy task.
    - `strategy-validation/SKILL.md` — paired-query data-correctness validation against any reference source.
@@ -31,6 +32,7 @@ This file is the **canonical cross-tool entry point**. Every LLM-specific shim a
 6. **Classify automation coverage honestly.** Use `memory/reference_strategy_automation_coverage.md`: wrapped helper, generic REST hook, specialized hook, captured fallback, or known gap. Generic `api-call` reachability is an API hook, but not a finished workflow wrapper.
 
 For Mosaic work, distinguish the entry path:
+- **Modeling design / review first:** if the request is still deciding business process, grain, facts, dimensions, relationships, hierarchies, time semantics, or validation scope, route through `strategy-data-modeling/SKILL.md` before touching build helpers.
 - **Legacy-to-Mosaic migration:** mine/read the classic semantic layer first, then use its attributes, forms, facts, metrics, relationships, filters, and reports as the blueprint for the new Mosaic model.
 - **Brand-new Mosaic model:** start from warehouse discovery plus ERD/data dictionary/preflight checks, then build and validate against the best available comparator.
 
@@ -50,6 +52,7 @@ For Mosaic work, distinguish the entry path:
 
 - `memory/` — durable knowledge, indexed by `memory/MEMORY.md`.
 - `skill/` — `build-mosaic-model` skill + all REST helper CLIs under `skill/scripts/`.
+- `strategy-data-modeling/SKILL.md` — modeling-planning layer for grain, dimensions, metrics, relationships, hierarchies, and validation design.
 - `strategy-automation/SKILL.md` — NLQ router.
 - `strategy-validation/SKILL.md` — data-correctness validator.
 - `.env.example` — env-var template (copy to `.env`).
@@ -62,6 +65,16 @@ See `memory/MEMORY.md` for the full list. The most load-bearing entries:
 - `user_profile.md` — typical operator (Strategy Sales Engineer) and style expectations.
 - `project_mosaic_build.md` — repo purpose and how to extend it.
 - `reference_strategy_env.md` — env-var + CLI-flag convention.
+- `reference_data_modeling_foundations.md` — dimensional modeling foundations and anti-patterns.
+- `reference_strategy_schema_objects.md` — Strategy schema object map for tables, attributes, facts, metrics, relationships, hierarchies, and transformations.
+- `reference_strategy_attribute_design.md` — attribute design, forms, conformance, role-playing dimensions, and naming.
+- `reference_strategy_fact_metric_design.md` — fact and metric behavior, additive patterns, ratios, and governed measures.
+- `reference_strategy_relationship_design.md` — relationship cardinality, bridges, orphan checks, and rollup safety.
+- `reference_strategy_hierarchy_design.md` — hierarchy / drill-path design and anti-patterns.
+- `reference_strategy_time_modeling.md` — calendar, fiscal, date-role, and transformation guidance.
+- `reference_strategy_mosaic_modeling.md` — Mosaic-specific sequencing, conformance, and validation expectations.
+- `reference_strategy_legacy_semantic_modeling.md` — classic semantic-layer interpretation and migration framing.
+- `reference_strategy_model_validation.md` — minimum validation suite and failure triage.
 - `reference_strategy_automation_playbook.md` — NLQ-to-action loop, safety model.
 - `reference_strategy_automation_coverage.md` — complete-platform coverage levels and gap-register rules.
 - `reference_strategy_surface_matrix.md` — route ambiguous nouns to the right surface.
@@ -93,7 +106,7 @@ The memory writes say "MCP" — don't hunt for a server-id prefix. If your tool 
 
 All harnesses follow the same contract: read this file, load `memory/MEMORY.md`, invoke `skill/scripts/build_mosaic.py` (and siblings) via whatever tool-call mechanism is available. Per-harness notes:
 
-- **Claude Code** (`CLAUDE.md`) — skills in `skill/`, `strategy-automation/`, `strategy-validation/` auto-discovered by `SKILL.md` frontmatter. Memory auto-loaded via `memory/MEMORY.md` index.
+- **Claude Code** (`CLAUDE.md`) — skills in `skill/`, `strategy-data-modeling/`, `strategy-automation/`, `strategy-validation/` auto-discovered by `SKILL.md` frontmatter. Memory auto-loaded via `memory/MEMORY.md` index.
 - **Codex CLI** (`CODEX.md`) — reads `AGENTS.md` on `cd`. Scripts run under its shell tool.
 - **Gemini CLI** (`GEMINI.md`) — reads `GEMINI.md` → `AGENTS.md`.
 - **Grok / xAI CLIs** (`GROK.md`) — same contract; if no skills concept, treat each `SKILL.md` as a long-form instruction file.

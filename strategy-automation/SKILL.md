@@ -18,9 +18,11 @@ Use this skill when the user asks to automate, inspect, build, modify, secure, p
 
 ## Tool Router
 
+- **Design, review, or explain a semantic model before writing anything:** use `strategy-data-modeling/SKILL.md` first to declare business process, grain, attributes, facts, metrics, relationships, hierarchies, time roles, and validation plan.
 - **Build or modify a Mosaic model from warehouse tables:** use the `build-mosaic-model` skill (`skill/SKILL.md`) and its helper script.
 - **Legacy-to-Mosaic migration:** first inspect the classic/project semantic layer with `strategy_semantic_inventory.py` or `strategy_semantic_mine.py`, turn the discovered attributes/forms/facts/metrics/relationships into a blueprint/dictionary/ERD, then build the Mosaic model from that evidence. Do not treat migration like a greenfield shared-column inference job unless no legacy semantic source exists.
-- **Brand-new Mosaic model:** use warehouse discovery, ERD/data dictionary intake, `preflight_model_check.py`, then `build_mosaic.py build`; generate business names/descriptions and mark data validation pending until a comparator is chosen.
+- **Brand-new Mosaic model:** route through `strategy-data-modeling/SKILL.md` first, then use warehouse discovery, ERD/data dictionary intake, `preflight_model_check.py`, and `build_mosaic.py build`; generate business names/descriptions and mark data validation pending until a comparator is chosen.
+- **Modeling review / audit / cleanup:** use `strategy-data-modeling/SKILL.md`, then apply the build, legacy, or validation skill that matches the chosen surface.
 - **Classic-to-modern modeling judgment:** read `reference_strategy_design_transition.md` before translating legacy project schema concepts into Mosaic/USL/AI-ready models.
 - **Classic/project semantic-layer or admin workflows:** read `reference_strategy_legacy_semantic_admin.md`; use top-level `/api/model/...` changeset endpoints for legacy objects and `/api/users`, `/api/securityFilters`, `/api/usergroups`, `/api/objects` for admin/member operations.
 - **Deep classic semantic inspection:** read `reference_strategy_tutorial_semantic_field_study.md`; use `skill/scripts/strategy_semantic_inventory.py` to inventory attributes, facts, metrics, filters, prompts, system hierarchy, user hierarchies, fact extensions, metric dimensionality/conditionality, and prompt/filter internals before cloning or modernizing.
@@ -62,6 +64,16 @@ Use this skill when the user asks to automate, inspect, build, modify, secure, p
 
 ## Memory Map
 
+- Modeling foundations and planning: `reference_data_modeling_foundations.md`
+- Strategy schema object map: `reference_strategy_schema_objects.md`
+- Attribute design: `reference_strategy_attribute_design.md`
+- Fact and metric design: `reference_strategy_fact_metric_design.md`
+- Relationship design: `reference_strategy_relationship_design.md`
+- Hierarchy design: `reference_strategy_hierarchy_design.md`
+- Time modeling: `reference_strategy_time_modeling.md`
+- Mosaic modeling execution guidance: `reference_strategy_mosaic_modeling.md`
+- Legacy semantic modeling and migration framing: `reference_strategy_legacy_semantic_modeling.md`
+- Model validation design: `reference_strategy_model_validation.md`
 - Environment and credentials: `reference_strategy_env.md`
 - Raw REST spec usage: `reference_strategy_openapi.md`
 - Broad task routing: `reference_strategy_automation_playbook.md`
