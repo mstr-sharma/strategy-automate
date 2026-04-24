@@ -3,7 +3,7 @@ name: Mosaic build quality rules (generalized from TPC-H side-by-side)
 description: Durable, build-agnostic rules for Mosaic model construction, learned by diffing a hand-built vs auto-built TPC-H model where the auto-built one silently lost 40+ relationships, 16 date-hierarchy attributes, and all form labels.
 type: feedback
 ---
-On 2026-04-20 two Mosaic models over the same Snowflake TPCH_SF1 schema diverged dramatically: the hand-built one had 52 attributes / 54 relationships / populated form names / a business description, the script-built one had 36 attributes / 10 relationships / every `forms[].name` empty / no description / one table (REGION) returning HTTP 500 on read-back even though the commit reported success. The rules below are what would have caught each defect *at build time*, independent of TPC-H.
+These rules were distilled from a side-by-side diff of a hand-built Mosaic model vs an auto-built Mosaic model over the same warehouse schema (TPC-H was the reference schema; the rules below are independent of it). The auto-built model silently lost 40+ relationships, 16 date-hierarchy attributes, and all form labels despite a 2xx commit. Every rule below is what would have caught a specific defect *at build time*.
 
 Every rule: `Rule. **Why:** ... **How to apply:** ...`
 

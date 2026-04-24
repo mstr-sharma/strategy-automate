@@ -5,6 +5,12 @@ model:
   grain:
   source_systems: []
   source_tables: []
+  # Kimball-first topology declaration. Strategy's SQL engine is built for
+  # star / snowflake schemas. Non-Kimball values stop-and-confirm with the user.
+  # See memory/reference_data_modeling_foundations.md.
+  topology:               # star | snowflake | galaxy | bridge-heavy | non-Kimball
+  table_roles: {}         # <table_name>: fact | dim | bridge | snowflake_parent_dim | degenerate_dim | noise
+  conformed_dimensions: []  # entities in ≥2 tables; one Mosaic attribute per entry with multi-table expressions
 
 attributes:
   - name:

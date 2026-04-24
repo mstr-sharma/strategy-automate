@@ -73,7 +73,9 @@ Final report: `N/N passed` plus a table of any failures with the smallest reprod
 
 ## Helper script
 
-`skill/scripts/strategy_validate_models.py` is the pluggable runner. Its first implemented adapter compares model/reference result files (CSV/JSON), which lets Mosaic, classic reports, warehouse SQL, and external systems feed the same diff engine after their query/export step. Live adapters should reduce to that same row-list shape:
+`skill/scripts/strategy_validate_models.py` is the pluggable runner.
+
+### File adapter (works for any comparator — dump rows first, then diff)
 
 ```bash
 python3 skill/scripts/strategy_validate_models.py \
@@ -84,38 +86,35 @@ python3 skill/scripts/strategy_validate_models.py \
   --out /tmp/validation.json
 ```
 
-Planned live adapters:
+### Live Mosaic-to-Mosaic adapter (Trino)
+
+Implemented. Runs the same SQL against two Mosaic models through the Strategy Trino endpoint (host derived from `MSTR_BASE`, schema from `MSTR_PROJECT_NAME`, basic auth with `MSTR_USER` / `MSTR_PASSWORD`). Model name becomes the table name (lowercased, double-quoted). Use `%s` or `{{MODEL}}` as the model placeholder in the SQL:
 
 ```bash
-# Validate a new Mosaic model against another Mosaic model (default via MCP Trino).
 python3 skill/scripts/strategy_validate_models.py \
-  --model "snowflake tpch-built_by_claude-20260421t2305z" \
-  --reference-mosaic "snowflake tpch_sf1" \
-  --query-suite tpch-standard \
+  --model "retail_model_v2" \
+  --reference-mosaic "retail_model_v1" \
+  --query 'SELECT "region (region name)", SUM("revenue") FROM %s GROUP BY 1' \
+  --key 'region (region name)' \
+  --measures revenue \
   --out /tmp/validation.json
-
-# Validate against a warehouse query (Snowflake direct) — raw SQL reference.
-python3 skill/scripts/strategy_validate_models.py \
-  --model "new-retail-model" \
-  --reference-sql-file /tmp/ref_queries.sql \
-  --reference-conn snowflake://... \
-  --query-suite retail-standard
-
-# Validate against a flat file baseline.
-python3 skill/scripts/strategy_validate_models.py \
-  --model "new-retail-model" \
-  --reference-file /path/to/gold.parquet \
-  --key customer_id,month \
-  --measures revenue,units
-
-# Validate against a classic/legacy project report.
-python3 skill/scripts/strategy_validate_models.py \
-  --model "mosaic-replacement" \
-  --reference-classic-report "Historical Product Revenue Analysis" \
-  --project-id {MSTR_PROJECT_ID}
 ```
 
-Until a live adapter exists for a source, the equivalent ad-hoc flow is: choose the comparator, run each paired query once against the model and once against the reference source, save both row sets, run the file adapter, and report the comparator used. The `strategy_validate.py` file in `skill/scripts/` already has tenant-auth scaffolding from the non-Mosaic validation suite — extend that rather than start from scratch.
+Trino column naming: attributes are `"<attribute name lowercase> (<form name lowercase>)"`; metrics are `"<metric name lowercase>"`. See `memory/reference_strategy_data_validation.md` for the conventions.
+
+### Still-pending adapters
+
+Warehouse-SQL, classic-report, and REST-fixture adapters are not yet wrapped. The honest error message from the script points at the file-adapter workaround:
+
+```bash
+# Not yet implemented — the script will tell you to dump both sides to files and use --model-file + --reference-file.
+--reference-sql-file / --reference-conn
+--reference-classic-report
+--reference-rest-file
+--query-suite
+```
+
+Until those ship, the equivalent ad-hoc flow is: choose the comparator, run each paired query once against the model and once against the reference source, save both row sets, run the file adapter, and report the comparator used.
 
 ## Integration with build workflows
 
@@ -130,9 +129,24 @@ Every build-mosaic-model invocation should append a validation decision:
 
 The consumer-grade naming checklist (`memory/feedback_consumer_grade_naming.md`) item 8 requires validation — treat this skill as part of the ship bar.
 
+## When to use this skill vs `build_mosaic.py validate-model`
+
+These two validators check different things and should both run:
+
+- **`build_mosaic.py validate-model`** is a **structural** check — every attribute has a non-empty form name, every metric has a format token, every fact table has ≥1 attribute/metric, no orphan attributes, no double-joined facts. Enforces `feedback_mosaic_build_quality.md`. Run IMMEDIATELY after build, before publish.
+- **This skill (`strategy-validation`)** is a **numeric-correctness** check — does the model's output match a trusted comparator's output within tolerance? Run AFTER structural validation passes, before declaring shippable.
+
+A structurally valid model can still be numerically wrong (broken conformance, wrong aggregation function, missed SCD transition). A numerically correct model can still be structurally ugly (blank form names → UI unusable). Both gates are required.
+
 ## Non-goals
 
-- This is not a performance benchmark. For latency/throughput comparisons of semantic-layer alternatives, use `<sibling harness dir>/benchmark_*.py`.
-- This is not a schema validator. For "does the shape look right" (attribute count, form categories, relationship graph) use `skill/scripts/strategy_mosaic_inventory.py`.
+- This is not a performance benchmark; latency/throughput is out of scope.
+- This is not a schema validator. For "does the shape look right" (attribute count, form categories, relationship graph) use `build_mosaic.py validate-model` or `skill/scripts/strategy_mosaic_inventory.py`.
 - This is not a SQL linter or a metric-lineage tool — it checks numeric correctness only.
 - Security-filter effectiveness is a separate validation (confirm the right rows are *hidden*, not just that aggregates match); route that through `memory/reference_strategy_validation_workflows.md`.
+
+## Related
+
+- `memory/reference_strategy_data_validation.md` — design-time 10-check suite + runnable 5-query suite, reference-source decision matrix, tolerance rules, failure triage mapped to Kimball root causes.
+- `memory/reference_mosaic_build_validation.md` — the structural checklist invoked by `build_mosaic.py validate-model`.
+- `memory/feedback_consumer_grade_naming.md` item 8 — validation is a ship-bar requirement.

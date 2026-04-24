@@ -21,6 +21,11 @@ from typing import Any
 
 import requests
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _client import (  # noqa: E402
+    BaseMSTR, response_json, items_from_payload, compact_json,
+)
+
 
 DEFAULT_BASE = os.environ.get("MSTR_BASE", "")
 DEFAULT_USER = os.environ.get("MSTR_USER", "")
@@ -55,28 +60,9 @@ TYPE_ALIASES = {
 }
 
 
-def response_json(resp: requests.Response) -> Any:
-    if not resp.text:
-        return {}
-    try:
-        return resp.json()
-    except Exception:
-        return {"_text": resp.text[:500]}
-
-
-def items_from_payload(payload: Any) -> list[dict[str, Any]]:
-    if isinstance(payload, list):
-        return [x for x in payload if isinstance(x, dict)]
-    if not isinstance(payload, dict):
-        return []
-    for key in ("result", "results", "objects", "items", "data"):
-        value = payload.get(key)
-        if isinstance(value, list):
-            return [x for x in value if isinstance(x, dict)]
-    return []
-
-
 def oid(obj: dict[str, Any]) -> str | None:
+    # Keep the legacy flat-field accessor here — the mine script treats search-result
+    # rows which only expose `id`, never `information.objectId`.
     return obj.get("id") or obj.get("objectId") or obj.get("object_id")
 
 
@@ -111,11 +97,6 @@ def model_name(value: Any) -> str:
     return ""
 
 
-def compact_json(value: Any, limit: int = 600) -> str:
-    text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-    return text if len(text) <= limit else text[: limit - 3] + "..."
-
-
 def parse_seed(raw: str, default_type: int | None = None) -> dict[str, Any]:
     raw = raw.strip()
     if not raw:
@@ -128,63 +109,8 @@ def parse_seed(raw: str, default_type: int | None = None) -> dict[str, Any]:
     return {"name": raw, "type": default_type}
 
 
-class MSTR:
-    def __init__(self, base: str, username: str, password: str, login_mode: int, project_name: str):
-        self.base = base.rstrip("/")
-        self.username = username
-        self.password = password
-        self.login_mode = login_mode
-        self.project_name = project_name
-        self.project_id: str | None = None
-        self.session = requests.Session()
-        self.session.headers.update({"Accept": "application/json", "Content-Type": "application/json"})
-
-    def login(self) -> None:
-        resp = self.session.post(
-            f"{self.base}/api/auth/login",
-            json={"username": self.username, "password": self.password, "loginMode": self.login_mode},
-            timeout=60,
-        )
-        if resp.status_code != 204:
-            raise RuntimeError(f"login failed: {resp.status_code} {resp.text[:300]}")
-        token = resp.headers.get("X-MSTR-AuthToken") or resp.headers.get("X-Mstr-Authtoken")
-        if not token:
-            raise RuntimeError("login succeeded but no X-MSTR-AuthToken header was returned")
-        self.session.headers["X-MSTR-AuthToken"] = token
-
-    def logout(self) -> None:
-        try:
-            self.session.delete(f"{self.base}/api/auth/login", timeout=20)
-        except Exception:
-            pass
-
-    def request(self, method: str, path: str, *, project: bool = True, ok: tuple[int, ...] | None = None, **kwargs) -> requests.Response:
-        headers = dict(kwargs.pop("headers", {}) or {})
-        if project and self.project_id:
-            headers.setdefault("X-MSTR-ProjectID", self.project_id)
-        resp = self.session.request(method, f"{self.base}{path}", headers=headers, timeout=90, **kwargs)
-        if ok is None:
-            ok = tuple(range(200, 300))
-        if resp.status_code not in ok:
-            raise RuntimeError(f"{method} {path} -> {resp.status_code}: {resp.text[:500]}")
-        return resp
-
-    def try_request(self, method: str, path: str, *, project: bool = True, **kwargs) -> requests.Response | None:
-        try:
-            return self.request(method, path, project=project, **kwargs)
-        except Exception:
-            return None
-
-    def resolve_project(self) -> dict[str, Any]:
-        payload = response_json(self.request("GET", "/api/projects", project=False))
-        if not isinstance(payload, list):
-            raise RuntimeError(f"unexpected projects payload: {compact_json(payload)}")
-        for project in payload:
-            if project.get("name") == self.project_name or project.get("id") == self.project_name:
-                self.project_id = project["id"]
-                self.session.headers["X-MSTR-ProjectID"] = self.project_id
-                return project
-        raise RuntimeError(f"project not found: {self.project_name}")
+class MSTR(BaseMSTR):
+    """Mining client — BaseMSTR + legacy-semantic-specific search helpers."""
 
     def quick_search(self, name: str, obj_type: int | None = None, limit: int = 50) -> list[dict[str, Any]]:
         params: dict[str, Any] = {"name": name, "pattern": 4, "limit": limit, "getAncestors": "true"}

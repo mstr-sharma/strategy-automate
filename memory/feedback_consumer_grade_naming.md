@@ -19,7 +19,7 @@ Every Mosaic model shipped to users must be **consumer-grade**: names readable b
 ## Form naming
 
 - **Every form must have a non-empty `name`.** Mosaic rejects PATCH with `8004cd0a "form property requires a non-empty name"`. During CREATE you can omit name, but during UPDATE every form in the patched `forms` list must have a name.
-- **Reference-clone pattern drops `form.name`.** The canonical `build_tpch_mosaic_model.py` originally wrote forms without `name`, surfacing blank labels. The fix is one line — `"name": form.get("name", "") or form.get("category", "")` — applied to any clone-and-remap script.
+- **Reference-clone pattern drops `form.name`.** A canonical reference-clone script once wrote forms without `name`, surfacing blank labels. The fix is one line — `"name": form.get("name", "") or form.get("category", "")` — applied to any clone-and-remap script; see `reference_mosaic_clone_pattern.md`.
 - **Form categories should read cleanly.** Use `Key`, `Name`, `Description`, `Comment`, etc. — not `<Entity> None` (the default when no DESC form was explicitly named) or `<Attribute> None (1)`.
 - **Post-build form-category PATCH is fragile on {MSTR_BASE host}.** `PATCH /api/model/dataModels/{mid}/attributes/{aid}` with `{forms:[...]}` returns `8004cc63 "Attribute does not contain a form with the ID"` even when GET returns that exact ID. Fix form names at **CREATE time**, not via post-hoc PATCH.
 - **ID-form aliases are acceptable tech artifacts.** `alias: "C_CUSTKEY"` on the ID form is fine; the user never sees it. The user-facing `name` and `category` are what matter.
@@ -71,4 +71,4 @@ Keep `CURRENCY_METRICS` / `PERCENT_METRICS` / `INTEGER_METRICS` sets in the buil
 5. Every metric has a number-format token list matching its category (currency/percent/integer/decimal).
 6. Relationships connect the right hierarchy — spot-check with a query that joins 2+ dim levels and a fact.
 7. No hardcoded example users or personal names anywhere in the build script or filter definitions.
-8. At least one validation query returns aggregates matching a known-good reference (see `skill/mosaic-validation/` for the standard Mosaic-to-Mosaic validation recipe).
+8. At least one validation query returns aggregates matching a known-good reference (see `strategy-validation/SKILL.md` and `memory/reference_strategy_data_validation.md` for the paired-query validation suite; comparator can be another Mosaic model, a classic report, a flat file, direct warehouse SQL, or a REST fixture).

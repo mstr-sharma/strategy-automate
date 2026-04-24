@@ -24,6 +24,9 @@ from typing import Any
 
 import requests
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _client import BaseMSTR, response_json, items_from_payload, oid, oname  # noqa: E402
+
 
 DEFAULT_BASE = os.environ.get("MSTR_BASE", "")
 DEFAULT_USER = os.environ.get("MSTR_USER", "")
@@ -48,41 +51,6 @@ SUBRESOURCES: list[tuple[str, str, dict[str, str]]] = [
 
 def now_id() -> str:
     return datetime.now().strftime("%Y%m%d-%H%M%S")
-
-
-def response_json(resp: requests.Response) -> Any:
-    if not resp.text:
-        return {}
-    try:
-        return resp.json()
-    except Exception:
-        return {"_text": resp.text[:500]}
-
-
-def items_from_payload(payload: Any) -> list[dict[str, Any]]:
-    if isinstance(payload, list):
-        return [x for x in payload if isinstance(x, dict)]
-    if not isinstance(payload, dict):
-        return []
-    for key in ("result", "results", "objects", "items", "data", "attributes", "metrics", "factMetrics", "tables", "securityFilters", "links", "externalDataModels", "folders"):
-        value = payload.get(key)
-        if isinstance(value, list):
-            return [x for x in value if isinstance(x, dict)]
-    return []
-
-
-def oid(obj: dict[str, Any]) -> str | None:
-    info = obj.get("information") if isinstance(obj, dict) else None
-    if isinstance(info, dict) and info.get("objectId"):
-        return str(info["objectId"])
-    return obj.get("id") or obj.get("objectId") or obj.get("object_id")
-
-
-def oname(obj: dict[str, Any]) -> str:
-    info = obj.get("information")
-    if isinstance(info, dict) and info.get("name"):
-        return str(info["name"])
-    return str(obj.get("name") or obj.get("display") or obj.get("title") or "")
 
 
 def walk(value: Any):
@@ -151,42 +119,12 @@ class Auth:
     project_id: str
 
 
-class Client:
-    def __init__(self, base: str, username: str, password: str, login_mode: int, project_name: str):
-        self.base = base.rstrip("/")
-        self.username = username
-        self.password = password
-        self.login_mode = login_mode
-        self.project_name = project_name
-        self.session = requests.Session()
-        self.session.headers.update({"Accept": "application/json", "Content-Type": "application/json"})
-        self.project_id = ""
+class Client(BaseMSTR):
+    """Mosaic inventory client — BaseMSTR + login-then-resolve convenience."""
 
-    def login(self) -> None:
-        resp = self.session.post(
-            f"{self.base}/api/auth/login",
-            json={"username": self.username, "password": self.password, "loginMode": self.login_mode},
-            timeout=60,
-        )
-        if resp.status_code != 204:
-            raise RuntimeError(f"login failed: {resp.status_code} {resp.text[:300]}")
-        token = resp.headers.get("X-MSTR-AuthToken") or resp.headers.get("X-Mstr-Authtoken")
-        if not token:
-            raise RuntimeError("login succeeded but no X-MSTR-AuthToken header returned")
-        self.session.headers["X-MSTR-AuthToken"] = token
-        projects = response_json(self.session.get(f"{self.base}/api/projects", timeout=60))
-        for project in projects:
-            if project.get("name", "").lower() == self.project_name.lower() or project.get("id") == self.project_name:
-                self.project_id = project["id"]
-                self.session.headers["X-MSTR-ProjectID"] = self.project_id
-                return
-        raise RuntimeError(f"project not found: {self.project_name}")
-
-    def logout(self) -> None:
-        try:
-            self.session.delete(f"{self.base}/api/auth/login", timeout=20)
-        except Exception:
-            pass
+    def login(self) -> None:  # type: ignore[override]
+        super().login()
+        self.resolve_project()
 
     def auth(self) -> Auth:
         return Auth(self.base, dict(self.session.headers), self.session.cookies.get_dict(), self.project_id)

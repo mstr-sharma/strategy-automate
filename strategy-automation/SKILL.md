@@ -16,13 +16,28 @@ Use this skill when the user asks to automate, inspect, build, modify, secure, p
 5. Use live `{Library}/api/openapi.yaml` through the helper when endpoint details matter. Add `?visibility=all` when the Swagger UI shows more detail than the default spec. A local `openapi.yaml` may be generated for temporary caching, but it is not part of the lean repo.
 6. Use credentials from environment (`MSTR_PASSWORD`) or user-provided secure runtime values. Never write secrets to memory, skills, config, or logs.
 
+## Skill precedence (one-way — no loops)
+
+This skill is the **NLQ classifier**. After classifying the surface, it hands off downward and does NOT take back control:
+
+```
+strategy-automation (this skill — classify)
+  ├─► strategy-data-modeling (plan, Kimball-first)    ← all modeling work routes here
+  │     └─► skill/SKILL.md (build-mosaic-model)
+  │           └─► strategy-validation (verify)
+  ├─► skill/SKILL.md directly                         ← only for post-build admin edits on known-good plans
+  ├─► strategy-validation directly                    ← for data-correctness checks on an existing model
+  └─► REST / mstrio-py / MCP                          ← for admin/runtime/non-modeling work
+```
+
+`strategy-data-modeling` does NOT route back here. Once a modeling task is classified, planning owns the handoff to build/validate.
+
 ## Tool Router
 
-- **Design, review, or explain a semantic model before writing anything:** use `strategy-data-modeling/SKILL.md` first to declare business process, grain, attributes, facts, metrics, relationships, hierarchies, time roles, and validation plan.
-- **Build or modify a Mosaic model from warehouse tables:** use the `build-mosaic-model` skill (`skill/SKILL.md`) and its helper script.
-- **Legacy-to-Mosaic migration:** first inspect the classic/project semantic layer with `strategy_semantic_inventory.py` or `strategy_semantic_mine.py`, turn the discovered attributes/forms/facts/metrics/relationships into a blueprint/dictionary/ERD, then build the Mosaic model from that evidence. Do not treat migration like a greenfield shared-column inference job unless no legacy semantic source exists.
-- **Brand-new Mosaic model:** route through `strategy-data-modeling/SKILL.md` first, then use warehouse discovery, ERD/data dictionary intake, `preflight_model_check.py`, and `build_mosaic.py build`; generate business names/descriptions and mark data validation pending until a comparator is chosen.
-- **Modeling review / audit / cleanup:** use `strategy-data-modeling/SKILL.md`, then apply the build, legacy, or validation skill that matches the chosen surface.
+- **Any semantic-model design / review / migration / cleanup:** route to `strategy-data-modeling/SKILL.md`. That skill is Kimball-first and produces the model plan before any REST write. Do not re-implement modeling decisions in this skill.
+- **Legacy-to-Mosaic migration:** `strategy-data-modeling/SKILL.md` owns the plan. It will use `strategy_semantic_inventory.py` or `strategy_semantic_mine.py` for discovery, then hand off to `skill/SKILL.md` for the build. Do not treat migration as a greenfield shared-column inference job unless no legacy semantic source exists.
+- **Brand-new Mosaic model:** same — `strategy-data-modeling/SKILL.md` plans, `skill/SKILL.md` builds, `strategy-validation/SKILL.md` verifies.
+- **Direct post-build edits on a known-good model (rename, ACL change, single-metric format fix):** `skill/SKILL.md` (build-mosaic-model) accepts those directly without re-planning.
 - **Classic-to-modern modeling judgment:** read `reference_strategy_design_transition.md` before translating legacy project schema concepts into Mosaic/USL/AI-ready models.
 - **Classic/project semantic-layer or admin workflows:** read `reference_strategy_legacy_semantic_admin.md`; use top-level `/api/model/...` changeset endpoints for legacy objects and `/api/users`, `/api/securityFilters`, `/api/usergroups`, `/api/objects` for admin/member operations.
 - **Deep classic semantic inspection:** read `reference_strategy_tutorial_semantic_field_study.md`; use `skill/scripts/strategy_semantic_inventory.py` to inventory attributes, facts, metrics, filters, prompts, system hierarchy, user hierarchies, fact extensions, metric dimensionality/conditionality, and prompt/filter internals before cloning or modernizing.
@@ -37,7 +52,7 @@ Use this skill when the user asks to automate, inspect, build, modify, secure, p
 - **Platform admin:** read `reference_strategy_admin_platform.md`; datasource admin, distribution/subscriptions, migrations/packages, monitors/caches, project load/unload, settings, search/browse, and object ownership have separate endpoint families.
 - **AI/Agent/Bot:** read `reference_strategy_ai_agents.md`; prefer Auto Agent `/api/questions` and `/api/v2/bots` paths; treat `/api/bots` as legacy/deprecated unless required.
 - **Validation/testing:** read `reference_strategy_validation_workflows.md`; do not run live write tests until the user signs off on the numbered workflows and cleanup behavior.
-- **Data-correctness validation (post-build, pre-ship):** route through `strategy-validation/SKILL.md` and `reference_strategy_data_validation.md`. Reference can be another Mosaic model, legacy/classic report, flat file, direct warehouse SQL, or a saved REST fixture — NOT Mosaic-to-Mosaic only. Required after every build per `feedback_consumer_grade_naming.md` item 8.
+- **Data-correctness validation (post-build, pre-ship):** route through `strategy-validation/SKILL.md` and `reference_strategy_data_validation.md` (covers both the design-time 10-check suite and the runnable 5-query paired-query suite). Reference can be another Mosaic model, legacy/classic report, flat file, direct warehouse SQL, or a saved REST fixture — NOT Mosaic-to-Mosaic only. Required after every build per `feedback_consumer_grade_naming.md` item 8.
 - **Drop-in ERDs, dictionaries, rosters, or legacy update briefs:** read `reference_strategy_intake_patterns.md`, normalize files to supported JSON/YAML/CSV/DBML/Mermaid/SQL formats, then resolve IDs before writing.
 - **Any REST endpoint not wrapped yet:** use:
   ```bash
@@ -64,7 +79,8 @@ Use this skill when the user asks to automate, inspect, build, modify, secure, p
 
 ## Memory Map
 
-- Modeling foundations and planning: `reference_data_modeling_foundations.md`
+- Error-code index (grep first on any 4xx/5xx): `reference_strategy_error_codes.md`
+- Kimball modeling foundations: `reference_data_modeling_foundations.md`
 - Strategy schema object map: `reference_strategy_schema_objects.md`
 - Attribute design: `reference_strategy_attribute_design.md`
 - Fact and metric design: `reference_strategy_fact_metric_design.md`
@@ -73,7 +89,7 @@ Use this skill when the user asks to automate, inspect, build, modify, secure, p
 - Time modeling: `reference_strategy_time_modeling.md`
 - Mosaic modeling execution guidance: `reference_strategy_mosaic_modeling.md`
 - Legacy semantic modeling and migration framing: `reference_strategy_legacy_semantic_modeling.md`
-- Model validation design: `reference_strategy_model_validation.md`
+- Model + data validation: `reference_strategy_data_validation.md`
 - Environment and credentials: `reference_strategy_env.md`
 - Raw REST spec usage: `reference_strategy_openapi.md`
 - Broad task routing: `reference_strategy_automation_playbook.md`

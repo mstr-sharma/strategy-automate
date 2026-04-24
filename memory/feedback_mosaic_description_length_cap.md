@@ -6,7 +6,7 @@ type: feedback
 
 ## Observation
 
-On 2026-04-23 against studio.strategy.com:
+Observed on a Strategy ONE Cloud tenant (captured run):
 - PATCH attempt with a ~700-char description → `400 8004cc10 "Object Description <full text> ..."` (the server echoes the rejected text; the error text itself is the truncation).
 - PATCH attempt with a ~480-char description → same error.
 - PATCH attempt with a ~205-char description → `200 ok`, commit 201.

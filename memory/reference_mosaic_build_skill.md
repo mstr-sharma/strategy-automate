@@ -25,7 +25,9 @@ Invoke directly; auto-reads tenant defaults and requires `MSTR_PASSWORD` (or `--
 
 **Build subcommand:**
 - `build --name N --source "INSTANCE:SCHEMA:T1,T2,..."` (repeatable, for multi-source) — the main one.
-  Flags: `--data-serve-mode {connect_live|in_memory|hybrid}`, `--dictionary`, `--erd`, `--attr-cols`, `--metric-cols`, `--skip-relationships`, `--security-filter 'NAME=ATTR_ID[:FORM_ID]=VALUE|USER,USER'`, `--grant 'trusteeId:rights[:user|user_group]'`, `--deny 'trusteeId:rights[:user|user_group]'`, `--translate 'objectId[:SubType]:locale[:field]=text'`, `--certify`, `--publish`.
+  Flags: `--data-serve-mode {connect_live|in_memory|hybrid}`, `--dictionary`, `--erd`, `--conformance-map`, `--fk-map`, `--attr-cols`, `--metric-cols`, `--skip-relationships`, `--security-filter 'NAME=ATTR_ID[:FORM_ID]=VALUE|USER,USER'`, `--grant 'trusteeId:rights[:user|user_group]'`, `--deny 'trusteeId:rights[:user|user_group]'`, `--translate 'objectId[:SubType]:locale[:field]=text'`, `--certify`, `--publish`.
+  - `--conformance-map FILE`: JSON/YAML `{logical_name: [TABLE.COLUMN, ...]}`; forces listed columns to collapse into one conformed attribute.
+  - `--fk-map FILE`: JSON/YAML `{child_table.child_col: parent_table.parent_col}`; normalizes differently-named FKs so they conform.
 - `build-from-config --config spec.yaml` — declarative JSON/YAML build; accepts `dictionary`, `data_dictionary`, `erd`, and `erds` paths (see `reference_mosaic_config_schema.md`).
 
 **Quality gate (run after every build, and before publish/certify):**
@@ -38,7 +40,8 @@ Invoke directly; auto-reads tenant defaults and requires `MSTR_PASSWORD` (or `--
 
 **Individual lifecycle ops (operate on existing models):**
 - `set-serve-mode --model-id M --mode {connect_live|in_memory|hybrid}`
-- `publish --model-id M`  (for in-memory cubes; tries `POST /api/cubes/{modelId}` first)
+- `publish --model-id M [--skip-classify] [--poll-seconds N]` — for in-memory Mosaic models. `--skip-classify` bypasses the `GET /api/objects/{id}?type=3` surface check when you already know the target is a Mosaic model (e.g. chained right after `build`); saves one project-scoped call against the session cap. See `feedback_build_mosaic_session_leak.md`.
+- `wire-relationships --model-id M --hints <file.json|yaml> [--dry-run]` — post-build relationship writer with step-3 (self-reference) + step-5 (relationship_table prerequisite) validation. Skips PUTs that would trip `8004ccdb` or `8004ccc7`; issues only the ones that will succeed, in one changeset. See `feedback_mosaic_relationship_wiring.md` for the hint-file schema.
 - `refresh --model-id M --refresh-type {update|add|replace|incremental}`
 - `delete-model --model-id M --yes`
 - `set-acl --model-id M --object-id O --sub-type fact_metric --grant 'trusteeId:rights' --deny 'trusteeId:rights'`

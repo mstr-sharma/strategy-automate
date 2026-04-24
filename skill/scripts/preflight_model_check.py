@@ -240,8 +240,8 @@ def check_contextual_fit(columns_by_table: dict[str,list[ColumnInfo]],
     bp_metrics = blueprint.get("metrics", {})
     for name, meta in bp_metrics.items():
         fn = meta.get("function", "sum")
-        expr = meta.get("expression")
-        if expr and "*" in (expr or "") or "-" in (expr or "") or "/" in (expr or ""):
+        expr = meta.get("expression") or ""
+        if expr and any(op in expr for op in ("*", "-", "/")):
             findings.append(Finding("WARN","METRIC_NEEDS_FORMULA",
                 name,f"Legacy metric '{name}' is a derived formula ({expr}).",
                 "Don't let auto-builder create Sum(column). Create as custom fact metric with tokenized expression."))
@@ -254,18 +254,18 @@ Expected blueprint JSON (produced by strategy_semantic_mine.py or hand-authored)
 
 {
   "attributes": {
-    "Category": {
-      "forms": [{"category":"ID","col":"CATEGORY_ID","table":"LU_CATEGORY"},
-                {"category":"DESC","col":"CATEGORY_DESC","table":"LU_CATEGORY","isMultilingual":true}]
+    "<Entity>": {
+      "forms": [{"category":"ID","col":"<ENTITY>_ID","table":"<DIM_TABLE>"},
+                {"category":"DESC","col":"<ENTITY>_DESC","table":"<DIM_TABLE>","isMultilingual":true}]
     },
     ...
   },
   "relationships": [
-    {"parent":"Category","child":"Subcategory","type":"one_to_many","table":"LU_SUBCATEG"},
+    {"parent":"<ParentEntity>","child":"<ChildEntity>","type":"one_to_many","table":"<JOIN_TABLE>"},
     ...
   ],
   "metrics": {
-    "Revenue": {"function":"sum","expression":"QTY_SOLD * (UNIT_PRICE - DISCOUNT)","tables":["ORDER_DETAIL"]},
+    "<Measure>": {"function":"sum","expression":"<QTY_COL> * (<UNIT_PRICE> - <DISCOUNT>)","tables":["<FACT_TABLE>"]},
     ...
   }
 }

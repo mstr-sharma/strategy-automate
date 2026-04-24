@@ -2,7 +2,11 @@
 name: Mosaic UI internal REST endpoints
 description: Endpoints the Studio / Admin & Modeling UI uses that are not in the public OpenAPI surface Claude normally uses. Captured via browser network trace; treat as tenant-internal contracts that can shift between versions.
 type: reference
+status: captured-unverified
+tags: [mosaic, ui-internal, capture-prone]
 ---
+
+> ⚠️ **Captured-unverified:** the paths in this file come from a browser network-trace of the Mosaic Studio UI. They are NOT in the public OpenAPI surface. They can (and do) change between iServer versions. Before using any endpoint here in an automation, re-capture the current UI network traffic and confirm the path/shape. If you see a capture older than ~90 days and the UI has shipped a minor version since, treat these as **hints, not contracts**. When a wrapped public endpoint exists for the same operation, prefer the public path.
 
 ## How these were discovered
 

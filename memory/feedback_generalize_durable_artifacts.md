@@ -16,11 +16,11 @@ type: feedback
 **How to apply.** Before creating or editing any durable artifact, run this checklist:
 
 1. **Scan for concrete identifiers.** Grep the draft for:
-   - **Tenant / environment**: hostnames (`<tenant>.customer.cloud.microstrategy.com`, `studio.strategy.com`, `env-*`, `tutorial.*`), project names (`Shared Studio`, `MicroStrategy Tutorial`, `Shared Reports/…`).
-   - **Warehouse**: DB instance names (`Neon …`, `WACSE …`, `Snowflake Prod`), schema names (`WACSE`, `public`, `SALES`), table names (`USAGE_HOURLY`, `TENANTS`, `incidents`).
+   - **Tenant / environment**: hostnames (`<tenant>.customer.cloud.microstrategy.com`, `<tenant>.strategy.com`, `env-*`, `tutorial.*`), project names (`<Project Name>`, `MicroStrategy Tutorial`, `<Folder Path>/…`).
+   - **Warehouse**: DB instance names (any customer-branded proper noun — `<Team> Postgres`, `<Division> Snowflake`, `Snowflake Prod`), schema names (`<SCHEMA>`, `public`, `SALES`), table names (`<FACT_TABLE>`, `<DIM_TABLE>`, `<event_fact>`).
    - **User / PII**: usernames, real full names (first-last or last-first), email addresses (corporate or personal), user IDs.
    - **Object IDs**: 32-hex strings for models, reports, folders, schedules, addresses, facts, metrics, filters — anything minted per-tenant.
-   - **Domain entities**: customer-specific tenant names (`<tenant-a>`, `Lumina`), product names, internal project codenames.
+   - **Domain entities**: customer-specific business-entity names (`<customer-brand>`, `<product-brand>`), product names, internal project codenames, industry-specific jargon (`<industry-term>` — e.g., a compute-unit, a financial-instrument, a clinical-trial-phase, a SKU-class) that signals the artifact was written for one vertical.
    - **Developer identity / git infrastructure**: personal / work GitHub handles (`<user>/strategy-*`), SSH host aliases (`github-<org>-<user>`), SSH key filenames (`id_ed25519_<org>_<user>.pub`), remote URLs for personal mirrors, `git config user.name` / `user.email` values, any reference to "my fork" or "my mirror". These belong in the operator's local `~/.ssh/config` and `git config --local`, not in the repo.
 2. **Replace with placeholders or parameters.** Options, in preference order:
    - Env var or CLI flag (`$MSTR_BASE`, `--instance`, `--dest-folder`)
@@ -28,9 +28,9 @@ type: feedback
    - Angle-bracket placeholder in prose (`<tenant-base>`, `<project-id>`, `<postgres-instance>`, `<your-schema>.<your-fact-table>`)
    - Named variable in a code snippet (`ATTR_ID = "..."` with a comment to fill in)
 3. **Keep examples generic.** If a concrete example makes the rule readable, use a public, well-known schema (TPC-H, TPC-DS, Northwind) or a clearly invented name (`SALES.ORDERS`, `<company>_<dataset>`). Never use your current customer, your personal project, or the last tenant you happened to run against.
-4. **Present tenant observations as tenant-family observations.** Wrong: *"publish fails on studio.strategy.com"*. Right: *"publish fails on Strategy ONE Cloud tenants in this iServer version family — first observed on studio.strategy.com on 2026-04-23"*. The rule should generalize; the dated observation lives in the tenant-observation section (or in `captures/`), not in the rule title.
+4. **Present tenant observations as tenant-family observations.** Wrong: *"publish fails on `<tenant>.strategy.com`"*. Right: *"publish fails on Strategy ONE Cloud tenants in this iServer version family — first observed on `<tenant>` during `<capture-date>`"*. The rule should generalize; the dated observation lives in the tenant-observation section (or in `captures/`), not in the rule title.
 5. **Route dated, tenant-specific state to `captures/`.** Raw REST payloads, session logs, reproduction transcripts, and field-study inventories are valuable but not durable rules. They go in `captures/<YYYY-MM-DD>-<topic>/`. Extract any durable lesson back into a memory with placeholders; link the memory to the capture file.
-6. **Parameterize scripts end-to-end.** Helper scripts and code snippets must read all tenant values from env vars or CLI flags. No `MSTR_BASE=https://studio.strategy.com/...` default in the source. Skill/SKILL.md snippets must show `$MSTR_BASE` rather than a concrete URL.
+6. **Parameterize scripts end-to-end.** Helper scripts and code snippets must read all tenant values from env vars or CLI flags. No `MSTR_BASE=https://<tenant>.strategy.com/...` default in the source. Skill/SKILL.md snippets must show `$MSTR_BASE` rather than a concrete URL.
 7. **Self-audit before commit.** Run `git diff | grep -Ei "(customer\\.cloud|\\.strategy\\.com|[A-F0-9]{32}|<your-full-name>|<your-email>)"` before staging. Hits = stop and rewrite.
 
 **Scope — this rule applies to:**

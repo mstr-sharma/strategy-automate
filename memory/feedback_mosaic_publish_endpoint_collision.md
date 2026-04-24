@@ -15,11 +15,11 @@ Do NOT issue both. If you fire `/api/cubes` first and then follow up with the 3-
 
 ## Observed
 
-2026-04-23, studio.strategy.com, model `Tenant GPU Analysis-*`:
-- `/api/cubes/{id}?cubeAction=publish` → 202 (started publish job 13507).
+Strategy ONE Cloud tenant, multi-DB in-memory model (captured run):
+- `/api/cubes/{id}?cubeAction=publish` → 202 (started publish job N).
 - `/api/dataModels/{id}/publish` fired 200ms later → 204 (second publish, queued/blocked).
-- `GET /api/dataModels/{id}/publishStatus` with the 3-step instance id → **21 consecutive 500 responses over ~5 minutes**, all `iServerCode: -2147072194` "Cube report … is being published by job 13507". The script never saw a green status.
-- User checked the Library UI: publish had completed **in seconds**. MCP Trino query confirmed the cube had 63,677 rows.
+- `GET /api/dataModels/{id}/publishStatus` with the 3-step instance id → **21 consecutive 500 responses over ~5 minutes**, all `iServerCode: -2147072194` "Cube report … is being published by job N". The script never saw a green status.
+- User checked the Library UI: publish had completed **in seconds**. MCP Trino query confirmed the cube had materialized its expected row count.
 
 ## Fix pattern
 
@@ -33,7 +33,7 @@ deadline = time.time() + 600
 while time.time() < deadline:
     time.sleep(15)
     probe = s.post(f"{MCP_BASE}/query",
-                   json={"schema":"Shared Studio",
+                   json={"schema": PROJECT_NAME.lower(),
                          "query": f'SELECT count(*) FROM "{model_name.lower()}"'})
     if probe.ok and "count" in probe.json(): break
 ```
