@@ -30,6 +30,7 @@ Coverage levels are defined in `reference_strategy_automation_coverage.md`: wrap
 
 ## Mosaic semantic models
 - "Build model from DB/schema/tables": the `build-mosaic-model` skill.
+- "Build a Mosaic model from these classic attributes/facts/metrics", "port these schema object IDs": helper `build-from-schema-objects` (`build_mosaic.py`); reads classic definitions, maps their physical tables, batch-creates attributes + factMetrics in CS1, wires relationships in CS2, and creates derived metrics bottom-up in CS3. ApplySimple/custom-SQL/raw-SQL tokens and conditional-metric filter refs are flagged in the review file. See `reference_mosaic_schema_object_import.md`.
 - "Set live/in-memory/hybrid": `set-serve-mode` or `PATCH /api/model/dataModels/{id}`.
 - "Publish/refresh/delete model": `publish`, `refresh`, `delete-model --yes` after enumerating the target ID.
 - "Add tables/attributes/metrics/relationships": Modeling Service under `/api/model/dataModels/{id}/...`; use changesets.
