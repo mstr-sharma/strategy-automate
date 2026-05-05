@@ -14,6 +14,7 @@ Subcommands:
   patch-model-object         Changeset-backed object update with before/after support.
   create-users               Dry-run or create users from CSV/JSON/YAML rosters.
   build                      Create & commit a model from one or more sources.
+  build-from-schema-objects  Build a Mosaic model from existing classic attribute/fact/metric IDs.
   discover                   Probe endpoint variants when the server version is unknown.
 
 All subcommands take optional --base / --project-id / --user / --password or read them
@@ -35,6 +36,9 @@ from __future__ import annotations
 import argparse, csv, json, os, shutil, subprocess, sys, time, uuid
 from typing import Any
 import requests
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import schema_object_translator as sot  # noqa: E402
 
 # ── Configuration: all tenant values come from env vars or CLI flags ──────────
 # No hardcoded tenant defaults. Required: MSTR_BASE, MSTR_USER, MSTR_PASSWORD.
@@ -690,6 +694,162 @@ def commit_cs(m: MSTR, cs: str):
     m.s.headers.pop("X-MSTR-MS-Changeset", None)
     if not r.ok:
         die(f"commit {cs}: {r.status_code} {r.text[:400]}")
+
+
+def discard_cs(m: MSTR, cs: str) -> None:
+    """Best-effort discard of a changeset. Used in error paths."""
+    if not cs:
+        return
+    try:
+        m.delete(f"/api/model/changesets/{cs}")
+    except Exception:
+        pass
+    m.s.headers.pop("X-MSTR-MS-Changeset", None)
+
+
+def _parse_id_list(raw: str | None) -> list[str]:
+    """Parse comma-separated IDs or @filepath of one ID per line."""
+    if not raw:
+        return []
+    if raw.startswith("@"):
+        with open(raw[1:], encoding="utf-8") as f:
+            return [line.strip() for line in f if line.strip()]
+    return [x.strip() for x in raw.split(",") if x.strip()]
+
+
+def batch_call(
+    m: MSTR,
+    model_id: str,
+    changeset_id: str,
+    ops: list[dict],
+    *,
+    atomic: bool = True,
+) -> tuple[list[dict], list[dict]]:
+    """POST /api/model/batch with a list of sub-operations.
+
+    atomic=True  → allowPartialSuccess=false (rollback on any failure).
+    atomic=False → allowPartialSuccess=true  (207 Multi-Status, per-op results).
+
+    Returns (passed, failed). Falls back to per-op individual POSTs if the
+    tenant returns 404 on /api/model/batch.
+    """
+    allow_partial = "false" if atomic else "true"
+    r = m.post(
+        f"/api/model/batch?allowPartialSuccess={allow_partial}&showChanges=true",
+        headers={"X-MSTR-MS-Changeset": changeset_id},
+        json={"operations": ops},
+    )
+    if r.status_code == 404:
+        if m.verbose:
+            print("[batch] endpoint 404 — falling back to per-op individual calls",
+                  file=sys.stderr)
+        return _batch_fallback(m, model_id, changeset_id, ops)
+    if r.status_code not in (200, 207, 400):
+        raise RuntimeError(f"batch_call HTTP {r.status_code}: {r.text[:400]}")
+    body = r.json() if r.text else {}
+    results = body.get("results") or body.get("operations") or body.get("ops") or []
+    passed = [res for res in results if 200 <= res.get("status", 500) < 300]
+    failed = [res for res in results if res not in passed]
+    return passed, failed
+
+
+def _batch_fallback(
+    m: MSTR,
+    model_id: str,
+    changeset_id: str,
+    ops: list[dict],
+) -> tuple[list[dict], list[dict]]:
+    """Individual POST fallback for tenants without /api/model/batch."""
+    PATH_MAP = {
+        "/attributes":  f"/api/model/dataModels/{model_id}/attributes",
+        "/factMetrics": f"/api/model/dataModels/{model_id}/factMetrics",
+        "/metrics":     f"/api/model/dataModels/{model_id}/metrics",
+        "/facts":       f"/api/model/dataModels/{model_id}/facts",
+    }
+    passed, failed = [], []
+    for op in ops:
+        path_suffix = op.get("path", "")
+        endpoint = PATH_MAP.get(path_suffix)
+        if not endpoint:
+            failed.append({"op": op, "status": 400,
+                           "error": f"unknown path {path_suffix}"})
+            continue
+        r = m.post(endpoint, json=op.get("value", {}),
+                   headers={"X-MSTR-MS-Changeset": changeset_id})
+        result = {"op": op, "status": r.status_code}
+        if r.ok:
+            result["response"] = r.json() if r.text else {}
+            passed.append(result)
+        else:
+            result["error"] = r.text[:400]
+            failed.append(result)
+    return passed, failed
+
+
+def _make_pipeline_table_body(
+    m: MSTR,
+    ds_id: str,
+    schema: str,
+    tname: str,
+) -> dict | None:
+    """Fetch warehouse table metadata and return the physicalTable pipeline body
+    used by POST /api/model/dataModels/{id}/tables. Returns None if the table
+    cannot be fetched. Datatypes are normalized via schema_object_translator
+    so the resulting model is publishable in-memory.
+    """
+    try:
+        md = fetch_table_metadata(m, ds_id, schema, tname)
+    except SystemExit:
+        return None
+    cols_raw = md.get("columns", [])
+    outer_cols, pipe_cols = [], []
+    for c in cols_raw:
+        cname = c.get("name") or c.get("columnName")
+        dt = c.get("dataType")
+        if isinstance(dt, str):
+            dt = {"type": dt}
+        if not isinstance(dt, dict):
+            dt = {"type": "utf8_char"}
+        dt = sot.normalize_datatype(dt)
+        outer_cols.append({
+            "information": {"name": cname},
+            "dataType": dt,
+            "columnName": cname,
+        })
+        pipe_cols.append({
+            "id": new_uuid(),
+            "name": cname,
+            "dataType": dt,
+            "sourceDataType": dt,
+        })
+    pipeline_obj = {
+        "id": new_uuid(),
+        "rootTable": {
+            "id": new_uuid(),
+            "type": "root",
+            "children": [{
+                "id": new_uuid(),
+                "name": tname,
+                "type": "source",
+                "columns": pipe_cols,
+                "importSource": {
+                    "type": "single_table",
+                    "dataSourceId": ds_id,
+                    "namespace": schema,
+                    "tableName": tname,
+                    "sql": "",
+                },
+            }],
+        },
+    }
+    return {
+        "information": {"name": tname},
+        "physicalTable": {
+            "columns": outer_cols,
+            "type": "pipeline",
+            "pipeline": json.dumps(pipeline_obj),
+        },
+    }
 
 
 def _apply_conformance_map(dictionary: dict, path: str) -> None:
@@ -2058,6 +2218,355 @@ def _read_wire_hints(path: str) -> list:
     if isinstance(data, list):
         return data
     return []
+
+
+def cmd_build_from_schema_objects(m: MSTR, args):
+    """Build a Mosaic data model from existing classic schema object IDs.
+
+    Pipeline:
+      1. Read classic attribute/fact/metric definitions.
+      2. Resolve physical tables referenced by those objects.
+      3. Discover warehouse datasource/schema/name for each.
+      4. Create the Mosaic model shell.
+      5. Add physical tables.
+      6. Translate + batch-create attributes and fact metrics (CS1).
+      7. Wire relationships from classic attribute relationship arrays (CS2).
+      8. Translate + create derived metrics bottom-up (CS3).
+      9. Optionally publish in-memory.
+     10. Write a JSON review file with warnings + created object IDs.
+    """
+    m.login(identity=True)
+
+    attr_ids   = _parse_id_list(getattr(args, "attribute_ids", "") or "")
+    fact_ids   = _parse_id_list(getattr(args, "fact_ids", "") or "")
+    metric_ids = _parse_id_list(getattr(args, "metric_ids", "") or "")
+
+    if not (attr_ids or fact_ids or metric_ids):
+        die("provide at least one of --attribute-ids, --fact-ids, --metric-ids")
+
+    print(f"→ Input: {len(attr_ids)} attributes, {len(fact_ids)} facts, "
+          f"{len(metric_ids)} metrics", file=sys.stderr)
+
+    all_warnings: list[str] = []
+    rate_sleep = 0.05 if (len(attr_ids) + len(fact_ids) + len(metric_ids)) > 200 else 0
+
+    # ── Read classic object definitions ──────────────────────────────────────
+    print("→ Reading classic attribute definitions…", file=sys.stderr)
+    attr_defs: dict[str, dict] = {}
+    for aid in attr_ids:
+        r = m.get(f"/api/model/attributes/{aid}", params={"showExpressionAs": "tree"})
+        if not r.ok:
+            all_warnings.append(f"attribute {aid}: read failed {r.status_code} — skipped")
+            continue
+        attr_defs[aid] = r.json()
+        if rate_sleep:
+            time.sleep(rate_sleep)
+        if m.verbose:
+            n = (attr_defs[aid].get("information") or {}).get("name", "?")
+            print(f"  attr {aid}: {n}", file=sys.stderr)
+
+    print("→ Reading classic fact definitions…", file=sys.stderr)
+    fact_defs: dict[str, dict] = {}
+    for fid in fact_ids:
+        r = m.get(f"/api/model/facts/{fid}", params={"showExpressionAs": "tree"})
+        if not r.ok:
+            all_warnings.append(f"fact {fid}: read failed {r.status_code} — skipped")
+            continue
+        fact_defs[fid] = r.json()
+        if rate_sleep:
+            time.sleep(rate_sleep)
+
+    print("→ Reading classic metric definitions…", file=sys.stderr)
+    metric_defs: dict[str, dict] = {}
+    for mid in metric_ids:
+        r = m.get(f"/api/model/metrics/{mid}", params={"showExpressionAs": "tree"})
+        if not r.ok:
+            all_warnings.append(f"metric {mid}: read failed {r.status_code} — skipped")
+            continue
+        metric_defs[mid] = r.json()
+        if rate_sleep:
+            time.sleep(rate_sleep)
+
+    # ── Collect referenced classic table IDs ─────────────────────────────────
+    classic_table_ids: set[str] = set()
+    for adef in attr_defs.values():
+        classic_table_ids |= sot.extract_table_ids_from_attribute(adef)
+    for fdef in fact_defs.values():
+        classic_table_ids |= sot.extract_table_ids_from_fact(fdef)
+
+    if not classic_table_ids:
+        die("no physical table references found in any object definition. "
+            "Verify the IDs are correct and showExpressionAs=tree returns expressions.")
+
+    print(f"→ Resolving {len(classic_table_ids)} classic table(s)…", file=sys.stderr)
+    classic_table_meta: dict[str, dict] = {}
+    for tid in classic_table_ids:
+        r = m.get(f"/api/model/tables/{tid}")
+        if not r.ok:
+            all_warnings.append(
+                f"table {tid}: read failed {r.status_code} — referencing "
+                "objects may have unmapped expressions"
+            )
+            continue
+        classic_table_meta[tid] = r.json()
+
+    # Group tables by (datasource_id, schema) → list of (classic_id, table_name)
+    source_groups: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    for tid, tmeta in classic_table_meta.items():
+        pt = tmeta.get("physicalTable") or {}
+        ds_obj = pt.get("databaseInstance") or {}
+        ds_id  = ds_obj.get("objectId") or ds_obj.get("id") or args.instance_id
+        schema = pt.get("namespace") or args.schema or ""
+        tname  = pt.get("tableName") or (tmeta.get("information") or {}).get("name") or ""
+        if not (ds_id and tname):
+            all_warnings.append(
+                f"table {tid}: cannot determine datasource or table name — skipped"
+            )
+            continue
+        source_groups.setdefault((ds_id, schema), []).append((tid, tname))
+
+    if not source_groups:
+        die("Could not resolve any source tables. Check that classic table object IDs "
+            "are readable and return physicalTable.databaseInstance.")
+
+    # ── Create model shell ───────────────────────────────────────────────────
+    print(f"→ Creating model '{args.name}'…", file=sys.stderr)
+    serve_mode = "in_memory" if args.publish else args.data_serve_mode
+    r = m.post("/api/model/dataModels", json={
+        "information": {"name": args.name, "destinationFolderId": args.dest_folder},
+        "dataServeMode": serve_mode,
+    })
+    if not r.ok:
+        die(f"create model: {r.status_code} {r.text[:400]}")
+    model_id = r.json()["information"]["objectId"]
+    print(f"  model_id={model_id}", file=sys.stderr)
+
+    # ── Add physical tables (CS1 begins) ─────────────────────────────────────
+    logical_table_map: dict[str, str] = {}
+    cs1 = open_cs(m)
+    try:
+        for (ds_id, schema), entries in source_groups.items():
+            for classic_tid, tname in entries:
+                tbl_body = _make_pipeline_table_body(m, ds_id, schema, tname)
+                if tbl_body is None:
+                    all_warnings.append(
+                        f"table {tname}: could not fetch warehouse metadata — skipped"
+                    )
+                    continue
+                rr = m.post(f"/api/model/dataModels/{model_id}/tables", json=tbl_body)
+                if not rr.ok:
+                    all_warnings.append(
+                        f"add table {tname}: {rr.status_code} {rr.text[:200]}"
+                    )
+                    continue
+                mosaic_tid = rr.json()["information"]["objectId"]
+                logical_table_map[classic_tid] = mosaic_tid
+                # Also map any other classic tables that resolved to the same warehouse name
+                for other_cid, other_meta in classic_table_meta.items():
+                    if other_cid == classic_tid:
+                        continue
+                    other_pt = other_meta.get("physicalTable") or {}
+                    if other_pt.get("tableName") == tname:
+                        logical_table_map.setdefault(other_cid, mosaic_tid)
+                print(f"  + table {tname} → {mosaic_tid}", file=sys.stderr)
+
+        # ── Translate + batch-create attributes ──────────────────────────────
+        print(f"→ Translating {len(attr_defs)} attribute(s)…", file=sys.stderr)
+        attr_ops: list[dict] = []
+        attr_id_order: list[str] = []
+        attr_id_to_mosaic: dict[str, str] = {}
+
+        for classic_id, adef in attr_defs.items():
+            payload, warns = sot.translate_attribute(adef, logical_table_map)
+            all_warnings.extend([f"[attr {classic_id}] {w}" for w in warns])
+            attr_ops.append({"op": "create", "path": "/attributes", "value": payload})
+            attr_id_order.append(classic_id)
+
+        if attr_ops:
+            passed, failed = batch_call(m, model_id, cs1, attr_ops, atomic=False)
+            for f in failed:
+                all_warnings.append(f"[batch attr] failed op: {json.dumps(f)[:200]}")
+            for i, result in enumerate(passed):
+                if i >= len(attr_id_order):
+                    break
+                response = result.get("response") or result
+                obj_id = (response.get("information") or {}).get("objectId")
+                if obj_id:
+                    attr_id_to_mosaic[attr_id_order[i]] = obj_id
+
+        # ── Translate + batch-create fact metrics ────────────────────────────
+        print(f"→ Translating {len(fact_defs)} fact(s)…", file=sys.stderr)
+        fact_ops: list[dict] = []
+        fact_id_order: list[str] = []
+        fact_id_to_mosaic: dict[str, str] = {}
+
+        for classic_id, fdef in fact_defs.items():
+            payload, warns = sot.translate_fact_to_factmetric(fdef, logical_table_map)
+            all_warnings.extend([f"[fact {classic_id}] {w}" for w in warns])
+            fact_ops.append({"op": "create", "path": "/factMetrics", "value": payload})
+            fact_id_order.append(classic_id)
+
+        if fact_ops:
+            passed, failed = batch_call(m, model_id, cs1, fact_ops, atomic=False)
+            for f in failed:
+                all_warnings.append(f"[batch fact] failed op: {json.dumps(f)[:200]}")
+            for i, result in enumerate(passed):
+                if i >= len(fact_id_order):
+                    break
+                response = result.get("response") or result
+                obj_id = (response.get("information") or {}).get("objectId")
+                if obj_id:
+                    fact_id_to_mosaic[fact_id_order[i]] = obj_id
+
+        commit_cs(m, cs1)
+        cs1 = None
+        print(f"  CS1 committed ({len(attr_id_to_mosaic)} attrs, "
+              f"{len(fact_id_to_mosaic)} factMetrics)", file=sys.stderr)
+    except Exception:
+        if cs1:
+            discard_cs(m, cs1)
+        raise
+
+    # ── Wire relationships (CS2) ─────────────────────────────────────────────
+    rel_count = 0
+    cs2 = open_cs(m)
+    try:
+        for classic_child_id, adef in attr_defs.items():
+            mosaic_child_id = attr_id_to_mosaic.get(classic_child_id)
+            if not mosaic_child_id:
+                continue
+            for rel in (adef.get("relationships") or []):
+                parent_classic_id = (rel.get("parent") or {}).get("objectId")
+                if not parent_classic_id:
+                    continue
+                mosaic_parent_id = attr_id_to_mosaic.get(parent_classic_id)
+                if not mosaic_parent_id:
+                    all_warnings.append(
+                        f"[rel] child {classic_child_id}: parent "
+                        f"{parent_classic_id} not in translated set — relationship skipped"
+                    )
+                    continue
+                rel_table_classic = (rel.get("relationshipTable") or {}).get("objectId")
+                rel_table_mosaic = (
+                    logical_table_map.get(rel_table_classic) if rel_table_classic else None
+                )
+                rel_body = {
+                    "relationships": [{
+                        "parent": {"objectId": mosaic_parent_id, "subType": "attribute"},
+                        "child":  {"objectId": mosaic_child_id,  "subType": "attribute"},
+                        "relationshipType": rel.get("relationshipType", "one_to_many"),
+                    }]
+                }
+                if rel_table_mosaic:
+                    rel_body["relationships"][0]["relationshipTable"] = {
+                        "objectId": rel_table_mosaic, "subType": "logical_table",
+                    }
+                rr = m.put(
+                    f"/api/model/dataModels/{model_id}/attributes/"
+                    f"{mosaic_child_id}/relationships?changesetId={cs2}",
+                    json=rel_body,
+                )
+                if not rr.ok:
+                    all_warnings.append(
+                        f"[rel] {classic_child_id}→{parent_classic_id}: "
+                        f"{rr.status_code} {rr.text[:200]}"
+                    )
+                else:
+                    rel_count += 1
+        commit_cs(m, cs2)
+        cs2 = None
+        print(f"  CS2 committed ({rel_count} relationships)", file=sys.stderr)
+    except Exception:
+        if cs2:
+            discard_cs(m, cs2)
+        raise
+
+    # ── Translate + create derived metrics (CS3, bottom-up) ──────────────────
+    metric_id_to_mosaic: dict[str, str] = {}
+    if metric_defs:
+        print(f"→ Translating {len(metric_defs)} metric(s) in dependency order…",
+              file=sys.stderr)
+        try:
+            ordered_ids = sot.build_metric_translation_order(metric_defs)
+        except ValueError as e:
+            all_warnings.append(
+                f"[metrics] dependency cycle detected: {e} — input order used"
+            )
+            ordered_ids = list(metric_defs.keys())
+
+        cs3 = open_cs(m)
+        try:
+            for classic_id in ordered_ids:
+                mdef = metric_defs.get(classic_id)
+                if not mdef:
+                    continue
+                payload, warns = sot.translate_metric(
+                    mdef, fact_id_to_mosaic, metric_id_to_mosaic,
+                    attr_id_to_mosaic_id=attr_id_to_mosaic,
+                )
+                all_warnings.extend([f"[metric {classic_id}] {w}" for w in warns])
+                mtype = sot.classify_metric(mdef)
+                path_suffix = "/factMetrics" if mtype == "fact_metric" else "/metrics"
+                rr = m.post(
+                    f"/api/model/dataModels/{model_id}{path_suffix}", json=payload
+                )
+                if not rr.ok:
+                    all_warnings.append(
+                        f"[metric {classic_id}] create failed: "
+                        f"{rr.status_code} {rr.text[:200]}"
+                    )
+                    continue
+                new_id = (rr.json().get("information") or {}).get("objectId")
+                if new_id:
+                    metric_id_to_mosaic[classic_id] = new_id
+                    print(f"  metric {classic_id} → {new_id}", file=sys.stderr)
+            commit_cs(m, cs3)
+            cs3 = None
+            print(f"  CS3 committed ({len(metric_id_to_mosaic)} metrics)",
+                  file=sys.stderr)
+        except Exception:
+            if cs3:
+                discard_cs(m, cs3)
+            raise
+
+    # ── Optional publish ─────────────────────────────────────────────────────
+    if args.publish:
+        print(f"→ Publishing model {model_id} in-memory…", file=sys.stderr)
+        rr = m.post(f"/api/cubes/{model_id}?cubeAction=publish")
+        if not rr.ok:
+            all_warnings.append(
+                f"publish: {rr.status_code} {rr.text[:200]} — model exists "
+                "but is not materialized"
+            )
+        else:
+            print("  publish accepted (202). Poll publishStatus to confirm.",
+                  file=sys.stderr)
+
+    # ── Review file ──────────────────────────────────────────────────────────
+    review = {
+        "model_id": model_id,
+        "model_url": f"{m.base}/app/library#/model/{model_id}",
+        "translated": {
+            "attributes": len(attr_id_to_mosaic),
+            "factMetrics": len(fact_id_to_mosaic),
+            "metrics": len(metric_id_to_mosaic),
+            "relationships": rel_count,
+        },
+        "warnings": all_warnings,
+    }
+    if args.review_file:
+        with open(args.review_file, "w", encoding="utf-8") as f:
+            json.dump(review, f, indent=2)
+        print(f"→ Review file: {args.review_file}", file=sys.stderr)
+
+    if all_warnings:
+        print(f"\n⚠  {len(all_warnings)} warning(s) — see review file or stderr above.",
+              file=sys.stderr)
+
+    print(f"\n✓ Model: {m.base}/app/library#/model/{model_id}", file=sys.stderr)
+    print(json.dumps(review, indent=2))
+
+
 def cmd_delete_model(m: MSTR, args):
     if not args.yes:
         die("delete-model requires --yes after verifying the Mosaic data model id")
@@ -2949,6 +3458,37 @@ def build_parser():
     sp.add_argument("--config", required=True, help="path to YAML/JSON spec file")
     sp.add_argument("--dest-folder", default=DEFAULT_DEST_FOLDER)
 
+    sp = sub.add_parser(
+        "build-from-schema-objects",
+        help="Build a Mosaic data model from existing classic schema object IDs."
+    )
+    sp.add_argument("--name", required=True,
+                    help="Name for the new Mosaic data model.")
+    sp.add_argument("--attribute-ids", default="",
+                    help="Comma-separated classic attribute object IDs, "
+                         "or @filepath for one-per-line.")
+    sp.add_argument("--fact-ids", default="",
+                    help="Comma-separated classic fact object IDs, or @filepath.")
+    sp.add_argument("--metric-ids", default="",
+                    help="Comma-separated classic metric object IDs, or @filepath.")
+    sp.add_argument("--instance-id", default="",
+                    help="Fallback datasource ID if classic table metadata "
+                         "lacks databaseInstance.")
+    sp.add_argument("--schema", default="",
+                    help="Fallback warehouse schema if classic table metadata "
+                         "lacks namespace.")
+    sp.add_argument("--data-serve-mode",
+                    choices=["connect_live", "in_memory", "hybrid"],
+                    default="connect_live")
+    sp.add_argument("--publish", action="store_true",
+                    help="Publish to in-memory after build (forces "
+                         "data-serve-mode=in_memory).")
+    sp.add_argument("--dest-folder", default=DEFAULT_DEST_FOLDER,
+                    help="Destination folder ID for the new model.")
+    sp.add_argument("--review-file", default="",
+                    help="Write a JSON review file with warnings and "
+                         "created object IDs.")
+
     sp = sub.add_parser("set-serve-mode")
     sp.add_argument("--model-id", required=True)
     sp.add_argument("--mode", required=True, choices=["connect_live","in_memory","hybrid"])
@@ -3049,6 +3589,7 @@ def main():
             "patch-model-object":cmd_patch_model_object,
             "build":           cmd_build,
             "build-from-config":cmd_build_from_config,
+            "build-from-schema-objects": cmd_build_from_schema_objects,
             "validate-model":  cmd_validate_model,
             "set-serve-mode":  cmd_set_serve_mode,
             "publish":         cmd_publish,
