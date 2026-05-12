@@ -15,6 +15,8 @@ Subcommands:
   create-users               Dry-run or create users from CSV/JSON/YAML rosters.
   build                      Create & commit a model from one or more sources.
   build-from-schema-objects  Build a Mosaic model from existing classic attribute/fact/metric IDs.
+  validate-model             Run the full post-build quality checklist (failures exit non-zero).
+  validate-topology          Lightweight topology check — isolated attrs, fact-table coverage, misclassified numerics.
   discover                   Probe endpoint variants when the server version is unknown.
 
 All subcommands take optional --base / --project-id / --user / --password or read them
@@ -39,6 +41,7 @@ import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import schema_object_translator as sot  # noqa: E402
+import mosaic_safety as ms  # noqa: E402
 
 # ── Configuration: all tenant values come from env vars or CLI flags ──────────
 # No hardcoded tenant defaults. Required: MSTR_BASE, MSTR_USER, MSTR_PASSWORD.
@@ -679,21 +682,70 @@ def classify_columns(cols, attr_override: set[str], metric_override: set[str]):
     return attrs, metrics
 
 
-def open_cs(m: MSTR) -> str:
-    r = m.post("/api/model/changesets", json={})
+def open_cs(m: MSTR, *, schema_edit: bool = False) -> str:
+    """Open a Modeling Service changeset.
+
+    schema_edit=False — relationships, security filters, ACLs, post-build edits.
+    schema_edit=True  — adding/modifying form expressions on attributes, or
+                        otherwise touching the schema graph itself. Using the
+                        wrong type silently produces 8004ccde or no-ops the
+                        write. The chosen type is recorded on the session so
+                        assert_changeset_type() can fail fast at call sites.
+    """
+    body: dict = {}
+    if schema_edit:
+        body["schemaEdit"] = True
+    r = m.post("/api/model/changesets", json=body)
     r.raise_for_status()
     d = r.json()
-    cs = d.get("id") or d.get("changesetId","")
-    if not cs: die(f"open_cs: {d}")
+    cs = d.get("id") or d.get("changesetId", "")
+    if not cs:
+        die(f"open_cs: {d}")
     m.s.headers["X-MSTR-MS-Changeset"] = cs
+    # Stash the type on the session so helpers can assert; not a real header
+    # for Strategy, just internal state.
+    if not hasattr(m, "_cs_types"):
+        m._cs_types = {}
+    m._cs_types[cs] = "schema" if schema_edit else "data"
     return cs
 
 
 def commit_cs(m: MSTR, cs: str):
     r = m.post(f"/api/model/changesets/{cs}/commit")
     m.s.headers.pop("X-MSTR-MS-Changeset", None)
+    if getattr(m, "_cs_types", None):
+        m._cs_types.pop(cs, None)
     if not r.ok:
-        die(f"commit {cs}: {r.status_code} {r.text[:400]}")
+        die(f"commit {cs}: {format_mstr_error(r)}")
+
+
+def assert_changeset_type(m: MSTR, cs: str, *, schema_edit: bool) -> None:
+    """Fail fast if the active changeset is the wrong type for the imminent
+    write. Catches the common mistake of PATCHing an attribute form inside a
+    relationship-wiring (data) changeset, or PUTting a relationship inside a
+    schema-edit changeset. See memory/feedback_mosaic_gotchas.md.
+    """
+    actual = (getattr(m, "_cs_types", {}) or {}).get(cs)
+    if actual is None:
+        return  # changeset not opened via open_cs() — caller knows what they're doing
+    want = "schema" if schema_edit else "data"
+    if actual != want:
+        die(
+            f"changeset {cs} was opened with schemaEdit={actual=='schema'}; "
+            f"this write requires schemaEdit={schema_edit}. "
+            "Open a new changeset of the correct type — using the wrong one "
+            "silently produces 8004ccde or no-op writes."
+        )
+
+
+def format_mstr_error(response, prefix: str = "") -> str:
+    """Thin wrapper around mosaic_safety.format_mstr_error so the rest of this
+    module can call a one-arg helper without the import-prefix dance. Also
+    detects the 8004cb0a session-cap and appends the wait advisory."""
+    line = ms.format_mstr_error(response, prefix=prefix)
+    if ms.is_session_cap_error(response):
+        line += "  ← " + ms.SESSION_CAP_MESSAGE
+    return line
 
 
 def discard_cs(m: MSTR, cs: str) -> None:
@@ -705,6 +757,249 @@ def discard_cs(m: MSTR, cs: str) -> None:
     except Exception:
         pass
     m.s.headers.pop("X-MSTR-MS-Changeset", None)
+    if getattr(m, "_cs_types", None):
+        m._cs_types.pop(cs, None)
+
+
+# ── Relationship safety: merge-aware PUT + join-table preflight ──────────────
+#
+# WARNING: PUT /api/model/dataModels/{model_id}/attributes/{attr_id}/relationships
+# REPLACES every relationship attached to that attribute — in BOTH directions
+# (incoming AND outgoing). It is NOT append-only. Issuing it with only your new
+# rels silently deletes everything that was wired previously. Always go through
+# put_relationships_merged() unless you explicitly intend the destructive wipe.
+
+def get_attribute_relationships(
+    m: MSTR, model_id: str, attr_id: str,
+) -> list[dict]:
+    """Read the current set of relationships on a Mosaic attribute. Returns []
+    when the attribute exists but has none, and on read failures (caller can
+    decide whether absence is fatal)."""
+    r = m.get(f"/api/model/dataModels/{model_id}/attributes/{attr_id}")
+    if not r.ok:
+        if m.verbose:
+            print(f"[rel-merge] read {attr_id}: {format_mstr_error(r)}", file=sys.stderr)
+        return []
+    body = r.json() if r.text else {}
+    rels = body.get("relationships") or []
+    return rels if isinstance(rels, list) else []
+
+
+def _rel_key(rel: dict) -> tuple[str, str, str]:
+    """Stable identity for a relationship row: (parent_id, child_id, rel_table_id).
+    Used to dedup when merging existing + new relationships."""
+    parent = ((rel.get("parent") or {}).get("objectId")
+              or (rel.get("parent") or {}).get("id") or "")
+    child = ((rel.get("child") or {}).get("objectId")
+             or (rel.get("child") or {}).get("id") or "")
+    rtable = ((rel.get("relationshipTable") or {}).get("objectId")
+              or (rel.get("relationshipTable") or {}).get("id") or "")
+    return (str(parent), str(child), str(rtable))
+
+
+def put_relationships_merged(
+    m: MSTR,
+    model_id: str,
+    attr_id: str,
+    new_rels: list[dict],
+    cs_id: str,
+    *,
+    replace: bool = False,
+) -> tuple[bool, int, int, str]:
+    """Safely write relationships for an attribute without wiping existing ones.
+
+    Strategy's PUT /attributes/{id}/relationships is destructive — it REPLACES
+    the attribute's full relationship set in both directions. This helper
+    fetches the existing relationships first, dedupes by (parent, child,
+    relationship_table) against `new_rels`, and PUTs the union.
+
+    Set `replace=True` only when you explicitly want the wipe (e.g. cleanup).
+
+    Returns (ok, added_count, total_count, error_or_empty). `added_count` is
+    the number of relationships actually new; `total_count` is the size of the
+    final set written.
+    """
+    if not new_rels:
+        return True, 0, 0, ""
+
+    if replace:
+        merged = list(new_rels)
+        added = len(new_rels)
+    else:
+        existing = get_attribute_relationships(m, model_id, attr_id)
+        existing_keys = {_rel_key(r) for r in existing}
+        merged = list(existing)
+        added = 0
+        for rel in new_rels:
+            if _rel_key(rel) in existing_keys:
+                continue
+            merged.append(rel)
+            existing_keys.add(_rel_key(rel))
+            added += 1
+
+    body = {"relationships": merged}
+    r = m.put(
+        f"/api/model/dataModels/{model_id}/attributes/{attr_id}/relationships"
+        f"?changesetId={cs_id}",
+        json=body,
+    )
+    if not r.ok:
+        return False, added, len(merged), format_mstr_error(r)
+    return True, added, len(merged), ""
+
+
+def validate_join_table_membership(
+    m: MSTR,
+    model_id: str,
+    parent_attr_id: str,
+    child_attr_id: str,
+    join_table_id: str,
+) -> tuple[bool, str]:
+    """Pre-flight check for Strategy error 8004ccc7.
+
+    Fetches both attribute definitions and verifies the join table appears in
+    each attribute's expression table set. If either side is missing, returns
+    (False, human-readable reason). Caller should add the missing form
+    expression via PATCH BEFORE issuing the relationship PUT.
+
+    See mosaic_safety.JOIN_TABLE_RULE_DOC for the underlying rule.
+    """
+    if not (parent_attr_id and child_attr_id and join_table_id):
+        return False, "validate_join_table_membership: missing one of parent/child/join-table id"
+
+    p_full = _fetch_attribute(m, model_id, parent_attr_id)
+    c_full = _fetch_attribute(m, model_id, child_attr_id)
+    p_tids = _attr_table_ids(p_full)
+    c_tids = _attr_table_ids(c_full)
+
+    missing = []
+    if join_table_id not in p_tids:
+        missing.append("parent")
+    if join_table_id not in c_tids:
+        missing.append("child")
+    if not missing:
+        return True, ""
+    return (
+        False,
+        f"{'+'.join(missing)} attribute(s) have no expression on join "
+        f"table {join_table_id} — would trip 8004ccc7. "
+        + ms.JOIN_TABLE_RULE_DOC,
+    )
+
+
+# ── Post-build topology validation ───────────────────────────────────────────
+
+def post_build_validate_topology(
+    m: MSTR,
+    model_id: str,
+    *,
+    expected_tables: list[str] | None = None,
+) -> dict:
+    """Return a structured report on model topology health.
+
+    Detects:
+      - Isolated attributes (no incoming + no outgoing relationships, on a
+        fact-like or expected table).
+      - Tables present in the model but with zero relationships, or absent
+        when `expected_tables` is provided.
+      - Numeric attributes whose only expression is on a fact-like table
+        (likely misclassified — should probably be metrics).
+
+    Output shape:
+      {"model_id": "...",
+       "counts": {"attributes": N, "relationships": M, "tables": T},
+       "isolated_attributes": [{"id": "...", "name": "...", "table": "..."}],
+       "tables_without_relationships": ["..."],
+       "missing_expected_tables": ["..."],
+       "numeric_attribute_warnings": [{"id": "...", "name": "...", "table": "..."}],
+       "ok": bool}
+
+    Any caller can use this — it does not exit the process. Pair with
+    cmd_validate_model for CLI usage with non-zero exit-on-failure semantics.
+    """
+    attrs_r = m.get(f"/api/model/dataModels/{model_id}/attributes?limit=2000")
+    if not attrs_r.ok:
+        return {
+            "ok": False,
+            "error": format_mstr_error(attrs_r, "topology attributes read"),
+        }
+    attrs = (attrs_r.json() or {}).get("attributes", []) or []
+
+    tables_r = m.get(f"/api/model/dataModels/{model_id}/tables")
+    tables = (tables_r.json() or {}).get("tables", []) if tables_r.ok else []
+
+    rel_count = 0
+    by_table_rels: dict[str, int] = {}
+    isolated: list[dict] = []
+    numeric_warnings: list[dict] = []
+
+    lookup_map = ms.attribute_lookup_table_map(attrs)
+    lookup_name_map = ms.attribute_table_name_map(attrs)
+
+    for a in attrs:
+        info = a.get("information") or {}
+        aid = info.get("objectId") or a.get("id")
+        nm = info.get("name") or "?"
+        rels = a.get("relationships") or []
+        rel_count += len(rels)
+        table_name = lookup_name_map.get(aid, "")
+        if table_name:
+            by_table_rels[table_name] = by_table_rels.get(table_name, 0) + len(rels)
+        if not rels:
+            isolated.append({"id": aid, "name": nm, "table": table_name})
+
+        # Numeric-attribute heuristic: if the column-name looks numeric/metric-y
+        # AND its lookup table is fact-like AND it carries no relationship,
+        # flag as likely-misclassified.
+        if not rels and _looks_like_metric_name(nm) and _is_fact_like(table_name):
+            numeric_warnings.append({"id": aid, "name": nm, "table": table_name})
+
+    declared_tables = {((t.get("information") or {}).get("name") or "")
+                       for t in tables}
+    declared_tables.discard("")
+
+    # Tables that exist in the model but have zero relationships touching them.
+    # Skip dim tables (a single-table dim can legitimately have no rels — the
+    # join lives on the fact-table side).
+    fact_like_in_model = {n for n in declared_tables if _is_fact_like(n)}
+    tables_without_rels = sorted(
+        n for n in fact_like_in_model
+        if by_table_rels.get(n, 0) == 0
+    )
+
+    missing_expected = []
+    if expected_tables:
+        missing_expected = sorted(set(expected_tables) - declared_tables)
+
+    ok = (not isolated and not tables_without_rels
+          and not missing_expected and not numeric_warnings)
+
+    return {
+        "model_id": model_id,
+        "counts": {
+            "attributes": len(attrs),
+            "relationships": rel_count,
+            "tables": len(tables),
+        },
+        "isolated_attributes": isolated,
+        "tables_without_relationships": tables_without_rels,
+        "missing_expected_tables": missing_expected,
+        "numeric_attribute_warnings": numeric_warnings,
+        "ok": ok,
+    }
+
+
+_METRIC_NAME_HINTS = ("amount", "amt", "total", "qty", "quantity", "price",
+                      "cost", "revenue", "paid", "balance", "discount",
+                      "net_paid", "sales", "profit", "value")
+
+
+def _looks_like_metric_name(name: str) -> bool:
+    """Heuristic: column/attribute name reads like a measure column."""
+    if not name:
+        return False
+    n = name.lower()
+    return any(h in n for h in _METRIC_NAME_HINTS)
 
 
 def _parse_id_list(raw: str | None) -> list[str]:
@@ -2091,6 +2386,26 @@ def cmd_wire_relationships(m: MSTR, args):
     if not hints:
         die("wire-relationships: no relationships found in --hints file.")
 
+    # Role-playing dimension detection: when multiple hints share the same
+    # (parent_attribute, relationship_table) pair, the second+ hint is a
+    # role-playing secondary. Log them explicitly rather than silently
+    # picking first-wins. See mosaic_safety.ROLE_PLAYING_DOC.
+    hints, role_secondaries = ms.detect_role_playing_secondaries(hints)
+    if role_secondaries:
+        print(
+            f"→ wire-relationships: {len(role_secondaries)} role-playing "
+            "secondary hint(s) detected — wiring primary role only. "
+            "Build alias attributes for secondaries before re-running:",
+            file=sys.stderr,
+        )
+        for rel in role_secondaries:
+            print(
+                f"  ! ROLE-PLAY skip "
+                f"{rel.get('parent_attribute')}→{rel.get('child_attribute')} "
+                f"via {rel.get('relationship_table')}",
+                file=sys.stderr,
+            )
+
     attrs = _list_model_attributes(m, model_id)
     by_name = {}
     by_id = {}
@@ -2172,30 +2487,50 @@ def cmd_wire_relationships(m: MSTR, args):
     if not plan:
         die("wire-relationships: nothing to write after validation. See skip reasons above.")
 
-    cs = open_cs(m)
+    # Group plan rows by child attribute so we PUT each child once with all
+    # its parents merged in — this respects the merge contract of
+    # put_relationships_merged() and minimizes round-trips.
+    by_child: dict[str, list[tuple] ] = {}
+    for p_id, c_id, rtbl_id, rtype, label in plan:
+        by_child.setdefault(c_id, []).append((p_id, c_id, rtbl_id, rtype, label))
+
+    cs = open_cs(m, schema_edit=False)
     ok = 0
     try:
-        for p_id, c_id, rtbl_id, rtype, label in plan:
-            body = {"relationships": [{
-                "parent": {"objectId": p_id, "subType": "attribute"},
-                "child":  {"objectId": c_id, "subType": "attribute"},
-                "relationshipType": rtype,
-                "relationshipTable": {"objectId": rtbl_id, "subType": "logical_table"},
-            }]}
-            r = m.put(f"/api/model/dataModels/{model_id}/attributes/{c_id}/relationships?changesetId={cs}",
-                      json=body)
-            if r.ok:
-                ok += 1
-                print(f"  ✓ {label} [{rtype}]", file=sys.stderr)
+        for c_id, rows in by_child.items():
+            new_rels = []
+            labels = []
+            for p_id, _c_id, rtbl_id, rtype, label in rows:
+                new_rels.append({
+                    "parent": {"objectId": p_id, "subType": "attribute"},
+                    "child":  {"objectId": c_id, "subType": "attribute"},
+                    "relationshipType": rtype,
+                    "relationshipTable": {
+                        "objectId": rtbl_id, "subType": "logical_table"
+                    },
+                })
+                labels.append(label)
+            success, added, total, err = put_relationships_merged(
+                m, model_id, c_id, new_rels, cs, replace=args.replace
+            )
+            if success:
+                ok += added
+                action = "REPLACED" if args.replace else f"MERGED (+{added}/{total})"
+                for label in labels:
+                    print(f"  ✓ {label} [{action}]", file=sys.stderr)
             else:
-                print(f"  ✗ {label}: {r.status_code} {r.text[:300]}", file=sys.stderr)
+                for label in labels:
+                    print(f"  ✗ {label}: {err}", file=sys.stderr)
         commit_cs(m, cs)
     except Exception:
-        try: m.s.headers.pop("X-MSTR-MS-Changeset", None)
-        except Exception: pass
+        discard_cs(m, cs)
         raise
-    print(f"→ wire-relationships committed: {ok}/{len(plan)} succeeded, {len(skips)} skipped pre-flight",
-          file=sys.stderr)
+    print(
+        f"→ wire-relationships committed: {ok}/{len(plan)} new rels written "
+        f"(merge-aware), {len(skips)} skipped pre-flight, "
+        f"{len(role_secondaries)} role-playing secondaries",
+        file=sys.stderr,
+    )
 
 
 def _read_wire_hints(path: str) -> list:
@@ -3176,6 +3511,35 @@ def cmd_validate_model(m: MSTR, args):
             WARN("W4", f"metric '{name}' is SUM but name suggests a rate/price/balance — review vs AVG or derived formula",
                  {"metric": name, "function": fn})
 
+    # W7 — topology: isolated attributes on fact tables, fact tables with zero
+    # relationships, and numeric-named attributes that almost certainly should
+    # have been metrics. (See post_build_validate_topology() for the standalone
+    # helper that any wiring script can call.)
+    topology = post_build_validate_topology(m, mid)
+    for iso in topology.get("isolated_attributes", []):
+        if iso.get("table") in fact_like:
+            (FAIL if args.strict_isolation else WARN)(
+                "W7-iso",
+                f"isolated attribute '{iso['name']}' on fact-like table "
+                f"{iso['table']} has zero relationships",
+                iso,
+            )
+    for tname in topology.get("tables_without_relationships", []):
+        WARN(
+            "W7-tbl",
+            f"fact-like table '{tname}' has zero relationships touching it — "
+            "isolated table or wiring incomplete",
+            {"table": tname},
+        )
+    for warn in topology.get("numeric_attribute_warnings", []):
+        WARN(
+            "W7-num",
+            f"numeric-named attribute '{warn['name']}' on fact-like table "
+            f"{warn['table']} has no relationships — likely a misclassified "
+            "metric. Delete or convert to factMetric.",
+            warn,
+        )
+
     counts = {"tables": len(tables), "attributes": len(attrs), "factMetrics": len(metrics),
               "relationships": sum(len(a.get("relationships") or []) for a in attrs)}
     report = {
@@ -3183,6 +3547,7 @@ def cmd_validate_model(m: MSTR, args):
         "modelName": (root.get("information") or {}).get("name"),
         "counts": counts,
         "fact_like_tables": sorted(fact_like),
+        "topology": topology,
         "failures": failures,
         "warnings": warnings,
     }
@@ -3244,6 +3609,60 @@ def load_other(m: MSTR, mid: str, ep: str, key: str):
     r = m.get(f"/api/model/dataModels/{mid}{ep}")
     if not r.ok: die(f"diff read {ep}: {r.status_code}")
     return (r.json() or {}).get(key, [])
+
+
+def cmd_validate_topology(m: MSTR, args):
+    """Lightweight topology check designed to be the LAST step of any
+    relationship-wiring or build script. Prints a short status line plus an
+    optional JSON report, and exits non-zero on any finding when --strict.
+
+    Failure modes detected:
+      - Isolated attributes on fact-like tables (no relationships).
+      - Fact-like tables with zero relationships touching them.
+      - Numeric-named attributes that look like measures but landed as attrs.
+      - Expected tables missing from the model (when --expected-tables given).
+    """
+    m.login()
+    expected = None
+    if args.expected_tables:
+        expected = [t.strip() for t in args.expected_tables.split(",") if t.strip()]
+    report = post_build_validate_topology(m, args.model_id, expected_tables=expected)
+
+    if "error" in report:
+        die(report["error"])
+
+    counts = report["counts"]
+    issues = (len(report["isolated_attributes"])
+              + len(report["tables_without_relationships"])
+              + len(report["missing_expected_tables"])
+              + len(report["numeric_attribute_warnings"]))
+    status = "OK" if issues == 0 else f"FOUND {issues} ISSUE(S)"
+    print(f"\n[validate-topology:{args.model_id}] {status}")
+    print(f"  counts: tables={counts['tables']} attributes={counts['attributes']} "
+          f"relationships={counts['relationships']}")
+    if report["isolated_attributes"]:
+        print(f"  isolated attributes ({len(report['isolated_attributes'])}):")
+        for iso in report["isolated_attributes"][:10]:
+            print(f"    - {iso['name']} (table={iso.get('table') or '?'})")
+        if len(report["isolated_attributes"]) > 10:
+            print(f"    … +{len(report['isolated_attributes'])-10} more")
+    if report["tables_without_relationships"]:
+        print(f"  fact-like tables with no relationships: "
+              f"{', '.join(report['tables_without_relationships'])}")
+    if report["missing_expected_tables"]:
+        print(f"  missing expected tables: "
+              f"{', '.join(report['missing_expected_tables'])}")
+    if report["numeric_attribute_warnings"]:
+        print(f"  likely-misclassified numeric attributes "
+              f"({len(report['numeric_attribute_warnings'])}):")
+        for warn in report["numeric_attribute_warnings"][:10]:
+            print(f"    - {warn['name']} (table={warn.get('table') or '?'})")
+
+    if args.json:
+        print("\n" + json.dumps(report, indent=2, default=str))
+
+    if args.strict and issues:
+        sys.exit(1)
 
 
 def cmd_build_from_config(m: MSTR, args):
@@ -3451,8 +3870,23 @@ def build_parser():
     sp.add_argument("--model-id", required=True)
     sp.add_argument("--fact-tables", help="comma-separated table names to force-classify as fact/bridge")
     sp.add_argument("--strict-orphans", action="store_true", help="promote W1 orphan-attributes from WARN to FAIL")
+    sp.add_argument("--strict-isolation", action="store_true",
+                    help="promote W7-iso (isolated attributes on fact tables) from WARN to FAIL — "
+                         "use as the standard tail of every wiring script")
     sp.add_argument("--diff-against", help="another modelId; emit a count diff and fail on regressions")
     sp.add_argument("--json", action="store_true", help="also print the full JSON report")
+
+    sp = sub.add_parser("validate-topology",
+        help="Lightweight post-build topology check: isolated attributes, fact "
+             "tables with no relationships, numeric-named attrs that should "
+             "have been metrics. Exit 1 on any finding when --strict is set.")
+    sp.add_argument("--model-id", required=True)
+    sp.add_argument("--expected-tables",
+                    help="comma-separated table names that MUST appear in the model")
+    sp.add_argument("--strict", action="store_true",
+                    help="exit non-zero on any finding (recommended as the "
+                         "tail of every wiring/build script)")
+    sp.add_argument("--json", action="store_true", help="print the full JSON report")
 
     sp = sub.add_parser("build-from-config")
     sp.add_argument("--config", required=True, help="path to YAML/JSON spec file")
@@ -3508,6 +3942,10 @@ def build_parser():
                     help="JSON/YAML file: {relationships:[{parent_attribute, child_attribute, relationship_table, type}]}")
     sp.add_argument("--dry-run", action="store_true",
                     help="validate + print plan without issuing PUTs")
+    sp.add_argument("--replace", action="store_true",
+                    help="OVERWRITE existing relationships on each child attribute "
+                         "(destructive — wipes incoming rels too). Default is "
+                         "merge-aware: fetch existing, dedupe, PUT the union.")
 
     sp = sub.add_parser("refresh")
     sp.add_argument("--model-id", required=True)
@@ -3591,6 +4029,7 @@ def main():
             "build-from-config":cmd_build_from_config,
             "build-from-schema-objects": cmd_build_from_schema_objects,
             "validate-model":  cmd_validate_model,
+            "validate-topology": cmd_validate_topology,
             "set-serve-mode":  cmd_set_serve_mode,
             "publish":         cmd_publish,
             "wire-relationships": cmd_wire_relationships,
