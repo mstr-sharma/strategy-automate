@@ -519,7 +519,10 @@ def cmd_release_locks(m: MSTR, args):
     m.login()
     released: list[str] = []
     for _ in range(int(args.max_iters)):
-        r = m.post("/api/model/changesets", json={"schemaEdit": True})
+        # schemaEdit must be in BOTH the body and the query param. Strategy
+        # parses one or the other depending on path version; body-only opens
+        # a non-schema changeset that never collides with the stale lock.
+        r = m.post("/api/model/changesets?schemaEdit=true", json={"schemaEdit": True})
         if r.ok:
             cs = r.json().get("id")
             if cs:
@@ -805,11 +808,53 @@ def load_erd(path: str) -> list[dict]:
     return rels
 
 
+# Strategy's catalog probe leaves dataType fields it didn't compute as
+# INT32_MIN (a "no value" sentinel). When the build flow forwards those into
+# the model body, Strategy stores them, and subsequent UI previews fail with
+# "DssDataType '4' is invalid or not supported" (and similar codes) — the
+# render layer can't map an integer with scale=INT_MIN to a known DssDataType.
+# Postgres, MySQL, and SQL Server backends have all been observed to surface
+# integer + char/varchar (fixed_length_string) columns with this sentinel.
+# See feedback_dssdatatype_sentinel_scale.md.
+_DATATYPE_INT_MIN_SENTINEL = -2147483648
+
+
+def _normalize_catalog_datatype(dt: dict | None) -> dict | None:
+    """Sanitize INT32_MIN sentinels in a column's dataType so Strategy doesn't
+    store them as-is. Idempotent; safe to call on already-clean dataTypes.
+
+    - scale == INT32_MIN  → 0 (universal safe default; integers and strings
+      both expect 0 from the engine's POV)
+    - precision == INT32_MIN → 0 (rare; only seen on unknown-precision probes)
+    - type == 'date' and scale is missing or negative → 0 (the catalog reports
+      scale=-1 for dates which some preview paths reject)
+    Other fields pass through untouched.
+    """
+    if not isinstance(dt, dict):
+        return dt
+    out = dict(dt)
+    if out.get("scale") == _DATATYPE_INT_MIN_SENTINEL:
+        out["scale"] = 0
+    if out.get("precision") == _DATATYPE_INT_MIN_SENTINEL:
+        out["precision"] = 0
+    if out.get("type") == "date":
+        sc = out.get("scale")
+        if sc is None or (isinstance(sc, int) and sc < 0):
+            out["scale"] = 0
+    return out
+
+
 def fetch_table_metadata(m: MSTR, ds_id: str, namespace: str, tname: str) -> dict:
     ns_id = resolve_namespace_id(m, ds_id, namespace)
     tb_id = encode_tb_id(namespace, tname)
     path, body = m.try_candidates("describe_table", id=ds_id, ns_id=ns_id, tb_id=tb_id)
     cols = body.get("columns") or body.get("physicalTable",{}).get("columns") or []
+    # Sanitize the catalog's INT32_MIN sentinel in dataType before any consumer
+    # forwards these columns into a model-body create/patch. See
+    # _normalize_catalog_datatype above.
+    for c in cols:
+        if "dataType" in c:
+            c["dataType"] = _normalize_catalog_datatype(c.get("dataType"))
     return {"raw": body, "columns": cols, "tb_id": tb_id, "ns_id": ns_id}
 
 
@@ -904,11 +949,18 @@ def open_cs(m: MSTR, *, schema_edit: bool = False, release_self_locks: bool = Fa
                               conflict) and the existing lock is owned by the
                               current user, delete it and retry once. Useful
                               after a previous script crash left a stale lock.
+
+    Implementation note: Strategy ignores `schemaEdit: true` in the JSON body
+    on this endpoint; it has to be passed as a query param (`?schemaEdit=true`)
+    for the lock to actually be acquired. We send both so old and new server
+    builds work — Strategy ignores the spare on whichever side doesn't need it.
     """
     body: dict = {}
+    path = "/api/model/changesets"
     if schema_edit:
         body["schemaEdit"] = True
-    r = m.post("/api/model/changesets", json=body)
+        path = "/api/model/changesets?schemaEdit=true"
+    r = m.post(path, json=body)
     if not r.ok:
         # Lock-conflict recovery path — 8004cc41 with a self-owned existing lock.
         try:
@@ -924,7 +976,7 @@ def open_cs(m: MSTR, *, schema_edit: bool = False, release_self_locks: bool = Fa
                     m.delete(f"/api/model/changesets/{lockid}")
                 except Exception:
                     pass
-                r = m.post("/api/model/changesets", json=body)
+                r = m.post(path, json=body)
         if not r.ok:
             hint = ""
             try:
