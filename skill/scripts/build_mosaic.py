@@ -3,7 +3,7 @@
 build_mosaic.py — discovery + build CLI for Strategy Mosaic semantic models.
 
 Subcommands:
-  auth-probe                 Confirm login + identity-token flow works.
+  auth-probe                 Confirm login + identity-token flow + project-scoped access.
   list-datasources           List database instances the user can see.
   list-namespaces            List schemas in a datasource.   --instance / --instance-id
   list-tables                List tables in a schema.         --instance --namespace
@@ -15,13 +15,34 @@ Subcommands:
   create-users               Dry-run or create users from CSV/JSON/YAML rosters.
   build                      Create & commit a model from one or more sources.
   build-from-schema-objects  Build a Mosaic model from existing classic attribute/fact/metric IDs.
+  merge-attributes           Conform differently-named FK columns by merging child expressions
+                             into the parent attribute. Required for Kimball warehouses with
+                             prefixed surrogate keys (i_item_sk vs ss_item_sk) where auto-
+                             conformance via column-name identity won't fire.
+  release-locks              Release stuck schemaEdit changesets owned by the current user.
   validate-model             Run the full post-build quality checklist (failures exit non-zero).
   validate-topology          Lightweight topology check — isolated attrs, fact-table coverage, misclassified numerics.
   discover                   Probe endpoint variants when the server version is unknown.
 
-All subcommands take optional --base / --project-id / --user / --password or read them
-from env vars MSTR_BASE / MSTR_PROJECT_ID / MSTR_USER / MSTR_PASSWORD. Do not hardcode
-secrets in this file; set MSTR_PASSWORD in the shell or keychain-backed environment.
+Authentication
+~~~~~~~~~~~~~~
+Two modes are supported:
+
+1. **Direct login** (on-prem and tenants that expose POST /api/auth/login):
+   pass --user + --password (or env MSTR_USER + MSTR_PASSWORD). The script
+   logs in, runs the command, and logs out.
+
+2. **Borrowed session** (Studio Cloud / SSO tenants where direct login isn't
+   usable): pass --auth-token + --session-cookie + --ingress-cookie (or env
+   MSTR_AUTH_TOKEN, MSTR_SESSION_COOKIE, MSTR_INGRESS_COOKIE), copied out of
+   a logged-in browser via DevTools. The script reuses the session in-place;
+   /auth/login and /auth/logout are skipped so the human's UI session is left
+   intact. If a Modeling Service command needs an identity token and one is
+   not provided, the script mints one in the borrowed session.
+
+Other subcommands take optional --base / --project-id or read them from env
+vars MSTR_BASE / MSTR_PROJECT_ID. Do not hardcode secrets in this file;
+set MSTR_PASSWORD in the shell or keychain-backed environment.
 
 The "build" subcommand can take --source repeatedly, each as "INSTANCE:SCHEMA:T1,T2,...":
     --source "Snowflake Prod:SALES:CUSTOMER,ORDER" --source "Oracle:FIN:INVOICE"
@@ -53,6 +74,16 @@ DEFAULT_USER        = os.environ.get("MSTR_USER", "")
 DEFAULT_PASSWORD    = os.environ.get("MSTR_PASSWORD", "")
 DEFAULT_LOGIN_MODE  = int(os.environ.get("MSTR_LOGIN_MODE", "1"))
 DEFAULT_DEST_FOLDER = os.environ.get("MSTR_DEST_FOLDER_ID", os.environ.get("MSTR_DEST_FOLDER", ""))
+# Borrowed-session (Studio Cloud / SSO tenants where username+password login
+# isn't usable). Copy the four values out of a logged-in browser session via
+# DevTools → Network (X-MSTR-AuthToken header) and Application → Cookies
+# (JSESSIONID + library-ingress). Identity token is optional — when omitted
+# and a Modeling-Service-bound command runs, the script mints one using the
+# borrowed session. See README.md.
+DEFAULT_AUTH_TOKEN     = os.environ.get("MSTR_AUTH_TOKEN", "")
+DEFAULT_IDENTITY_TOKEN = os.environ.get("MSTR_IDENTITY_TOKEN", "")
+DEFAULT_SESSION_COOKIE = os.environ.get("MSTR_SESSION_COOKIE", "")
+DEFAULT_INGRESS_COOKIE = os.environ.get("MSTR_INGRESS_COOKIE", "")
 FORM_ID             = "45C11FA478E745FEA08D781CEA190FE5"   # Universal Strategy ID-form constant (all tenants)
 
 # MicroStrategy REST paths have drifted across versions. Try these in order.
@@ -146,7 +177,8 @@ NUMERIC_TYPES = {"integer","int","bigint","smallint","tinyint","long","short",
                  "decimal","numeric","float","double","real","number","money",
                  "int64","int32","fixed_numeric"}
 ID_COLUMN_SUFFIXES = ("_ID", "ID", "_KEY", "KEY", "_CD", "_CODE", "CODE",
-                      "_NO", "NO", "_NUM", "NUM", "_NUMBER", "NUMBER")
+                      "_NO", "NO", "_NUM", "NUM", "_NUMBER", "NUMBER",
+                      "_SK", "SK")
 NATURAL_NUMERIC_DIMS = ("YEAR", "MONTH", "QUARTER", "QTR", "WEEK", "DAY", "FISCAL")
 
 import re as _re
@@ -178,14 +210,66 @@ class MSTR:
         self.user    = args.user
         self.pw      = args.password
         self.mode    = args.login_mode
+        # Borrowed-session inputs: when set, MSTR will reuse an externally-held
+        # session (e.g. tokens + cookies copied out of a logged-in browser) and
+        # skip /auth/login and /auth/logout so the human's UI session is left
+        # intact. Required for Studio Cloud (studio.strategy.com) where direct
+        # username/password login is not exposed.
+        self.preset_auth_token     = getattr(args, "auth_token", "") or ""
+        self.preset_identity_token = getattr(args, "identity_token", "") or ""
+        self.preset_session_cookie = getattr(args, "session_cookie", "") or ""
+        self.preset_ingress_cookie = getattr(args, "ingress_cookie", "") or ""
         self.s       = requests.Session()
         self.s.headers.update({"Content-Type":"application/json","Accept":"application/json"})
+        host = self.base.replace("https://","").replace("http://","").split("/")[0]
+        if self.preset_session_cookie:
+            self.s.cookies.set("JSESSIONID", self.preset_session_cookie, domain=host)
+        if self.preset_ingress_cookie:
+            self.s.cookies.set("library-ingress", self.preset_ingress_cookie, domain=host)
         self.verbose = args.verbose
         self.logged_in = False
+        # True when this session was bootstrapped from caller-supplied tokens.
+        # logout() and any "kill stale sessions" helpers must NOT delete this
+        # session — it is owned by an external client (browser tab, CI runner).
+        self.borrowed_session = False
 
     def login(self, *, identity: bool = False):
+        # Borrowed-session mode: caller supplied an auth token already. Skip
+        # /auth/login entirely; only mint an identity token if asked and not
+        # already provided. /auth/logout is also disabled to protect the
+        # external owner's session.
+        if self.preset_auth_token:
+            self.s.headers["X-MSTR-AuthToken"] = self.preset_auth_token
+            if self.project:
+                self.s.headers["X-MSTR-ProjectID"] = self.project
+            if self.preset_identity_token:
+                self.s.headers["X-MSTR-IdentityToken"] = self.preset_identity_token
+            elif identity:
+                r2 = self.s.post(f"{self.base}/api/auth/identityToken")
+                if r2.ok:
+                    id_tok = r2.headers.get("X-Mstr-Identitytoken") or r2.headers.get("X-MSTR-IdentityToken","")
+                    if id_tok:
+                        self.s.headers["X-MSTR-IdentityToken"] = id_tok
+                    else:
+                        print("[auth] WARN: /auth/identityToken returned 2xx but no token header. "
+                              "Modeling Service changesets may fail. Pass --identity-token explicitly.",
+                              file=sys.stderr)
+                else:
+                    print(f"[auth] WARN: identity-token mint failed ({r2.status_code}). "
+                          "Modeling Service changesets will fail. Re-grab the cookies "
+                          "(JSESSIONID + library-ingress) from a fresh browser session, "
+                          "or pass --identity-token explicitly.",
+                          file=sys.stderr)
+            self.logged_in        = True
+            self.borrowed_session = True
+            if self.verbose:
+                has_id = "X-MSTR-IdentityToken" in self.s.headers
+                print(f"[auth] borrowed token={self.preset_auth_token[:12]}…  identity={'yes' if has_id else 'no'}",
+                      file=sys.stderr)
+            return
         if not self.pw:
-            die("missing password. Set MSTR_PASSWORD or pass --password; do not store secrets in skill/memory files.")
+            die("missing password. Set MSTR_PASSWORD or pass --password; do not store secrets in skill/memory files. "
+                "(Studio Cloud users: pass --auth-token + --session-cookie + --ingress-cookie from a browser session.)")
         r = self.s.post(f"{self.base}/api/auth/login",
                         json={"username": self.user, "password": self.pw, "loginMode": self.mode})
         r.raise_for_status()
@@ -203,6 +287,12 @@ class MSTR:
                 id_tok = r2.headers.get("X-Mstr-Identitytoken") or r2.headers.get("X-MSTR-IdentityToken","")
                 if id_tok:
                     self.s.headers["X-MSTR-IdentityToken"] = id_tok
+                else:
+                    print("[auth] WARN: /auth/identityToken returned 2xx but no token header. "
+                          "Modeling Service changesets may fail.", file=sys.stderr)
+            else:
+                print(f"[auth] WARN: identity-token mint failed ({r2.status_code} {r2.text[:120]}). "
+                      "Modeling Service changesets will fail.", file=sys.stderr)
         if self.verbose:
             print(f"[auth] token={tok[:12]}…  identity={'yes' if 'X-MSTR-IdentityToken' in self.s.headers else 'no'}", file=sys.stderr)
 
@@ -215,6 +305,12 @@ class MSTR:
 
     def logout(self):
         if not self.logged_in:
+            return
+        if self.borrowed_session:
+            # The session belongs to whoever lent us the token (typically a
+            # human's browser tab). DELETE /api/auth/login here would log them
+            # out of their UI mid-task — never do that.
+            self.logged_in = False
             return
         try:
             self.delete("/api/auth/login")
@@ -247,15 +343,42 @@ def new_uuid() -> str:
 
 # ── Discovery ─────────────────────────────────────────────────────────────────
 def cmd_auth_probe(m: MSTR, args):
+    """Confirm login + identity-token flow + project-scoped access.
+
+    Studio Cloud (and some SSO tenants) accept the X-MSTR-AuthToken on
+    /auth/* endpoints but reject project-scoped reads without the right
+    cookies. Without a project-scoped probe, auth-probe will pass and
+    list-datasources will 401 — a frustrating loop. So the probe also
+    hits a project-scoped read and reports whether it succeeded.
+    """
     m.login(identity=True)
-    print(json.dumps({
+    out: dict[str, object] = {
         "ok": True,
         "base": m.base,
         "project_id": m.project,
         "user": m.user,
         "has_auth_token": "X-MSTR-AuthToken" in m.s.headers,
         "has_identity_token": "X-MSTR-IdentityToken" in m.s.headers,
-    }, indent=2))
+    }
+    if m.project:
+        # GET /api/folders/preDefined/7 = project-public root; cheap + present on every tenant.
+        r = m.get(f"/api/folders/preDefined/7")
+        out["project_access"] = bool(r.ok)
+        if not r.ok:
+            out["project_access_status"] = r.status_code
+            try:
+                body = r.json()
+            except ValueError:
+                body = r.text[:200]
+            out["project_access_error"] = body
+            out["project_access_hint"] = (
+                "If using --auth-token, also pass --session-cookie (JSESSIONID) and "
+                "--ingress-cookie (library-ingress) — Studio Cloud requires both."
+            )
+    else:
+        out["project_access"] = "skipped"
+        out["project_access_hint"] = "no --project-id supplied; cannot probe project-scoped APIs"
+    print(json.dumps(out, indent=2))
 
 
 def cmd_list_datasources(m: MSTR, args):
@@ -379,6 +502,50 @@ def cmd_kill_sessions(m: MSTR, args):
         if d.status_code in (200, 204):
             killed += 1
     print(json.dumps({"attempted": int(args.count), "killed": killed}))
+
+
+def cmd_release_locks(m: MSTR, args):
+    """Release stuck Modeling Service changesets owned by the current user.
+
+    If a build/wire script dies between open_cs() and commit_cs() (network blip,
+    KeyboardInterrupt, killed process), the schemaEdit lock persists on the
+    project and every subsequent open returns 8004cc41 until it ages out.
+    There is no way to enumerate "all open changesets" via the public API, so
+    this helper provokes the lock conflict, parses the LOCKID out of the error,
+    verifies the lock belongs to the current user, and DELETEs the changeset.
+    Repeats until open succeeds (in which case it discards the freshly-opened
+    one too, leaving the project clean).
+    """
+    m.login()
+    released: list[str] = []
+    for _ in range(int(args.max_iters)):
+        r = m.post("/api/model/changesets", json={"schemaEdit": True})
+        if r.ok:
+            cs = r.json().get("id")
+            if cs:
+                discard_cs(m, cs)
+            break
+        try:
+            body = r.json()
+        except ValueError:
+            print(f"release-locks: unexpected response {r.status_code}: {r.text[:200]}", file=sys.stderr)
+            break
+        lockid = _extract_lockid_from_error(body)
+        my_uid = (body or {}).get("errors", [{}])[0].get("additionalProperties", {}).get("userId")
+        if not lockid:
+            print(f"release-locks: no LOCKID in error: {format_mstr_error(r)}", file=sys.stderr)
+            break
+        if not _lock_owned_by_self(body, my_uid):
+            print(f"release-locks: lock {lockid} not owned by current user; will age out", file=sys.stderr)
+            break
+        dr = m.delete(f"/api/model/changesets/{lockid}")
+        if dr.status_code in (200, 204):
+            released.append(lockid)
+            print(f"release-locks: released {lockid}", file=sys.stderr)
+        else:
+            print(f"release-locks: failed to release {lockid}: {dr.status_code} {dr.text[:200]}", file=sys.stderr)
+            break
+    print(json.dumps({"released": released, "count": len(released)}, indent=2))
 
 
 def cmd_discover(m: MSTR, args):
@@ -682,7 +849,48 @@ def classify_columns(cols, attr_override: set[str], metric_override: set[str]):
     return attrs, metrics
 
 
-def open_cs(m: MSTR, *, schema_edit: bool = False) -> str:
+_STALE_LOCK_HINT = (
+    "A prior Modeling Service session left an open changeset on this project. "
+    "Run `build_mosaic.py release-locks` to free locks owned by the current "
+    "user, then retry. Locks held by other users age out on their own."
+)
+
+
+def _extract_lockid_from_error(body) -> str | None:
+    """Strategy 8004cc41 (schemaEdit lock conflict) reports the existing
+    lock's id embedded in XML inside additionalProperties.existingLock.comment:
+        '<LOCKID>D7FEB354B8D14678B78363BB3964C811</LOCKID>'
+    Return the LOCKID or None.
+    """
+    try:
+        errs = (body or {}).get("errors") or []
+        if not errs:
+            return None
+        comment = (
+            (errs[0] or {}).get("additionalProperties", {})
+            .get("existingLock", {}).get("comment", "")
+        )
+        match = _re.search(r"<LOCKID>([A-F0-9]+)</LOCKID>", comment or "")
+        return match.group(1) if match else None
+    except Exception:
+        return None
+
+
+def _lock_owned_by_self(body, my_user_id: str | None) -> bool:
+    try:
+        errs = (body or {}).get("errors") or []
+        if not errs:
+            return False
+        owner = (
+            (errs[0] or {}).get("additionalProperties", {})
+            .get("existingLock", {}).get("ownerId", "")
+        )
+        return bool(my_user_id) and owner == my_user_id
+    except Exception:
+        return False
+
+
+def open_cs(m: MSTR, *, schema_edit: bool = False, release_self_locks: bool = False) -> str:
     """Open a Modeling Service changeset.
 
     schema_edit=False — relationships, security filters, ACLs, post-build edits.
@@ -691,12 +899,40 @@ def open_cs(m: MSTR, *, schema_edit: bool = False) -> str:
                         wrong type silently produces 8004ccde or no-ops the
                         write. The chosen type is recorded on the session so
                         assert_changeset_type() can fail fast at call sites.
+
+    release_self_locks=True — if open fails with 8004cc41 (schemaEdit lock
+                              conflict) and the existing lock is owned by the
+                              current user, delete it and retry once. Useful
+                              after a previous script crash left a stale lock.
     """
     body: dict = {}
     if schema_edit:
         body["schemaEdit"] = True
     r = m.post("/api/model/changesets", json=body)
-    r.raise_for_status()
+    if not r.ok:
+        # Lock-conflict recovery path — 8004cc41 with a self-owned existing lock.
+        try:
+            err_body = r.json()
+        except Exception:
+            err_body = None
+        if release_self_locks:
+            lockid = _extract_lockid_from_error(err_body)
+            my_uid = (err_body or {}).get("errors", [{}])[0].get("additionalProperties", {}).get("userId")
+            if lockid and _lock_owned_by_self(err_body, my_uid):
+                print(f"[open_cs] releasing self-owned stale lock {lockid}", file=sys.stderr)
+                try:
+                    m.delete(f"/api/model/changesets/{lockid}")
+                except Exception:
+                    pass
+                r = m.post("/api/model/changesets", json=body)
+        if not r.ok:
+            hint = ""
+            try:
+                if "8004cc41" in r.text:
+                    hint = f"\n  {_STALE_LOCK_HINT}"
+            except Exception:
+                pass
+            die(f"open_cs: {format_mstr_error(r)}{hint}")
     d = r.json()
     cs = d.get("id") or d.get("changesetId", "")
     if not cs:
@@ -2365,6 +2601,199 @@ def _list_model_tables(m: MSTR, model_id: str) -> dict:
     return by_name
 
 
+def cmd_merge_attributes(m: MSTR, args):
+    """Conform differently-named FK columns by merging child expressions into
+    the parent attribute.
+
+    Mosaic's auto-conformance groups expressions by IDENTICAL column names
+    across tables (e.g. `PRODUCT_ID` in both `orders` and `products`). Real
+    warehouses using Kimball-style prefixed surrogate keys (`i_item_sk` on
+    the item dim vs `ss_item_sk` on the store_sales fact) defeat that — each
+    column becomes its own attribute and joins never resolve, even with
+    --conformance-map / --fk-map applied at build time (those only rename;
+    they do not actually merge).
+
+    This command takes the same {child.col: parent.col} map shape as --fk-map
+    and, for each pair, PATCHes the parent attribute to gain an expression on
+    the child's table, then DELETEs the now-redundant child attribute. The
+    result is a true Kimball conformed dimension: one attribute whose forms
+    span the dim and every fact that FKs to it.
+
+    Role-playing edge case: when the same fact table has two FKs to the same
+    dim (e.g. `cs_sold_date_sk` AND `cs_ship_date_sk` both pointing at
+    `d_date_sk`), Mosaic rejects the second merge with 8004cc77 ("table is
+    used in other expressions"). Those pairs are reported as skipped — they
+    need their own role-playing alias attributes built separately, which is
+    out of scope for this command (see memory/feedback_mosaic_role_playing_dimensions.md).
+
+    Hint file shape (JSON or YAML), accepts either form:
+        # flat — matches the --fk-map shape that `build` already accepts
+        {"<CHILD_TABLE>.<CHILD_COL>": "<PARENT_TABLE>.<PARENT_COL>", ...}
+
+        # envelope — accepted for forward-compat with extended hint metadata
+        {"merges": [
+            {"child":  "<CHILD_TABLE>.<CHILD_COL>",
+             "parent": "<PARENT_TABLE>.<PARENT_COL>"}, ...]}
+
+    Honors --dry-run; otherwise opens a schema-edit changeset and commits at
+    the end (with discard on exception).
+    """
+    m.login(identity=True)
+    model_id = args.model_id
+
+    pairs = _read_merge_hints(args.hints)
+    if not pairs:
+        die("merge-attributes: no merge pairs found in --hints.")
+
+    attrs = _list_model_attributes(m, model_id)
+    table_ids = _list_model_tables(m, model_id)  # name -> objectId
+    # Build (table_name, column_text) -> attribute index. A given attribute can
+    # appear under multiple (table, col) keys if it's already partially conformed.
+    by_tcol: dict[tuple[str, str], dict] = {}
+    for a in attrs:
+        for form in a.get("forms") or []:
+            for exp in form.get("expressions") or []:
+                col = (exp.get("expression") or {}).get("text", "")
+                for t in exp.get("tables") or []:
+                    tn = t.get("name", "")
+                    if tn and col:
+                        by_tcol[(tn, col)] = a
+
+    plan = []     # list of (parent_attr, child_attr, child_table_name, child_col, label)
+    skips = []    # (label, reason)
+    for child_ref, parent_ref in pairs:
+        try:
+            ct, cc = child_ref.split(".", 1)
+            pt, pc = parent_ref.split(".", 1)
+        except ValueError:
+            skips.append((f"{child_ref} → {parent_ref}", "malformed pair (expected TABLE.COL on both sides)"))
+            continue
+        label = f"{pt}.{pc} += {ct}.{cc}"
+        parent = by_tcol.get((pt, pc))
+        child  = by_tcol.get((ct, cc))
+        if not parent:
+            skips.append((label, f"parent attribute for {pt}.{pc} not found"))
+            continue
+        if not child:
+            skips.append((label, f"child attribute for {ct}.{cc} not found"))
+            continue
+        if parent is child:
+            skips.append((label, "already conformed (parent and child resolve to same attribute)"))
+            continue
+        if ct not in table_ids:
+            skips.append((label, f"child table {ct!r} not in model"))
+            continue
+        plan.append((parent, child, ct, cc, label))
+
+    print(f"→ merge-attributes plan: {len(plan)} to merge, {len(skips)} skipped pre-flight", file=sys.stderr)
+    for label, reason in skips:
+        print(f"  ✗ SKIP {label}: {reason}", file=sys.stderr)
+    if args.dry_run:
+        for _p, _c, _t, _col, label in plan:
+            print(f"  ✓ would merge {label}", file=sys.stderr)
+        print("→ dry-run; exiting without writes", file=sys.stderr)
+        return
+    if not plan:
+        die("merge-attributes: nothing to write after validation.")
+
+    cs = open_cs(m, schema_edit=True, release_self_locks=bool(args.release_locks))
+    ok = 0
+    deleted = 0
+    write_skips = []
+    try:
+        for parent_attr, child_attr, child_table, child_col, label in plan:
+            pid = (parent_attr.get("information") or {}).get("objectId")
+            cid = (child_attr.get("information")  or {}).get("objectId")
+            # Re-fetch parent each iteration: prior merges in this changeset
+            # mutate it, and the PATCH must include the cumulative forms list.
+            parent_full = _fetch_attribute(m, model_id, pid)
+            normalized = ms.normalize_expressions(parent_full)
+            forms = normalized.get("forms") or []
+            if not forms:
+                write_skips.append((label, "parent has no forms"))
+                continue
+            form = forms[0]
+            child_tid = table_ids.get(child_table)
+            new_expr = ms.make_expression(
+                child_col,
+                table_id=child_tid,
+                table_name=child_table,
+            )
+            exprs = form.get("expressions") or []
+            already = any(
+                e.get("tables") and (e.get("tables")[0] or {}).get("name") == child_table
+                and (e.get("expression") or {}).get("tokens") and
+                next((tok.get("value") for tok in e["expression"]["tokens"]
+                      if tok.get("type") == "column_reference"), None) == child_col
+                for e in exprs
+            )
+            if not already:
+                exprs.append(new_expr)
+                form["expressions"] = exprs
+            # PATCH the parent. Only forms is mutable here; everything else on
+            # the parent (name, lookupTable, etc.) is preserved by Strategy.
+            r = m.s.patch(
+                f"{m.base}/api/model/dataModels/{model_id}/attributes/{pid}?changesetId={cs}",
+                json={"forms": forms},
+            )
+            if not r.ok:
+                err = ms.parse_mstr_error(r)
+                # 8004cc77 — "table is used in other expressions". This is
+                # the role-playing case: the same fact has two FKs to the
+                # same dim. Skip and continue — a future role-alias build
+                # step handles these.
+                if err.get("code") == "8004cc77":
+                    write_skips.append((label, "role-playing secondary (8004cc77) — skipped"))
+                    continue
+                write_skips.append((label, f"PATCH parent: {format_mstr_error(r)}"))
+                continue
+            print(f"  + {label}", file=sys.stderr)
+            ok += 1
+            # Delete the now-redundant child attribute.
+            if not args.keep_children:
+                dr = m.delete(f"/api/model/dataModels/{model_id}/attributes/{cid}?changesetId={cs}")
+                if dr.status_code in (200, 204):
+                    deleted += 1
+                else:
+                    write_skips.append((label, f"DELETE child {cid}: {format_mstr_error(dr)}"))
+        commit_cs(m, cs)
+    except Exception:
+        discard_cs(m, cs)
+        raise
+
+    for label, reason in write_skips:
+        print(f"  ✗ SKIP-WRITE {label}: {reason}", file=sys.stderr)
+    print(
+        f"→ merge-attributes committed: {ok}/{len(plan)} merges, "
+        f"{deleted} child attrs deleted, {len(skips)} pre-flight skips, "
+        f"{len(write_skips)} write skips",
+        file=sys.stderr,
+    )
+
+
+def _read_merge_hints(path: str) -> list[tuple[str, str]]:
+    """Read a merge-hints file in either the flat fk-map shape
+    ({child.col: parent.col}) or an envelope ({"merges":[{child,parent}]}).
+    Returns a list of (child_ref, parent_ref) tuples preserving input order.
+    """
+    if not path:
+        return []
+    data = load_structured_file(path) or {}
+    pairs: list[tuple[str, str]] = []
+    if isinstance(data, dict) and isinstance(data.get("merges"), list):
+        for item in data["merges"]:
+            if not isinstance(item, dict):
+                continue
+            c, p = item.get("child"), item.get("parent")
+            if c and p:
+                pairs.append((str(c), str(p)))
+    elif isinstance(data, dict):
+        for c, p in data.items():
+            if isinstance(c, str) and isinstance(p, str):
+                pairs.append((c, p))
+    return pairs
+
+
 def cmd_wire_relationships(m: MSTR, args):
     """Wire attribute relationships with step-3/step-5 validation.
 
@@ -3680,6 +4109,19 @@ def cmd_build_from_config(m: MSTR, args):
     ns.metric_cols  = spec.get("metric_cols", [])
     ns.skip_relationships = spec.get("skip_relationships", False)
     ns.dictionary   = spec.get("dictionary") or spec.get("data_dictionary")
+    # Conformance / FK maps — equivalent to the `build` CLI's --conformance-map
+    # and --fk-map flags. Accept both `conformance_map_file` (preferred,
+    # explicit about the "file path" semantics) and `conformance_map` (short
+    # alias). Same for fk_map. Useful for warehouses with prefixed column
+    # naming where auto-conformance via column-name identity won't fire.
+    ns.conformance_map = (
+        spec.get("conformance_map_file")
+        or spec.get("conformance_map")
+    )
+    ns.fk_map = (
+        spec.get("fk_map_file")
+        or spec.get("fk_map")
+    )
     erd = []
     for key in ("erd", "erds"):
         value = spec.get(key)
@@ -3706,6 +4148,24 @@ def build_parser():
     p.add_argument("--user",        default=DEFAULT_USER)
     p.add_argument("--password",    default=DEFAULT_PASSWORD)
     p.add_argument("--login-mode",  type=int, default=DEFAULT_LOGIN_MODE)
+    # Borrowed-session auth (Studio Cloud / SSO tenants). When --auth-token is
+    # provided, MSTR.login() skips /auth/login and /auth/logout so the external
+    # owner's session is left intact. See README.md → "Borrowed-session auth".
+    p.add_argument("--auth-token",     default=DEFAULT_AUTH_TOKEN,
+                   help="Pre-existing X-MSTR-AuthToken (e.g. from a browser session). "
+                        "Skips /auth/login and /auth/logout. Env: MSTR_AUTH_TOKEN.")
+    p.add_argument("--identity-token", default=DEFAULT_IDENTITY_TOKEN,
+                   help="Pre-existing X-MSTR-IdentityToken (required for Mosaic Modeling "
+                        "Service changesets). If unset, the script attempts to mint one "
+                        "via /api/auth/identityToken using --auth-token + cookies. "
+                        "Env: MSTR_IDENTITY_TOKEN.")
+    p.add_argument("--session-cookie", default=DEFAULT_SESSION_COOKIE,
+                   help="JSESSIONID value from the browser session. Required alongside "
+                        "--auth-token for project-scoped APIs on Studio Cloud. "
+                        "Env: MSTR_SESSION_COOKIE.")
+    p.add_argument("--ingress-cookie", default=DEFAULT_INGRESS_COOKIE,
+                   help="library-ingress value from the browser session (Studio Cloud "
+                        "routing cookie). Env: MSTR_INGRESS_COOKIE.")
     p.add_argument("-v","--verbose", action="store_true")
 
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -3947,6 +4407,32 @@ def build_parser():
                          "(destructive — wipes incoming rels too). Default is "
                          "merge-aware: fetch existing, dedupe, PUT the union.")
 
+    sp = sub.add_parser("merge-attributes",
+        help="Conform differently-named FK columns by merging child expressions "
+             "into the parent attribute. The Kimball pattern for warehouses where "
+             "prefixed surrogate keys (i_item_sk vs ss_item_sk) defeat auto-conformance.")
+    sp.add_argument("--model-id", required=True)
+    sp.add_argument("--hints",    required=True,
+                    help="JSON/YAML map of {child_table.child_col: parent_table.parent_col} "
+                         "(same shape as `build --fk-map`); or {'merges':[{child,parent}]} envelope.")
+    sp.add_argument("--dry-run",  action="store_true",
+                    help="validate + print plan without writing")
+    sp.add_argument("--keep-children", action="store_true",
+                    help="leave the now-redundant child attributes in place "
+                         "instead of deleting them (useful for staged rollouts)")
+    sp.add_argument("--release-locks", action="store_true",
+                    help="if open_cs hits 8004cc41 with a self-owned lock, release "
+                         "it and retry once. See `release-locks` subcommand for the "
+                         "standalone equivalent.")
+
+    sp = sub.add_parser("release-locks",
+        help="Release stuck Modeling Service schemaEdit changesets owned by the "
+             "current user. Use after a crashed build/merge/wire run leaves "
+             "8004cc41 on every subsequent open.")
+    sp.add_argument("--max-iters", type=int, default=5,
+                    help="cap on release attempts (each provokes one lock conflict "
+                         "to discover the LOCKID). Default 5.")
+
     sp = sub.add_parser("refresh")
     sp.add_argument("--model-id", required=True)
     sp.add_argument("--refresh-type", default="incremental",
@@ -4016,6 +4502,7 @@ def main():
             "describe-table":  cmd_describe_table,
             "describe-tables": cmd_describe_tables,
             "kill-sessions":   cmd_kill_sessions,
+            "release-locks":   cmd_release_locks,
             "discover":        cmd_discover,
             "openapi-summary": cmd_openapi_summary,
             "openapi-search":  cmd_openapi_search,
@@ -4033,6 +4520,7 @@ def main():
             "set-serve-mode":  cmd_set_serve_mode,
             "publish":         cmd_publish,
             "wire-relationships": cmd_wire_relationships,
+            "merge-attributes":   cmd_merge_attributes,
             "refresh":         cmd_refresh,
             "delete-model":    cmd_delete_model,
             "set-acl":         cmd_set_acl,
