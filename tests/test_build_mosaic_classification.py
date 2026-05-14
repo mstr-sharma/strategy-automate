@@ -30,6 +30,28 @@ class BuildMosaicClassificationTests(unittest.TestCase):
         self.assertEqual(attrs, [])
         self.assertEqual([c["name"] for c in metrics], ["LINE_NUMBER"])
 
+    def test_sk_surrogate_key_columns_classified_as_attributes(self):
+        # Kimball-style surrogate keys end in _SK. Without this rule, every
+        # FK on a fact table classifies as a metric (because they're INTEGER)
+        # and downstream conformance/relationship wiring has nothing to bind
+        # to. The TPC-DS, AdventureWorks, FoodMart, and Snowflake SAMPLE_DATA
+        # warehouses all use this convention.
+        columns = [
+            {"name": "d_date_sk",       "dataType": {"type": "integer"}},
+            {"name": "ss_sold_date_sk", "dataType": {"type": "integer"}},
+            {"name": "i_item_sk",       "dataType": {"type": "integer"}},
+            {"name": "SK",              "dataType": {"type": "integer"}},  # bare 'SK' column
+            {"name": "ss_quantity",     "dataType": {"type": "integer"}},  # genuine metric
+        ]
+
+        attrs, metrics = bm.classify_columns(columns, attr_override=set(), metric_override=set())
+
+        self.assertEqual(
+            [c["name"] for c in attrs],
+            ["d_date_sk", "ss_sold_date_sk", "i_item_sk", "SK"],
+        )
+        self.assertEqual([c["name"] for c in metrics], ["ss_quantity"])
+
 
 if __name__ == "__main__":
     unittest.main()
