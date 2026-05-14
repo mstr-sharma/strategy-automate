@@ -30,6 +30,57 @@ class BuildMosaicClassificationTests(unittest.TestCase):
         self.assertEqual(attrs, [])
         self.assertEqual([c["name"] for c in metrics], ["LINE_NUMBER"])
 
+    def test_normalize_catalog_datatype_replaces_int_min_sentinel(self):
+        # Strategy's catalog probe for Postgres returns scale=INT32_MIN on
+        # every integer column. Build flow used to forward that into the
+        # model body verbatim, and the UI's preview engine then fails with
+        # "DssDataType '4' is invalid or not supported" — code 4 maps to the
+        # legacy "Numeric" type which the engine can't render. Same sentinel
+        # has been seen on fixed_length_string scale.
+        # The sanitizer should replace the sentinel with 0 (safe default
+        # for every type we've observed) without touching valid values.
+        cases = [
+            # (input, expected)
+            (
+                {"type": "integer", "precision": 4, "scale": -2147483648},
+                {"type": "integer", "precision": 4, "scale": 0},
+            ),
+            (
+                {"type": "fixed_length_string", "precision": 60, "scale": -2147483648},
+                {"type": "fixed_length_string", "precision": 60, "scale": 0},
+            ),
+            (
+                # Date catalog probe returns scale=-1 which some preview paths reject.
+                {"type": "date", "precision": 4, "scale": -1},
+                {"type": "date", "precision": 4, "scale": 0},
+            ),
+            (
+                # Already-clean decimal — pass through untouched.
+                {"type": "decimal", "precision": 7, "scale": 2},
+                {"type": "decimal", "precision": 7, "scale": 2},
+            ),
+            (
+                # Precision sentinel — rare but seen on unknown-precision probes.
+                {"type": "varchar", "precision": -2147483648, "scale": 0},
+                {"type": "varchar", "precision": 0, "scale": 0},
+            ),
+        ]
+        for input_dt, expected in cases:
+            self.assertEqual(bm._normalize_catalog_datatype(input_dt), expected,
+                             f"sanitize failed for {input_dt}")
+
+    def test_normalize_catalog_datatype_is_idempotent(self):
+        clean = {"type": "integer", "precision": 4, "scale": 0}
+        self.assertEqual(bm._normalize_catalog_datatype(clean), clean)
+        # Calling twice produces the same result.
+        once = bm._normalize_catalog_datatype({"type": "integer", "precision": 4, "scale": -2147483648})
+        twice = bm._normalize_catalog_datatype(once)
+        self.assertEqual(once, twice)
+
+    def test_normalize_catalog_datatype_handles_non_dict(self):
+        self.assertIsNone(bm._normalize_catalog_datatype(None))
+        self.assertEqual(bm._normalize_catalog_datatype("integer"), "integer")
+
     def test_sk_surrogate_key_columns_classified_as_attributes(self):
         # Kimball-style surrogate keys end in _SK. Without this rule, every
         # FK on a fact table classifies as a metric (because they're INTEGER)
