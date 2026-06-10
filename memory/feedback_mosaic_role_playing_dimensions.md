@@ -79,5 +79,5 @@ if secondaries:
 ## Related
 
 - `feedback_mosaic_relationship_wiring.md` — six-step Kimball recipe.
-- `feedback_mosaic_relationship_put_wipes.md` — sibling gotcha on the PUT semantics.
+- `reference_mosaic_rest_gotchas.md` (Relationships section) — sibling gotcha on the destructive PUT semantics + `put_relationships_merged()`.
 - `mosaic_safety.ROLE_PLAYING_DOC` — same pattern, embedded in the source.

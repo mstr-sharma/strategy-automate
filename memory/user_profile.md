@@ -9,5 +9,5 @@ type: user
 - Comfortable when Claude iteratively probes `/api/openapi.yaml`, discovers endpoints, and updates the skill/memory files in place — does not want brittle hardcoded paths.
 - Terse updates preferred. Long essays only when the task is exploratory.
 - Expects deep fluency across the Mosaic metadata model (datasources, physical/logical tables, attributes with every form type, facts, every metric shape — simple / compound / conditional / level / transformation / smart — filters, consolidations, custom groups, prompts, hierarchies, security filters / ACLs, translations, VLDB) AND the classic / project semantic-layer counterparts.
-- Expects consumer-grade output on every built model — see `feedback_consumer_grade_naming.md`. Validation is part of the ship bar — see `reference_strategy_data_validation.md`.
+- Expects consumer-grade output on every built model — see `feedback_mosaic_ship_bar.md`. Validation is part of the ship bar — see `reference_strategy_data_validation.md`.
 - Credentials and tenant identity come from environment variables (`MSTR_BASE`, `MSTR_USER`, `MSTR_PASSWORD`, `MSTR_PROJECT_ID` or `MSTR_PROJECT_NAME`, `MSTR_DEST_FOLDER_ID`). Never commit or log them.

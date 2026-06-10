@@ -8,15 +8,12 @@ Use this when a user asks for "legacy", "classic", "project-level", or existing 
 
 ## Surface selection
 
-Strategy now exposes similarly named objects across different surfaces. Route by object ownership, not by keyword alone:
+Strategy now exposes similarly named objects across different surfaces. Route by object ownership, not by keyword alone — `reference_strategy_surface_matrix.md` is the routing file (classic/project semantic layer vs Mosaic data models vs runtime vs Push Data vs admin vs AI/agents); read it first. This file owns the classic/project workflows themselves.
 
-- **Classic/project semantic layer:** project metadata objects that exist outside a Mosaic data model. Use top-level Modeling Service endpoints such as `/api/model/attributes`, `/api/model/metrics`, `/api/model/facts`, `/api/model/filters`, `/api/model/securityFilters`, plus object/admin APIs such as `/api/securityFilters`, `/api/users`, `/api/usergroups`, `/api/objects`. These are the old MicroStrategy project semantic-layer workflows.
-- **Mosaic data models:** objects contained inside a modern data model. Use `/api/model/dataModels/{dataModelId}/...` and `/api/dataModels/{dataModelId}/...`. A request must mention a Mosaic model/data model/model ID, or be clearly about a scratch Mosaic build, before using these paths.
-- **AI/agents/newer workflows:** Agent, AI service, Auto, bot, MCP, and NLQ/data-question surfaces. Discover in live OpenAPI (`/api/openapi.yaml?visibility=all`) and prefer MCP tools for semantic query/inspection when the connector is available.
+Two classic-lane heuristics worth keeping here:
 
-If the user says "security filter" without a model ID and references users/groups or a project, assume **classic project security filter**, not Mosaic data-model row-level security.
-
-For a broader matrix covering attributes, metrics, ACLs, roles, cubes, datasets, and AI/agent surfaces, read `reference_strategy_surface_matrix.md` first.
+- A request must mention a Mosaic model/data model/model ID, or be clearly about a scratch Mosaic build, before using `/api/model/dataModels/...` or `/api/dataModels/...` paths.
+- If the user says "security filter" without a model ID and references users/groups or a project, assume **classic project security filter**, not Mosaic data-model row-level security.
 
 For deep read-only inspection of object internals before cloning, updating, or modernizing a legacy semantic layer, read `reference_strategy_tutorial_semantic_field_study.md` and use:
 
@@ -78,12 +75,7 @@ Member patch body:
 
 Use `removeElements` for revocation. Values are user or user-group IDs, not names.
 
-Do **not** use these Mosaic-only paths for a classic project security filter:
-
-- `/api/model/dataModels/{dataModelId}/securityFilters`
-- `/api/dataModels/{dataModelId}/securityFilters/{securityFilterId}/members`
-
-Those are for security filters owned by a Mosaic data model.
+Do **not** use the Mosaic data-model security-filter paths for a classic project security filter — the classic-vs-Mosaic SF routing rows live in `reference_strategy_surface_matrix.md` ("Security and access").
 
 ## Element-list security filter shape
 
@@ -136,23 +128,7 @@ Then assign the project security filter with `PATCH /api/securityFilters/{id}/me
 
 ## Object security, roles, and privileges
 
-Do not conflate these with security filters:
-
-- **Object ACL / object security:** who can browse, read, write, delete, control, execute, or use an object.
-- **Security roles / privileges:** what capabilities a user or group has.
-- **Security filters:** row-level restrictions applied to users/groups.
-
-Classic object ACL workflow:
-
-- Read object and ACL: `GET /api/objects/{id}?type=<type>`.
-- Update object and ACL: `PUT /api/objects/{id}?type=<type>`.
-- Body uses `acl` entries with `op` (`ADD`, `REPLACE`, etc.), `trustee`, `rights`, `denied`, `inheritable`, and `type`.
-- Folder ACLs can propagate to children with `propagateACLToChildren` and propagation behavior.
-
-Mosaic data-model object ACL workflow is different:
-
-- `GET/PATCH /api/model/dataModels/{dataModelId}/objects/{objectId}/acl?subType=<subType>`.
-- Patch requires a changeset and commit.
+Do not conflate object ACLs, security roles/privileges, and security filters. The concept distinctions, the classic object ACL workflow (`GET/PUT /api/objects/{id}?type=<type>` with `acl` entries, rights bitmasks, `propagateACLToChildren`), and the different Mosaic data-model object ACL workflow (changeset-scoped `GET/PATCH /api/model/dataModels/{dataModelId}/objects/{objectId}/acl?subType=<subType>`) are routed in `reference_strategy_surface_matrix.md` ("Security and access"); Mosaic ACL payload depth is in `reference_mosaic_acl.md`.
 
 ## mstrio-py package notes
 

@@ -2,8 +2,9 @@
 Translates classic Strategy schema object definitions (attributes, facts, metrics)
 into Mosaic-compatible REST payloads. Stateless functions only; callers own the
 network session. See memory/reference_mosaic_schema_object_import.md for the
-design rationale and memory/feedback_mosaic_publishable_datatypes.md for
-datatype normalization rules applied here.
+design rationale and the "DataType preconditions" section of
+memory/reference_mosaic_publish_path.md for datatype normalization rules
+applied here.
 """
 from __future__ import annotations
 

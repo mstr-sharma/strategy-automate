@@ -69,7 +69,7 @@ The `kill-sessions` helper only reaps auth tokens (its docstring says so — `cm
 ## Related
 
 - `reference_strategy_project_loading.md` — confirms that session cap fires on project-scoped calls, not on `/api/auth/login`.
-- `feedback_mosaic_publish_endpoint_collision.md` — the OTHER publish failure mode (firing both publish endpoints concurrently); distinct iServerCode `-2147072194`.
+- `reference_mosaic_publish_path.md` ("Never fire both publish endpoints") — the OTHER publish failure mode (firing both publish endpoints concurrently); distinct iServerCode `-2147072194`.
 - `feedback_mosaic_multi_db_connect_live.md` — multi-DB builds force `in_memory`, which forces publish, which is the session-cap fragile step.
 
 ## Helper-script features that implement this rule

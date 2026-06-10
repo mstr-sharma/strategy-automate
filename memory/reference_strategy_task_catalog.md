@@ -33,7 +33,7 @@ Coverage levels are defined in `reference_strategy_automation_coverage.md`: wrap
 - "Build a Mosaic model from these classic attributes/facts/metrics", "port these schema object IDs": helper `build-from-schema-objects` (`build_mosaic.py`); reads classic definitions, maps their physical tables, batch-creates attributes + factMetrics in CS1, wires relationships in CS2, and creates derived metrics bottom-up in CS3. ApplySimple/custom-SQL/raw-SQL tokens and conditional-metric filter refs are flagged in the review file. See `reference_mosaic_schema_object_import.md`.
 - "Set live/in-memory/hybrid": `set-serve-mode` or `PATCH /api/model/dataModels/{id}`.
 - "Publish/refresh/delete model": `publish`, `refresh`, `delete-model --yes` after enumerating the target ID.
-- "Add tables/attributes/metrics/relationships": Modeling Service under `/api/model/dataModels/{id}/...`; use changesets. **Relationship PUT is destructive** — use `put_relationships_merged()` (default in `wire-relationships`) or pass `--replace` explicitly. See `feedback_mosaic_relationship_put_wipes.md`.
+- "Add tables/attributes/metrics/relationships": Modeling Service under `/api/model/dataModels/{id}/...`; use changesets. **Relationship PUT is destructive** — use `put_relationships_merged()` (default in `wire-relationships`) or pass `--replace` explicitly. See the Relationships section of `reference_mosaic_rest_gotchas.md`.
 - "Validate post-build topology / find isolated attributes / check wiring is complete": `build_mosaic.py validate-topology --model-id <id> --strict`. Surfaces isolated attrs on fact tables, fact tables with zero relationships, and numeric-named attrs that should have been metrics. Make this the LAST step of every wiring/build script. See `reference_mosaic_safety_helpers.md`.
 - "Create derived/compound/conditional/time metric": metric subcommands or clone/remap from existing metric JSON.
 - "Mosaic data-model security filter / row-level security": `/api/model/dataModels/{id}/securityFilters`; assign members with `/api/dataModels/{id}/securityFilters/{sfId}/members`. Use only when the user names a Mosaic data model/model ID or asks to secure a modern data model.
@@ -55,7 +55,7 @@ Coverage levels are defined in `reference_strategy_automation_coverage.md`: wrap
 - "Runtime filter/view filter/metric limit/requested objects": instance request body or dashboard filter endpoint; do not create project filter objects unless explicitly requested.
 
 ## Cubes and datasets
-- "Create/update/publish Intelligent Cube / OLAP cube": `/api/model/cubes`, then publish with `/api/v2/cubes/{cubeId}` or tenant-supported `/api/cubes/{cubeId}`; see `reference_strategy_cubes_and_datasets.md`.
+- "Create/update/publish Intelligent Cube / OLAP cube": `/api/model/cubes`, then publish with `/api/v2/cubes/{cubeId}` or tenant-supported `/api/cubes/{cubeId}`; see `reference_strategy_surface_matrix.md` ("Cubes and datasets").
 - "Execute/read cube data": `POST /api/cubes/{cubeId}/instances`, then `GET /api/cubes/{cubeId}/instances/{instanceId}`.
 - "Create/update Push Data / Super Cube / MTDI dataset": single-table `POST /api/datasets` or multi-table `POST /api/datasets/models` + `/uploadSessions`; publish/status endpoints under `/api/datasets/{datasetId}/uploadSessions/{uploadSessionId}`.
 - "Cube caches/refresh/status": `/api/monitors/caches`, `/api/datasets/cubes/{id}/status`, dataset/cube refresh endpoints; use mstrio cube cache helpers when useful.

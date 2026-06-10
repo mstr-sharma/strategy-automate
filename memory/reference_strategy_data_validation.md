@@ -4,7 +4,7 @@ description: Minimum validation suite for any Strategy / Mosaic model — compar
 type: reference
 tags: [validation, mosaic, classic, build, migration, kimball]
 ---
-Companion to the `strategy-validation` skill (`strategy-validation/SKILL.md`) and the consumer-grade naming checklist (`feedback_consumer_grade_naming.md`).
+Companion to the `strategy-validation` skill (`strategy-validation/SKILL.md`) and the Mosaic ship-bar checklist (`feedback_mosaic_ship_bar.md`).
 
 ## When validation is required
 
@@ -94,7 +94,7 @@ Cross-reference each failure to the likely Kimball / Strategy-engine root cause:
 - **Orphan foreign keys** — fact rows without a matching dim row; reject or quarantine upstream.
 - **Incomplete attribute conformance** — the conformed-dim promise is broken; see `feedback_mosaic_relationship_wiring.md`.
 - **Level metric mismatch** — `dimty` scope wrong; metric is rolling up at a different grain than the user expects.
-- **Fiscal vs calendar mismatch** — wrong date role / transformation; see `reference_strategy_time_modeling.md`.
+- **Fiscal vs calendar mismatch** — wrong date role / transformation; see `reference_data_modeling_foundations.md` → Time modeling.
 - **Security filter over- or under-constraint** — qualification doesn't match business intent; verify element IDs vs display values.
 
 ## Shipping rule

@@ -48,4 +48,4 @@ CI / automation should inject the same variables from the platform's secret stor
 
 ## Validation note
 
-The consumer-grade build + validation reference run documented in `reference_strategy_mosaic_field_study.md` and `reference_strategy_data_validation.md` was executed against a Strategy Cloud tenant. Portfolio numbers (156 data models, 1830 one-to-many relationships, etc.) describe that tenant's state at run time — they are illustrative of shape, not a fixed expectation for every tenant.
+The consumer-grade build + validation reference run documented in `reference_strategy_mosaic_field_study.md` and `reference_strategy_data_validation.md` was executed against a Strategy Cloud tenant. The dated portfolio numbers (156 data models, 1830 one-to-many relationships, etc.) live in `captures/2026-04-21-mosaic-portfolio-field-study/README.md` — they describe that tenant's state at run time and are illustrative of shape, not a fixed expectation for every tenant.

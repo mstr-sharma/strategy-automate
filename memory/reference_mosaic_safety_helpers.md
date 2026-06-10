@@ -74,8 +74,8 @@ These need a live `MSTR` session and call into `mosaic_safety` for the
 underlying logic:
 
 - `put_relationships_merged(m, model_id, attr_id, new_rels, cs)` — GET existing
-  rels, dedupe, PUT the union; default for `cmd_wire_relationships`. See
-  `feedback_mosaic_relationship_put_wipes.md`.
+  rels, dedupe, PUT the union; default for `cmd_wire_relationships`. See the
+  Relationships section of `reference_mosaic_rest_gotchas.md`.
 - `get_attribute_relationships(m, model_id, attr_id)` — read current rels.
 - `validate_join_table_membership(m, model_id, p_id, c_id, join_id)` — verify
   both attribute endpoints have an expression on the join table; pre-flight

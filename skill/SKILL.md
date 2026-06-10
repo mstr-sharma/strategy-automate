@@ -26,12 +26,10 @@ Every one of these owns a piece of the build surface; this skill delegates the d
 - `memory/feedback_build_mosaic_session_leak.md` — one-session-one-process rule; the single most common cause of mid-build failure.
 - `memory/reference_mosaic_rest_api.md` — verified endpoint paths (auth, datasources, catalog, data models, changesets, security, translations).
 - `memory/reference_mosaic_modeling_concepts.md` — payload shapes for attributes, metrics (compound / conditional / level / transformation), relationships, filters, transformations.
-- `memory/reference_mosaic_publish_path.md` — subType routing, 3-step flow, do-not-fire-both rule.
+- `memory/reference_mosaic_publish_path.md` — the one publish file: 3-step flow, do-not-fire-both rule, dataType publish-readiness gate (prevents iServerCode -2147212544 stalls).
 - `memory/reference_mosaic_vs_legacy_surfaces.md` — subType 779 vs 776 classification before any publish/refresh/execute write.
-- `memory/reference_mosaic_clone_pattern.md` — clone-and-remap procedure when a payload shape is unknown.
-- `memory/feedback_mosaic_publishable_datatypes.md` — publish-readiness gate (prevents iServerCode -2147212544 stalls).
-- `memory/feedback_consumer_grade_naming.md` — ship-bar checklist.
-- `memory/feedback_mosaic_forms_and_formats.md` — every attribute's report/browse display must be its DESC form; every metric must carry a format token.
+- `memory/reference_strategy_object_cloning.md` — clone-and-remap procedure when a payload shape is unknown.
+- `memory/feedback_mosaic_ship_bar.md` — ship-bar checklist: naming, DESC-form report/browse displays, metric format tokens, description length cap, SF naming.
 
 ## User inputs
 
@@ -78,7 +76,7 @@ A committed Mosaic data model containing:
 8. **Verify conformance.** For every attribute you expect to be a conformed dim, `get-model-object --kind attribute --model-id ... --object-id ...` and confirm `forms[*].expressions[*].tables` covers every expected table. If missing, PATCH before writing relationships. See `memory/feedback_mosaic_relationship_wiring.md`.
 9. **Relationships (second changeset).** Issue only the PUTs that pass the step-3 and step-5 prerequisites in the wiring recipe.
 10. **Quality gate.** `validate-model --model-id M [--strict-orphans] [--diff-against OTHER_ID] [--json]` — enforces the rules in `feedback_mosaic_build_quality.md`. Exits non-zero on failure.
-11. **Publish (in-memory only).** `publish --model-id M`. ONE trigger per run — never fire `/api/cubes` AND `/api/dataModels/{id}/publish` together (see `feedback_mosaic_publish_endpoint_collision.md`). For `connect_live` models, skip publish — it's a no-op.
+11. **Publish (in-memory only).** `publish --model-id M`. ONE trigger per run — never fire `/api/cubes` AND `/api/dataModels/{id}/publish` together (see `memory/reference_mosaic_publish_path.md`). For `connect_live` models, skip publish — it's a no-op.
 12. **Validate data correctness.** Route through `strategy-validation/SKILL.md` with a trusted comparator. A build without validation is not shippable.
 13. **Print the model URL.**
 
@@ -169,9 +167,9 @@ Strategy REST paths drift between versions. If a call 404s:
 
 - **Silent under-joined model** (no error, `forms[].expressions` doesn't span all expected tables) — `feedback_mosaic_relationship_wiring.md`.
 - **Session cap trip** (`8004cb0a`, iServerCode `-2147072486`) mid-pipeline — `feedback_build_mosaic_session_leak.md`.
-- **Publish stall** (iServerCode `-2147212544` or `-2147072194`) — `feedback_mosaic_publishable_datatypes.md` or `feedback_mosaic_publish_endpoint_collision.md` respectively.
+- **Publish stall** (iServerCode `-2147212544` or `-2147072194`) — `reference_mosaic_publish_path.md` ("DataType preconditions" and "Never fire both publish endpoints" respectively).
 - **Duplicate attribute name** (`8004e409`) — conformed dim not declared; see wiring recipe.
 - **Form PATCH failure** (`8004cc63`, `8004cd0a`) — fix form names at CREATE time, not post-hoc PATCH.
-- **Description too long** (`8004cc10`) — keep under ~250 chars (`feedback_mosaic_description_length_cap.md`).
+- **Description too long** (`8004cc10`) — keep under ~250 chars (`feedback_mosaic_ship_bar.md`).
 
 Every one of these has a row in `memory/reference_strategy_error_codes.md`. Grep there before retrying.

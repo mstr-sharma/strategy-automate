@@ -2482,7 +2482,7 @@ def _mosaic_publish_verified(m: MSTR, model_id: str, *, poll_seconds: int = 180,
                              poll_interval: float = 5.0) -> None:
     """Publish a Mosaic data model via the verified 3-step flow and assert completion.
 
-    Flow (see memory/reference_mosaic_vs_legacy_surfaces.md):
+    Flow (see memory/reference_mosaic_publish_path.md):
       1. POST /api/dataModels/{id}/instances           -> 204 with X-MSTR-DataModelInstanceId header
       2. POST /api/dataModels/{id}/publish             body {"tables":[{id,refreshPolicy:replace}]}
       3. poll GET /api/dataModels/{id}/publishStatus   until every table is "loaded"
@@ -2539,8 +2539,9 @@ def _mosaic_publish_verified(m: MSTR, model_id: str, *, poll_seconds: int = 180,
         time.sleep(poll_interval)
     die(f"_mosaic_publish_verified: timeout after {poll_seconds}s; last status: "
         f"{json.dumps(last)[:400] if last else 'none'}. "
-        f"This signature historically indicates tenant-side QueryEngineServer trouble; "
-        f"see memory/reference_mosaic_vs_legacy_surfaces.md.")
+        f"This signature historically indicates tenant-side QueryEngineServer trouble or "
+        f"dirty dataTypes; see memory/reference_mosaic_publish_path.md and "
+        f"captures/2026-04-22-queryengine-publish-incident/README.md.")
 
 
 def _classic_cube_publish(m: MSTR, cube_id: str) -> None:
@@ -2950,7 +2951,7 @@ def cmd_wire_relationships(m: MSTR, args):
         if missing:
             skips.append((label,
                 f"{'+'.join(missing)} has no expression on relationship_table (would trip 8004ccc7); "
-                f"PATCH to add the missing expression first — see reference_mosaic_clone_pattern.md"))
+                f"PATCH to add the missing expression first — see reference_strategy_object_cloning.md"))
             continue
 
         plan.append((p_id, c_id, rtbl_id, rtype, label))

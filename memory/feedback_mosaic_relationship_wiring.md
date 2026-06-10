@@ -55,7 +55,7 @@ Even with an explicit `relationships[]` block in the dictionary, `PUT /api/model
 
 3. **Declare ONLY the relationships you cannot express via conformance.** Shared-attribute joins happen for free. The dictionary `relationships[]` block is for genuinely different attributes joined through a fact table (e.g. `Event → <Entity>` through `<event_fact>` when Event is not an entity-keyed attribute). Never list a relationship where both parent and child resolve to the same logical attribute name — Mosaic rejects it as `8004ccdb`.
 
-4. **After `build` returns, immediately GET every conformed attribute and verify `forms[*].expressions[*].tables` covers every expected table.** A missing table means auto-conformance dropped the case-mismatched variant despite the dictionary. Fix with a single PATCH changeset that adds the missing expression (clone-and-remap pattern from `reference_mosaic_clone_pattern.md`). Do this BEFORE any relationship PUTs.
+4. **After `build` returns, immediately GET every conformed attribute and verify `forms[*].expressions[*].tables` covers every expected table.** A missing table means auto-conformance dropped the case-mismatched variant despite the dictionary. Fix with a single PATCH changeset that adds the missing expression (clone-and-remap pattern from `reference_strategy_object_cloning.md`). Do this BEFORE any relationship PUTs.
 
 5. **For each relationship, verify the `relationship_table` prerequisite: the parent attribute must have an expression on that table AND the child attribute must have an expression on that table.** If either is missing, `8004ccc7` fires. Add the missing expression first (same PATCH pattern), then issue the relationship.
 
@@ -112,5 +112,5 @@ Both flags augment `--dictionary` (do not replace it). Apply order at build time
 
 - `feedback_build_mosaic_session_leak.md` — session-cap budget and batching rules.
 - `reference_mosaic_relationship_archetypes.md` — the 6 canonical join patterns (star, snowflake, bridge, composite-FK, descriptive, date-hierarchy) — pick one before writing a relationship.
-- `reference_mosaic_clone_pattern.md` — the PATCH-with-GET-first procedure for adding a missing expression to an existing attribute.
+- `reference_strategy_object_cloning.md` — the PATCH-with-GET-first procedure for adding a missing expression to an existing attribute.
 - `reference_data_modeling_foundations.md` — Kimball conformed-dimension principle, grain declaration, star vs snowflake topology.

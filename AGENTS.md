@@ -35,7 +35,7 @@ User task → which branch?
      → memory/reference_strategy_legacy_to_mosaic_mining.md (start-here hub)
      → strategy-data-modeling/SKILL.md → skill/SKILL.md
 5. Unknown endpoint / unfamiliar payload shape?
-     → openapi-summary / openapi-search → clone-and-remap (reference_mosaic_clone_pattern.md)
+     → openapi-summary / openapi-search → clone-and-remap (reference_strategy_object_cloning.md)
 ```
 
 **Skill precedence is strict: classify (automation) → plan (data-modeling) → execute (build) → verify (validation).** No skill routes back up the chain. `strategy-automation` and `strategy-data-modeling` do NOT route to each other in a loop.
@@ -64,7 +64,7 @@ For Mosaic work, distinguish the entry path:
 ## Operating rules (apply to every tool)
 
 - **Classify Mosaic vs legacy before every write.** Before hitting any endpoint that differs between the two families (publish, refresh, execute, serve-mode, ACL, security filter), call `GET /api/objects/{id}?type=3` and branch on `subtype`: 779 → Mosaic data model, 776 → classic Intelligent Cube, anything else → stop and classify further. See `memory/reference_mosaic_vs_legacy_surfaces.md` for the endpoint-pair cheat sheet. For publishing, `memory/reference_mosaic_publish_path.md` is canonical: both trigger paths work on a properly-typed Mosaic model (`POST /api/cubes/{id}?cubeAction=publish` is what the UI uses and the reliable trigger on the observed Strategy ONE Cloud family; the Modeling-native 3-step flow returns per-table status). Never trust the 202/204 alone — poll `publishStatus` (or probe the model via a Trino/MCP `count(*)` query) until tables are loaded before declaring success.
-- **Consumer-grade naming is the ship bar.** Any model you build or modify must pass the checklist in `memory/feedback_consumer_grade_naming.md` — business-named attributes, non-empty form names, business-friendly descriptions, sensible metric formats, no hardcoded example usernames or personal names.
+- **Consumer-grade naming is the ship bar.** Any model you build or modify must pass the checklist in `memory/feedback_mosaic_ship_bar.md` — business-named attributes, non-empty form names, business-friendly descriptions, sensible metric formats, no hardcoded example usernames or personal names.
 - **Every Mosaic build closes with data validation or an explicit pending note.** Route through `strategy-validation/SKILL.md`; validation is comparator-dependent, and the reference source can be another Mosaic model, a classic project report/model, a flat file, direct warehouse SQL, an external system/API, or a saved REST fixture (NOT Mosaic-to-Mosaic only). If no trusted comparator is available, say validation is pending and do not call the build shippable.
 - **Changesets are the unit of write.** Open → mutate → commit, or discard on failure. Relationships / ACLs / translations typically require a separate changeset after object creation.
 - **Preserve tenant-verified gotchas.** When a script's endpoint returns 404 or a payload shape changes, update both the script and the corresponding memory file. Never silently work around.

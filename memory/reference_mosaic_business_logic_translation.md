@@ -5,7 +5,7 @@ type: reference
 tags: [mosaic, modeling, kimball, grain, build, translation]
 ---
 
-This memory sits upstream of `build-mosaic-model`, `reference_mosaic_modeling_concepts.md`, `reference_mosaic_relationship_archetypes.md`, and `feedback_mosaic_forms_and_formats.md`. Those documents describe *what Mosaic supports*. This one describes *how to decide what the model should contain* before writing a single changeset.
+This memory sits upstream of `build-mosaic-model`, `reference_mosaic_modeling_concepts.md`, `reference_mosaic_relationship_archetypes.md`, and `feedback_mosaic_ship_bar.md`. Those documents describe *what Mosaic supports*. This one describes *how to decide what the model should contain* before writing a single changeset.
 
 ## Output of a translation pass
 

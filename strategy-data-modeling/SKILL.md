@@ -22,25 +22,18 @@ Do NOT route back up the chain. This skill calls execution skills; execution ski
 
 Kimball foundations (load first, every time):
 
-- `memory/reference_data_modeling_foundations.md` — grain, conformed dims, star/snowflake topology, additivity, anti-patterns
-- `memory/reference_strategy_schema_objects.md` — Kimball → Strategy object mapping
-- `memory/reference_strategy_attribute_design.md`
-- `memory/reference_strategy_fact_metric_design.md`
-- `memory/reference_strategy_relationship_design.md`
-- `memory/reference_strategy_hierarchy_design.md`
-- `memory/reference_strategy_time_modeling.md`
+- `memory/reference_data_modeling_foundations.md` — the ONE Kimball design file: grain, conformed dims, star/snowflake topology, additivity, anti-patterns, plus sections for Strategy schema objects (Kimball → object mapping), Attribute design, Fact and metric design, Relationship design, Hierarchy design, and Time modeling
 - `memory/reference_strategy_data_validation.md` — 10-check design suite + 5-query runnable suite
 
 Mosaic work (additional):
 
-- `memory/reference_strategy_mosaic_modeling.md`
+- `memory/checklist_strategy_automation_modeling_playbook.md` — mandatory pre-build pass: surface routing, build sequence, changeset/rollback gates, publish readiness, validation close-out
 - `memory/feedback_mosaic_relationship_wiring.md` — conformed-dim encoding + error-code fix recipes
-- `memory/feedback_consumer_grade_naming.md`
+- `memory/feedback_mosaic_ship_bar.md`
 
 Classic / migration (additional):
 
-- `memory/reference_strategy_legacy_semantic_modeling.md`
-- `memory/reference_strategy_legacy_to_mosaic_mining.md`
+- `memory/reference_strategy_legacy_to_mosaic_mining.md` — start-here hub; classic inventory checklist + object→Mosaic migration mapping
 
 ## Output contract — Kimball-first model plan
 
