@@ -815,7 +815,7 @@ def load_erd(path: str) -> list[dict]:
 # render layer can't map an integer with scale=INT_MIN to a known DssDataType.
 # Postgres, MySQL, and SQL Server backends have all been observed to surface
 # integer + char/varchar (fixed_length_string) columns with this sentinel.
-# See feedback_dssdatatype_sentinel_scale.md.
+# See memory/reference_mosaic_publish_path.md (DataType preconditions).
 _DATATYPE_INT_MIN_SENTINEL = -2147483648
 
 
@@ -942,7 +942,7 @@ def open_cs(m: MSTR, *, schema_edit: bool = False, release_self_locks: bool = Fa
     schema_edit=True  — adding/modifying form expressions on attributes, or
                         otherwise touching the schema graph itself. Using the
                         wrong type silently produces 8004ccde or no-ops the
-                        write. The chosen type is recorded on the session.
+                        write.
 
     release_self_locks=True — if open fails with 8004cc41 (schemaEdit lock
                               conflict) and the existing lock is owned by the
@@ -989,19 +989,12 @@ def open_cs(m: MSTR, *, schema_edit: bool = False, release_self_locks: bool = Fa
     if not cs:
         die(f"open_cs: {d}")
     m.s.headers["X-MSTR-MS-Changeset"] = cs
-    # Stash the type on the session so helpers can assert; not a real header
-    # for Strategy, just internal state.
-    if not hasattr(m, "_cs_types"):
-        m._cs_types = {}
-    m._cs_types[cs] = "schema" if schema_edit else "data"
     return cs
 
 
 def commit_cs(m: MSTR, cs: str):
     r = m.post(f"/api/model/changesets/{cs}/commit")
     m.s.headers.pop("X-MSTR-MS-Changeset", None)
-    if getattr(m, "_cs_types", None):
-        m._cs_types.pop(cs, None)
     if not r.ok:
         die(f"commit {cs}: {format_mstr_error(r)}")
 
@@ -1025,8 +1018,6 @@ def discard_cs(m: MSTR, cs: str) -> None:
     except Exception:
         pass
     m.s.headers.pop("X-MSTR-MS-Changeset", None)
-    if getattr(m, "_cs_types", None):
-        m._cs_types.pop(cs, None)
 
 
 # ── Relationship safety: merge-aware PUT + join-table preflight ──────────────

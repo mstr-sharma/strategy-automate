@@ -14,7 +14,7 @@ Read `GET /api/objects/{id}?type=3` → `subtype`:
 2. `776` → Legacy Intelligent Cube via the classic cube server.
 3. Anything else → stop and classify further: classic project object (attribute/metric/report/filter in the legacy semantic layer) or AI agent / Auto agent (separate surface).
 
-Never call a legacy endpoint on a Mosaic object, or a Mosaic endpoint on a legacy object, even if the id would happen to resolve on both. The responses are *different behaviors*, not interchangeable aliases.
+Never call a legacy endpoint on a Mosaic object, or a Mosaic endpoint on a legacy object, even if the id would happen to resolve on both. The responses are *different behaviors*, not interchangeable aliases. Calling a Mosaic-only endpoint (`/api/model/dataModels/*`) on a non-779 object fails with `8004e457` — "Given object is not a Mosaic model" — which is the classification rule above telling you it was skipped.
 
 ## The pairs that most often get confused
 

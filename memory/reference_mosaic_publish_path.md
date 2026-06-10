@@ -31,7 +31,7 @@ Use when you need per-table refresh policies (add / replace / delete / update / 
 POST /api/dataModels/{modelId}/instances
 -> 204, X-MSTR-DataModelInstanceId: <inst>
 
-# 2. Trigger publish. Body is REQUIRED (empty or {}) — server returns 400 "tableRefreshSettings cannot be null" otherwise.
+# 2. Trigger publish. A body with a tables[] entry per logical table is REQUIRED — an empty body or bare {} fails (400 "tableRefreshSettings cannot be null"; observed as 500 on some builds).
 POST /api/dataModels/{modelId}/publish
 Headers: X-MSTR-DataModelInstanceId: <inst>
 Body: {"tables":[{"id":"<tid>","refreshPolicy":"replace"}, ...]}    # one entry per logical table

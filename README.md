@@ -33,7 +33,9 @@ strategy-automate/
 │   │   └── scripts/
 │   │       ├── _client.py               # shared BaseMSTR, auth args, search, inventory helpers
 │   │       ├── build_mosaic.py          # subcommands for auth, catalog, build, publish, wire-relationships, SF, ACL, translate, validate-model, … (see --help)
+│   │       ├── mosaic_safety.py         # stateless defensive helpers (error parsing, expression builders, merge-aware relationship PUT)
 │   │       ├── preflight_model_check.py
+│   │       ├── schema_object_translator.py    # classic schema objects → Mosaic payload translation
 │   │       ├── strategy_mosaic_inventory.py   # walk every Mosaic data model (subType 779)
 │   │       ├── strategy_semantic_inventory.py # walk classic attrs / facts / metrics / filters / hierarchies
 │   │       ├── strategy_semantic_mine.py      # top-down / reverse lineage for legacy → Mosaic

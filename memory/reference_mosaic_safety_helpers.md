@@ -77,15 +77,16 @@ underlying logic:
   rels, dedupe, PUT the union; default for `cmd_wire_relationships`. See the
   Relationships section of `reference_mosaic_rest_gotchas.md`.
 - `get_attribute_relationships(m, model_id, attr_id)` — read current rels.
-- `validate_join_table_membership(m, model_id, p_id, c_id, join_id)` — verify
-  both attribute endpoints have an expression on the join table; pre-flight
-  for `8004ccc7`.
+- `wire-relationships --dry-run` pre-flight — validates self-reference
+  (`8004ccdb`) and relationship_table membership (`8004ccc7`) inline in
+  `cmd_wire_relationships` before any PUT; the dry run prints the plan and
+  skip reasons without writing.
 - `post_build_validate_topology(m, model_id, expected_tables=...)` — structured
   report: isolated attrs, fact tables without relationships, missing expected
   tables, numeric-named attrs that look like measures.
-- `open_cs(m, schema_edit=True|False)` — explicit changeset typing.
-- `assert_changeset_type(m, cs, schema_edit=...)` — fail fast if a write path
-  is using the wrong changeset type.
+- `open_cs(m, schema_edit=True|False)` — typed changeset opens
+  (open → mutate → `commit_cs`/`discard_cs`); picking the wrong type silently
+  produces `8004ccde` or no-ops the write.
 
 ## CLI surface added
 
