@@ -80,4 +80,3 @@
 
 ## Field captures (capture targeting)
 - [Chrome MCP capture — arm BEFORE the click](reference_chrome_mcp_capture.md) — `read_network_requests` is opt-in per tab and records only after first invocation; call it to arm the capture, THEN have the user interact.
-- [Local skill bundles](reference_local_skill_bundles.md) — `skills/strategy-brand` + `skills/strategy-product-knowledge` — read before brand deliverables or Strategy product content.
