@@ -40,9 +40,10 @@ Every Mosaic model shipped to users must be **consumer-grade**: names readable b
 
 Apply post-build format tokens to each metric:
 
-- **Currency** (monetary fields): `format.values = [{type:"number_category",value:"1"},{type:"number_format",value:"#,##0.00"},{type:"symbol_position",value:"prefix"},{type:"symbol",value:"$"}]` — or locale-appropriate symbol.
-- **Percent** (rate metrics, 0-1 scale): `{type:"number_category",value:"2"},{type:"number_format",value:"0.00%"}`.
-- **Integer** (counts, quantities): `{type:"number_category",value:"3"},{type:"number_format",value:"#,##0"}`.
+- **Currency** (monetary fields): `format.values = [{type:"number_category",value:"2"},{type:"number_decimal_places",value:"2"},{type:"number_format",value:"$#,##0.00;($#,##0.00)"}]` — or locale-appropriate symbol.
+- **Percent** (rate metrics, 0-1 scale): `{type:"number_category",value:"5"},{type:"number_decimal_places",value:"2"},{type:"number_format",value:"0.00%"}`.
+- **Integer** (counts, quantities): `{type:"number_category",value:"1"},{type:"number_decimal_places",value:"0"},{type:"number_format",value:"#,##0"}`.
+- (`number_category` enum, tenant-verified: 0=General, 1=Number, 2=Currency, 3=Date, 4=Time, 5=Percentage, 6=Fraction, 7=Scientific, 9=Accounting — canonical table in `feedback_mosaic_forms_and_formats.md`.)
 - **Decimal** (everything else): explicit 2-decimal format so the default doesn't render with 6+ trailing zeros.
 
 Keep `CURRENCY_METRICS` / `PERCENT_METRICS` / `INTEGER_METRICS` sets in the build script so formatting isn't a guessing game.

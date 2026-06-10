@@ -13,7 +13,7 @@ Verified against a Strategy ONE Library Modeling Service in 2026. These rules ca
 
 ## Physical tables
 - `POST /api/model/dataModels/{id}/tables`: the accepted shape on current Library servers is `physicalTable.type: "pipeline"` with a `pipeline` field containing a **stringified JSON** describing `rootTable → source → importSource`. `warehouse_partition_table` is rejected with `Invalid value for field 'type'`. A bare `normal` type rejects the `databaseInstance` field (`Unrecognized field: databaseInstance`).
-- The pipeline JSON shape that works (see `scripts/build_mosaic.py` L694–L722):
+- The pipeline JSON shape that works (see `_make_pipeline_table_body()` in `skill/scripts/build_mosaic.py`):
   ```json
   {
     "id": "<uuid>",

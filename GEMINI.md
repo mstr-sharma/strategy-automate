@@ -4,4 +4,4 @@ This repo's agent instructions live in [`AGENTS.md`](AGENTS.md). Gemini CLI, ple
 
 Everything else (skills, scripts, env-var setup) is in the repo structure documented in [`README.md`](README.md).
 
-Git defaults are documented in [`AGENTS.md`](AGENTS.md): `origin` points to the work repo and `personal` preserves the old mirror.
+Git defaults and credentials are in [`AGENTS.md`](AGENTS.md).

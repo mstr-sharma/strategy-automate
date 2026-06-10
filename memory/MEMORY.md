@@ -1,3 +1,5 @@
+> **Authoring rules:** one fact per file with `name`/`description`/`type` frontmatter, indexed here with a one-line hook. Cite code by function or subcommand name with a repo-root-relative path (e.g. `cmd_kill_sessions()` in `skill/scripts/build_mosaic.py`) — never line numbers, which rot on every refactor.
+
 ## Meta, env, and operating rules
 - [User profile](user_profile.md) — Strategy Sales Engineer persona; values terse, working-code outputs across Mosaic + classic semantic layer.
 - [Repo charter + how to extend](project_mosaic_build.md) — complete Strategy platform automation; how skills/scripts/memory interact; how to add a new surface without bloat.
