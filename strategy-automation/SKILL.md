@@ -44,17 +44,17 @@ strategy-automation (this skill — classify)
 - **Deep Mosaic semantic inspection / legacy↔Mosaic bridge:** read `reference_strategy_mosaic_field_study.md`; use `skill/scripts/strategy_mosaic_inventory.py` to inventory every Mosaic data model (subType 779) — tables, attributes, factMetrics, custom metrics, hierarchy, security filters, externalDataModels — and reference the classic→Mosaic translation matrix for object-by-object mapping. Use `/usr/bin/python3` on this workstation (Anaconda OpenSSL hangs on {MSTR_BASE host} TLS).
 - **Legacy-to-Mosaic discovery:** read `reference_strategy_legacy_to_mosaic_mining.md`; use `skill/scripts/strategy_semantic_mine.py` to mine reports/documents into candidate tables or reverse from tables into attributes/facts/metrics/reports before building a Mosaic model.
 - **Classic schema objects → Mosaic model (shortcut):** if the user says "build a Mosaic model from these attributes/facts/metrics", "port these schema objects to Mosaic", or supplies a list of Strategy object IDs (32-hex UUIDs) with object-type context, route to `skill/scripts/build_mosaic.py build-from-schema-objects`. See `reference_mosaic_schema_object_import.md` for flags, changeset sequencing, batch behavior, and known limitations (ApplySimple, conditional filters, level metrics). Prerequisite: the user must supply attribute/fact/metric object IDs; run `strategy_semantic_mine.py` first if only report or table names are known.
-- **Defensive wiring helpers — required reading for any custom relationship-wiring script:** `reference_mosaic_safety_helpers.md` indexes `mosaic_safety.py` (stateless: error-code parsing, expression builders, attributeLookupTable bulk-response readers, role-playing detection) and the stateful companions in `build_mosaic.py` (`put_relationships_merged`, `validate_join_table_membership`, `post_build_validate_topology`, typed `open_cs`). Always close wiring scripts with `validate-topology --strict`. The relationship PUT is destructive — see `feedback_mosaic_relationship_put_wipes.md` before issuing one directly. Multi-FK-to-same-dim patterns: `feedback_mosaic_role_playing_dimensions.md`.
+- **Defensive wiring helpers — required reading for any custom relationship-wiring script:** `reference_mosaic_safety_helpers.md` indexes `mosaic_safety.py` (stateless: error-code parsing, expression builders, attributeLookupTable bulk-response readers, role-playing detection) and the stateful companions in `build_mosaic.py` (`put_relationships_merged`, `validate_join_table_membership`, `post_build_validate_topology`, typed `open_cs`). Always close wiring scripts with `validate-topology --strict`. The relationship PUT is destructive — see the Relationships section of `reference_mosaic_rest_gotchas.md` before issuing one directly. Multi-FK-to-same-dim patterns: `feedback_mosaic_role_playing_dimensions.md`.
 - **Security filters:** if no Mosaic data-model ID is in the request, treat it as a classic project security filter: create definition with `/api/model/securityFilters`, assign users/groups with `/api/securityFilters/{id}/members`. Use `/api/model/dataModels/{id}/securityFilters` only for Mosaic data-model security filters.
 - **Attributes and metrics:** route by container. Classic/project objects use `/api/model/attributes|metrics`; Mosaic-contained objects use `/api/model/dataModels/{id}/attributes|metrics|factMetrics`; Push Data dataset attributes/metrics live in `/api/datasets` definitions.
 - **ACL/object security:** classic object ACL uses `GET/PUT /api/objects/{id}?type=...`; Mosaic-contained object ACL uses `/api/model/dataModels/{id}/objects/{objectId}/acl`; security roles/privileges are separate from ACL and security filters.
-- **Cubes/datasets:** read `reference_strategy_cubes_and_datasets.md`; Intelligent/OLAP cubes, Super Cube/MTDI Push Data datasets, DDA/MDX runtime cubes, and Mosaic models use different endpoint families.
-- **Legacy-vs-Mosaic surface guard (must-read before any publish/refresh/execute write):** read `reference_mosaic_vs_legacy_surfaces.md`. **Hard rule:** before hitting `/api/cubes/...`, `/api/dataModels/...`, or `/api/model/dataModels/.../publish`, classify the target via `GET /api/objects/{id}?type=3` → `subtype`. 779 → Mosaic data model (use `/api/dataModels/{id}/publish` + instance header + `tables[]` body + poll `/publishStatus`). 776 → classic Intelligent Cube (use `/api/cubes/...`). Never treat a legacy 2xx as evidence a Mosaic model is published. `build_mosaic.py publish` now routes by subType; do not bypass it with ad-hoc `/api/cubes/*` calls.
+- **Cubes/datasets:** read `reference_strategy_surface_matrix.md` ("Cubes and datasets"); Intelligent/OLAP cubes, Super Cube/MTDI Push Data datasets, DDA/MDX runtime cubes, and Mosaic models use different endpoint families.
+- **Legacy-vs-Mosaic surface guard (must-read before any publish/refresh/execute write):** read `reference_mosaic_vs_legacy_surfaces.md`. **Hard rule:** before hitting `/api/cubes/...`, `/api/dataModels/...`, or `/api/model/dataModels/.../publish`, classify the target via `GET /api/objects/{id}?type=3` → `subtype`. 779 → Mosaic data model (publish per `reference_mosaic_publish_path.md` — ONE trigger per run, then poll `/publishStatus` or Trino-probe before declaring success). 776 → classic Intelligent Cube (use `/api/cubes/...`). Never treat an unconfirmed 2xx as evidence a Mosaic model is published. `build_mosaic.py publish` now routes by subType; do not bypass it with ad-hoc `/api/cubes/*` calls.
 - **Reports/dashboards/documents runtime:** read `reference_strategy_runtime_analytics.md`; create instances, answer prompts, apply runtime filters, then fetch/export results.
 - **Platform admin:** read `reference_strategy_admin_platform.md`; datasource admin, distribution/subscriptions, migrations/packages, monitors/caches, project load/unload, settings, search/browse, and object ownership have separate endpoint families.
 - **AI/Agent/Bot:** read `reference_strategy_ai_agents.md`; prefer Auto Agent `/api/questions` and `/api/v2/bots` paths; treat `/api/bots` as legacy/deprecated unless required.
 - **Validation/testing:** read `reference_strategy_validation_workflows.md`; do not run live write tests until the user signs off on the numbered workflows and cleanup behavior.
-- **Data-correctness validation (post-build, pre-ship):** route through `strategy-validation/SKILL.md` and `reference_strategy_data_validation.md` (covers both the design-time 10-check suite and the runnable 5-query paired-query suite). Reference can be another Mosaic model, legacy/classic report, flat file, direct warehouse SQL, or a saved REST fixture — NOT Mosaic-to-Mosaic only. Required after every build per `feedback_consumer_grade_naming.md` item 8.
+- **Data-correctness validation (post-build, pre-ship):** route through `strategy-validation/SKILL.md` and `reference_strategy_data_validation.md` (covers both the design-time 10-check suite and the runnable 5-query paired-query suite). Reference can be another Mosaic model, legacy/classic report, flat file, direct warehouse SQL, or a saved REST fixture — NOT Mosaic-to-Mosaic only. Required after every build per `feedback_mosaic_ship_bar.md` checklist item 8.
 - **Drop-in ERDs, dictionaries, rosters, or legacy update briefs:** read `reference_strategy_intake_patterns.md`, normalize files to supported JSON/YAML/CSV/DBML/Mermaid/SQL formats, then resolve IDs before writing.
 - **Any REST endpoint not wrapped yet:** use:
   ```bash
@@ -83,14 +83,13 @@ strategy-automation (this skill — classify)
 
 - Error-code index (grep first on any 4xx/5xx): `reference_strategy_error_codes.md`
 - Kimball modeling foundations: `reference_data_modeling_foundations.md`
-- Strategy schema object map: `reference_strategy_schema_objects.md`
-- Attribute design: `reference_strategy_attribute_design.md`
-- Fact and metric design: `reference_strategy_fact_metric_design.md`
-- Relationship design: `reference_strategy_relationship_design.md`
-- Hierarchy design: `reference_strategy_hierarchy_design.md`
-- Time modeling: `reference_strategy_time_modeling.md`
-- Mosaic modeling execution guidance: `reference_strategy_mosaic_modeling.md`
-- Legacy semantic modeling and migration framing: `reference_strategy_legacy_semantic_modeling.md`
+- Strategy schema object map: `reference_data_modeling_foundations.md` → Strategy schema objects
+- Attribute design: `reference_data_modeling_foundations.md` → Attribute design
+- Fact and metric design: `reference_data_modeling_foundations.md` → Fact and metric design
+- Relationship design: `reference_data_modeling_foundations.md` → Relationship design
+- Hierarchy design: `reference_data_modeling_foundations.md` → Hierarchy design
+- Time modeling: `reference_data_modeling_foundations.md` → Time modeling
+- Mosaic modeling pre-build playbook (sequence, changesets, publish gates): `checklist_strategy_automation_modeling_playbook.md`
 - Model + data validation: `reference_strategy_data_validation.md`
 - Environment and credentials: `reference_strategy_env.md`
 - Raw REST spec usage: `reference_strategy_openapi.md`
@@ -100,11 +99,11 @@ strategy-automation (this skill — classify)
 - Drop-in ERD/dictionary/user-list/legacy-update intake: `reference_strategy_intake_patterns.md`
 - Surface routing matrix: `reference_strategy_surface_matrix.md`
 - Legacy/project semantic-layer and admin workflows: `reference_strategy_legacy_semantic_admin.md`
-- Legacy-to-Mosaic mining: `reference_strategy_legacy_to_mosaic_mining.md`
-- Tutorial semantic field study: `reference_strategy_tutorial_semantic_field_study.md`
-- Mosaic field study + legacy↔Mosaic bridge: `reference_strategy_mosaic_field_study.md`
+- Legacy-to-Mosaic mining + classic inventory / migration mapping: `reference_strategy_legacy_to_mosaic_mining.md`
+- Tutorial semantic anatomy + legacy→Mosaic translation: `reference_strategy_tutorial_semantic_field_study.md`
+- Mosaic portfolio inventory rules + legacy↔Mosaic bridge: `reference_strategy_mosaic_field_study.md`
 - Classic-to-modern design transition: `reference_strategy_design_transition.md`
-- Cube and dataset families: `reference_strategy_cubes_and_datasets.md`
+- Cube and dataset families: `reference_strategy_surface_matrix.md` ("Cubes and datasets")
 - Runtime analytics/prompts/filters/exports: `reference_strategy_runtime_analytics.md`
 - Platform administration: `reference_strategy_admin_platform.md`
 - AI agents/bots/chats: `reference_strategy_ai_agents.md`

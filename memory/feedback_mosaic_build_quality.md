@@ -9,9 +9,7 @@ Every rule: `Rule. **Why:** ... **How to apply:** ...`
 
 ## R1 — Every attribute form must have a non-empty human-readable `name` before the first POST.
 
-**Why:** empty form names are the single worst Mosaic build defect. They silently disable Strategy's auto-hierarchy-relationship detector (so intra-table fan-outs like `Customer Address → Customer`, `Part Brand → Part`, `Order Status → Order Key` never get created), they render as blank column headers in Library, and post-hoc PATCH to fix them fails on this tenant with `8004cc63`. Observed on the script-built model: 44 of the expected 54 relationships missing plus blank report headers, all traceable to `forms[i].name == ""`.
-
-**How to apply:** in any attribute create path, derive `forms[i].name` from the semantic column name (title-case, no underscores) before the POST; if a category is set but the name is not, copy the category into the name. Treat `forms[i].name == ""` as a hard build failure — fail the changeset, not the report. Verify post-commit by reading the attribute list and asserting every form name is non-empty.
+Canonical rule, the why (silently disabled auto-hierarchy detection, blank Library headers, the 44-of-54-relationships TPC-H observation), the `8004cc63` fix-at-create-time note, and the how-to-apply all live in `feedback_mosaic_ship_bar.md` § Form naming.
 
 ## R2 — `enableAutoHierarchyRelationships: true` is a convenience, not a contract.
 
@@ -47,12 +45,7 @@ Every rule: `Rule. **Why:** ... **How to apply:** ...`
 
 **Why:** summing a discount rate yields nonsense; summing a unit price inflates totals; not summing a quantity makes the metric useless. The hand-built model left `Line Discount Rate`, `Part Retail Price`, and `Supply Cost` as SUM (wrong semantics for the first two); the script-built model converted all three to AVG (better for rates/prices, worse if the user wants SUM(qty × price)). Neither was uniformly correct.
 
-**How to apply:** classify each fact column by semantic family at ingest:
-- **Additive** (quantities, counts, extended amounts, totals, balances rolled up): SUM — `EXTENDEDPRICE`, `QUANTITY`, `TOTALPRICE`, `AVAILQTY`, `ACCTBAL` when rolling up a portfolio.
-- **Averageable rates / ratios / percentages**: AVG — `DISCOUNT`, `TAX`, any `_RATE`/`_PCT`/`_RATIO` column.
-- **Point-in-time unit values** (unit_price, list_price, retail_price, supply_cost): AVG at dim grain, kept raw at transaction grain; emit a derived SUM(qty × price) compound metric for transaction totals.
-- **Semi-additive balances**: LAST or AVG — `ACCTBAL` at a single time-point, inventory snapshots, etc.
-Run a column-name classifier in the build and surface a per-metric table in the build log: `column → family → chosen function`. The user can override via config.
+**How to apply:** classify each fact column by semantic family at ingest, per the canonical aggregation-semantics table in `feedback_mosaic_ship_bar.md` § Metric naming and aggregation (additive → SUM, averageable rates → AVG, point-in-time unit values → AVG-at-dim + derived SUM(qty × price), semi-additive balances → LAST/AVG). Run a column-name classifier in the build and surface a per-metric table in the build log: `column → family → chosen function`. The user can override via config.
 
 ## R8 — Commit success does not mean all objects persisted; read-back every created object.
 
@@ -70,7 +63,7 @@ Run a column-name classifier in the build and surface a per-metric table in the 
 
 **Why:** the model description is consumed by the Mosaic AI agent (Auto), the MCP `get_mosaic_models` tool, the Workstation catalog, and any downstream governance report. Blank descriptions materially hurt discoverability and AI-grounded QA. The script-built model had an empty description; the hand-built one had a one-sentence business summary.
 
-**How to apply:** in the build helper, generate a 1–2 sentence business summary from the table list and fact-metric names at build time (`"Analyzes <grains> across <facts>, with <dimensions> hierarchy"`). Require non-empty before commit. Extend to every attribute and metric — blank descriptions are never acceptable on a consumer-grade build.
+**How to apply:** in the build helper, generate a 1–2 sentence business summary from the table list and fact-metric names at build time (`"Analyzes <grains> across <facts>, with <dimensions> hierarchy"`) — keep it under the ~250-char cap. Require non-empty before commit. Blank attribute/metric descriptions fail the ship bar — see `feedback_mosaic_ship_bar.md` § Descriptions.
 
 ## R11 — Side-by-side model diff is a 30-second QA pattern; use it on every regeneration.
 

@@ -54,4 +54,4 @@ type: feedback
 - `AGENTS.md` "Operating rules" — the high-level "never hardcode" rule this memory elaborates (see the "Keep every durable artifact generalizable" bullet).
 - `reference_strategy_env.md` — the env-var / CLI-flag convention every script already implements.
 - `captures/2026-04-22-automation-audit/` — prior audit that found similar leaks (now under captures/, since it was a dated event log rather than a durable rule).
-- `feedback_consumer_grade_naming.md` — the related rule that forbids personal names in user-facing model content; same spirit, user-facing scope.
+- `feedback_mosaic_ship_bar.md` — the related rule that forbids personal names in user-facing model content (see its Cleanliness rules); same spirit, user-facing scope.

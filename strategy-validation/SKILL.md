@@ -127,7 +127,7 @@ Every build-mosaic-model invocation should append a validation decision:
 5. If any query fails: mark the build as **incomplete**, surface the delta rows prominently, and do not tell the user "done" until failures are explained or fixed.
 6. If no comparator exists yet: mark `validation_status=not_run` / `reference_required=true`. That is honest progress, not a pass.
 
-The consumer-grade naming checklist (`memory/feedback_consumer_grade_naming.md`) item 8 requires validation — treat this skill as part of the ship bar.
+The Mosaic ship-bar checklist (`memory/feedback_mosaic_ship_bar.md`) item 8 requires validation — treat this skill as part of the ship bar.
 
 ## When to use this skill vs `build_mosaic.py validate-model`
 
@@ -149,4 +149,4 @@ A structurally valid model can still be numerically wrong (broken conformance, w
 
 - `memory/reference_strategy_data_validation.md` — design-time 10-check suite + runnable 5-query suite, reference-source decision matrix, tolerance rules, failure triage mapped to Kimball root causes.
 - `memory/reference_mosaic_build_validation.md` — the structural checklist invoked by `build_mosaic.py validate-model`.
-- `memory/feedback_consumer_grade_naming.md` item 8 — validation is a ship-bar requirement.
+- `memory/feedback_mosaic_ship_bar.md` checklist item 8 — validation is a ship-bar requirement.

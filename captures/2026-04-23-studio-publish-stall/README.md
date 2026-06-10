@@ -4,7 +4,7 @@ description: Re-confirmed on 2026-04-23 — in-memory Mosaic publish on studio.s
 type: feedback
 ---
 
-**2026-04-23 afternoon update — dataType shape was a co-cause.** A REF model built via the Studio UI on the exact same 4 tables (Neon incidents + tenant_service_hourly, WACSE TENANTS + USAGE_HOURLY) publishes successfully on this tenant. Cloning REF's physical-table dataTypes (`utf8_char(32000,0)`, `integer(4,0)`, `double(P,S)`, `int64(8,0)`, `time_stamp(26,6)`) into a new model also publishes. So the stall signature below is triggered AT LEAST as much by warehouse-catalog dataType sentinels (`variable_length_string` precision=-1, `decimal` scale=-MIN_INT, `binary` / `unsigned`) as by tenant health. When publish stalls with `-2147212544` going forward, check `feedback_mosaic_publishable_datatypes.md` before concluding the tenant is broken.
+**2026-04-23 afternoon update — dataType shape was a co-cause.** A REF model built via the Studio UI on the exact same 4 tables (Neon incidents + tenant_service_hourly, WACSE TENANTS + USAGE_HOURLY) publishes successfully on this tenant. Cloning REF's physical-table dataTypes (`utf8_char(32000,0)`, `integer(4,0)`, `double(P,S)`, `int64(8,0)`, `time_stamp(26,6)`) into a new model also publishes. So the stall signature below is triggered AT LEAST as much by warehouse-catalog dataType sentinels (`variable_length_string` precision=-1, `decimal` scale=-MIN_INT, `binary` / `unsigned`) as by tenant health. When publish stalls with `-2147212544` going forward, check the "DataType preconditions" section of `memory/reference_mosaic_publish_path.md` before concluding the tenant is broken.
 
 **Original finding (still useful — the pre-clean-types reproduction).** Built `Tenant GPU Analysis-<TS>` (model id `<mosaic-model-id-1>`) in-memory with 4 tables across Neon Postgres + WACSE Snowflake. The 3-step Mosaic publish flow (`POST /api/dataModels/{id}/instances` → `POST /api/dataModels/{id}/publish` with per-table `refreshPolicy:"replace"` → poll `publishStatus`) reliably returned:
 
@@ -16,7 +16,7 @@ tables: all "error"
  Project Shared Studio, Job <N>, Error Code= -2147212544.)"
 ```
 
-Same signature as 2026-04-22. Retrying does not help; this is the tenant-level failure from `reference_mosaic_vs_legacy_surfaces.md`.
+Same signature as 2026-04-22. Retrying does not help; this is the tenant-level failure recorded in `captures/2026-04-22-queryengine-publish-incident/README.md`.
 
 **How to apply:**
 1. Before building in-memory on studio.strategy.com, run a canary publish on a known-good small model. If it stalls with `-2147212544`, do not begin a new in-memory build — the whole tenant's publish path is down.
