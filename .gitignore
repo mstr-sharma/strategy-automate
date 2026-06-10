@@ -16,4 +16,11 @@ __pycache__/
 .env.*
 !.env.example
 *.log
-captures/
+
+# captures/ READMEs (dated transcripts) are tracked institutional memory;
+# raw tenant payloads dumped next to them stay local
+captures/**/*.json
+captures/**/*.ndjson
+captures/**/*.har
+captures/**/*.csv
+captures/**/*.parquet
