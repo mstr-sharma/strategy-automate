@@ -1,6 +1,6 @@
 # AGENTS.md — canonical, LLM-agnostic entry point
 
-You are operating inside the **strategy-automation** repo: a one-stop automation brain for **Strategy** (formerly MicroStrategy) that aims for complete platform automation wherever Strategy exposes an API, SDK, MCP, CLI, or reproducible hook. It covers Mosaic semantic models, the classic / legacy semantic layer, runtime analytics, cubes / datasets, platform admin, AI agents, and data validation.
+You are operating inside the **strategy-automate** repo: a one-stop automation brain for **Strategy** (formerly MicroStrategy) that aims for complete platform automation wherever Strategy exposes an API, SDK, MCP, CLI, or reproducible hook. It covers Mosaic semantic models, the classic / legacy semantic layer, runtime analytics, cubes / datasets, platform admin, AI agents, and data validation.
 
 This file is the **canonical cross-tool entry point**. Every LLM-specific shim at the repo root (`CLAUDE.md`, `GEMINI.md`, `CODEX.md`, `GROK.md`, `OLLAMA.md`, `CURSOR.md`, etc.) points here. If you are a model or tool not listed there, read this file + `memory/MEMORY.md` and proceed — nothing else is tool-specific.
 
@@ -32,7 +32,8 @@ User task → which branch?
 3. Validating numbers / checking data correctness?
      → strategy-validation/SKILL.md
 4. Legacy (classic) → Mosaic migration?
-     → strategy-data-modeling/SKILL.md → legacy-mining refs → skill/SKILL.md
+     → memory/reference_strategy_legacy_to_mosaic_mining.md (start-here hub)
+     → strategy-data-modeling/SKILL.md → skill/SKILL.md
 5. Unknown endpoint / unfamiliar payload shape?
      → openapi-summary / openapi-search → clone-and-remap (reference_mosaic_clone_pattern.md)
 ```
@@ -84,31 +85,14 @@ For Mosaic work, distinguish the entry path:
 
 ## Memory index
 
-See `memory/MEMORY.md` for the full list. The most load-bearing entries:
+`memory/MEMORY.md` is the authoritative index — one line per file, grouped by section. Grep or scan it on demand; do not maintain (or trust) a second list of memory files anywhere else, including here. The handful you will reach for constantly:
 
-- `user_profile.md` — typical operator (Strategy Sales Engineer) and style expectations.
-- `project_mosaic_build.md` — repo purpose and how to extend it.
+- `reference_strategy_error_codes.md` — every observed error code → the memory with the fix. Grep FIRST on any 4xx/5xx.
 - `reference_strategy_env.md` — env-var + CLI-flag convention.
-- `reference_strategy_error_codes.md` — flat index of every observed Strategy error code → memory with the fix. Grep here first on any 4xx/5xx.
-- `reference_data_modeling_foundations.md` — Kimball dimensional modeling foundations: grain, conformed dims, star/snowflake topology, additivity, anti-patterns.
-- `reference_strategy_schema_objects.md` — Strategy schema object map for tables, attributes, facts, metrics, relationships, hierarchies, and transformations.
-- `reference_strategy_attribute_design.md` — attribute design, forms, conformance, role-playing dimensions, and naming.
-- `reference_strategy_fact_metric_design.md` — fact and metric behavior, additive patterns, ratios, and governed measures.
-- `reference_strategy_relationship_design.md` — relationship cardinality, bridges, orphan checks, and rollup safety.
-- `reference_strategy_hierarchy_design.md` — hierarchy / drill-path design and anti-patterns.
-- `reference_strategy_time_modeling.md` — calendar, fiscal, date-role, and transformation guidance.
-- `reference_strategy_mosaic_modeling.md` — Mosaic-specific sequencing, conformance, and validation expectations.
-- `reference_strategy_legacy_semantic_modeling.md` — classic semantic-layer interpretation and migration framing.
-- `reference_strategy_data_validation.md` — 10-check design-time validation suite + 5-query runnable suite + failure triage.
-- `reference_strategy_automation_playbook.md` — NLQ-to-action loop, safety model.
-- `reference_strategy_automation_coverage.md` — complete-platform coverage levels and gap-register rules.
-- `reference_strategy_surface_matrix.md` — route ambiguous nouns to the right surface.
-- `reference_mosaic_rest_api.md` + `reference_mosaic_modeling_concepts.md` — Mosaic endpoints + payload shapes.
-- `reference_strategy_mosaic_field_study.md` — live portfolio inventory + legacy↔Mosaic translation matrix.
-- `reference_strategy_tutorial_semantic_field_study.md` — live classic-layer inventory.
-- `feedback_consumer_grade_naming.md` — ship-bar checklist.
-- `reference_strategy_data_validation.md` — validation-suite reference.
-- `feedback_mosaic_gotchas.md` — precedence/encoding bugs and clone-and-remap pattern.
+- `reference_strategy_surface_matrix.md` — route ambiguous nouns to the right surface (Mosaic vs classic vs runtime).
+- `reference_data_modeling_foundations.md` — Kimball foundations backing every modeling decision.
+- `reference_strategy_automation_coverage.md` — coverage levels and the gap register.
+- `feedback_generalize_durable_artifacts.md` — the scrub checklist for anything you write back into the repo.
 
 ## MCP tools (configured separately per AI tool)
 
@@ -129,12 +113,6 @@ The memory writes say "MCP" — don't hunt for a server-id prefix. If your tool 
 
 ## Running under specific LLM harnesses
 
-All harnesses follow the same contract: read this file, load `memory/MEMORY.md`, invoke `skill/scripts/build_mosaic.py` (and siblings) via whatever tool-call mechanism is available. Per-harness notes:
+All harnesses follow the same contract: read this file, load `memory/MEMORY.md` on demand, invoke `skill/scripts/build_mosaic.py` (and siblings) via whatever shell/tool-call mechanism is available. Harness-specific notes live in the root shim for that harness (`CLAUDE.md`, `CODEX.md`, `GEMINI.md`, `GROK.md`, `OLLAMA.md`, `CURSOR.md`) — one file per harness, maintained there only. Any harness without a shim needs no configuration: read this file plus the memory index and follow the routing.
 
-- **Claude Code** (`CLAUDE.md`) — `CLAUDE.md` is auto-loaded and routes here. The `SKILL.md` files and `memory/MEMORY.md` are read on demand via the routing above; they are NOT auto-discovered project skills (that would require copies under `.claude/skills/` or a plugin install).
-- **Codex CLI** (`CODEX.md`) — reads `AGENTS.md` on `cd`. Scripts run under its shell tool.
-- **Gemini CLI** (`GEMINI.md`) — reads `GEMINI.md` → `AGENTS.md`.
-- **Grok / xAI CLIs** (`GROK.md`) — same contract; if no skills concept, treat each `SKILL.md` as a long-form instruction file.
-- **Ollama local models** (`OLLAMA.md`) — load this file + targeted memory files into the system prompt. Call scripts via subprocess. Works with any tool-calling model (`llama3.2`, `qwen2.5-coder`, `mistral-small`, `devstral`).
-- **Cursor / Cline / Continue / Aider** (`CURSOR.md`) — point the agent at `AGENTS.md` as the root instruction; skills and memories are ordinary Markdown files.
-- **Any other LLM** — no configuration needed. Read this file + memory index; follow the routing.
+Note for skill-aware harnesses (Claude Code included): the `SKILL.md` files here are read on demand via the routing above — they are NOT auto-discovered project skills unless you copy them under `.claude/skills/` or install them as a plugin.
