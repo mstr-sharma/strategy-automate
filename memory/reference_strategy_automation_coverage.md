@@ -38,7 +38,7 @@ Track coverage across these families, not just Mosaic:
 
 For any new Strategy capability:
 
-1. Search the live spec first: `python3 skill/scripts/build_mosaic.py openapi-search "<domain word>" --context 3`.
+1. Search the live spec first: `python3 skills/build-mosaic-model/scripts/build_mosaic.py openapi-search "<domain word>" --context 3`.
 2. If an endpoint exists, prove it with a read-only `api-call` or a dry-run wrapper before adding writes.
 3. Add or update the task row in `reference_strategy_task_catalog.md`.
 4. Add typed helper code only when the workflow is common, risky, multi-step, or needs payload construction/read-back.

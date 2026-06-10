@@ -9,7 +9,7 @@ Rules here are durable, grounded in a live REST portfolio sweep. The dated singl
 
 ```bash
 cd $REPO
-MSTR_PASSWORD=... /usr/bin/python3 skill/scripts/strategy_mosaic_inventory.py \
+MSTR_PASSWORD=... /usr/bin/python3 skills/build-mosaic-model/scripts/strategy_mosaic_inventory.py \
   --workers 12 --out /tmp/strategy-mosaic-inventory-full.json
 ```
 
@@ -135,14 +135,14 @@ Mosaic: **one layer** — `GET /api/model/dataModels/{mid}/hierarchy` returns al
 
 ```bash
 # Full sweep (writes /tmp/strategy-mosaic-inventory-<stamp>.json)
-MSTR_PASSWORD=... /usr/bin/python3 skill/scripts/strategy_mosaic_inventory.py --workers 12
+MSTR_PASSWORD=... /usr/bin/python3 skills/build-mosaic-model/scripts/strategy_mosaic_inventory.py --workers 12
 
 # Narrow by name fragment for iterative analysis
-MSTR_PASSWORD=... /usr/bin/python3 skill/scripts/strategy_mosaic_inventory.py \
+MSTR_PASSWORD=... /usr/bin/python3 skills/build-mosaic-model/scripts/strategy_mosaic_inventory.py \
   --model-name "<name fragment>" --out /tmp/mosaic-subset.json
 
 # Single known model
-MSTR_PASSWORD=... /usr/bin/python3 skill/scripts/strategy_mosaic_inventory.py \
+MSTR_PASSWORD=... /usr/bin/python3 skills/build-mosaic-model/scripts/strategy_mosaic_inventory.py \
   --model-name "<exact model name>" --max-models 1
 ```
 

@@ -8,7 +8,7 @@ This file is the **canonical cross-tool entry point**. Every LLM-specific shim a
 - The repo is plain Markdown + Python 3 (standard library + `requests`). No Anthropic-specific, OpenAI-specific, or Google-specific SDK calls — every helper is `requests` against Strategy REST or subprocess to `mstrio-py`.
 - `SKILL.md` frontmatter (`name`, `description`) follows Anthropic's skill convention, but any harness that reads Markdown with YAML frontmatter can use it. A skill-unaware LLM can read each `SKILL.md` as a normal instruction file.
 - `memory/MEMORY.md` is a flat index with one-line hooks; any LLM can `grep` or keyword-match to find the relevant memory file on demand.
-- Shell helpers live in `skill/scripts/`. Invoke them via whatever tool-call mechanism your harness exposes (Bash, shell, execute_command, tool-use-bash, etc.).
+- Shell helpers live in `skills/build-mosaic-model/scripts/`. Invoke them via whatever tool-call mechanism your harness exposes (Bash, shell, execute_command, tool-use-bash, etc.).
 - Credentials come from env vars (`MSTR_BASE`, `MSTR_USER`, `MSTR_PASSWORD`, `MSTR_PROJECT_ID`/`MSTR_PROJECT_NAME`, `MSTR_DEST_FOLDER_ID`) — see `memory/reference_strategy_env.md`. Never hardcode.
 
 ## Git workflow
@@ -25,15 +25,15 @@ User task → which branch?
 0. Error code in the transcript (8004…, iServerCode -2147…)?
      → memory/reference_strategy_error_codes.md   (fastest path symptom → fix)
 1. Building a NEW model?
-     → strategy-data-modeling/SKILL.md  (plan grain, dims, conformance, topology)
-     → skill/SKILL.md                  (execute via build_mosaic.py)
+     → skills/strategy-data-modeling/SKILL.md  (plan grain, dims, conformance, topology)
+     → skills/build-mosaic-model/SKILL.md                  (execute via build_mosaic.py)
 2. Modifying an existing model / admin / runtime task?
-     → strategy-automation/SKILL.md    (NLQ router)
+     → skills/strategy-automation/SKILL.md    (NLQ router)
 3. Validating numbers / checking data correctness?
-     → strategy-validation/SKILL.md
+     → skills/strategy-validation/SKILL.md
 4. Legacy (classic) → Mosaic migration?
      → memory/reference_strategy_legacy_to_mosaic_mining.md (start-here hub)
-     → strategy-data-modeling/SKILL.md → skill/SKILL.md
+     → skills/strategy-data-modeling/SKILL.md → skills/build-mosaic-model/SKILL.md
 5. Unknown endpoint / unfamiliar payload shape?
      → openapi-summary / openapi-search → clone-and-remap (reference_strategy_object_cloning.md)
 ```
@@ -47,17 +47,17 @@ User task → which branch?
 1. **Identify the surface.** Strategy concepts are duplicated across Mosaic and classic. Before touching endpoints, decide whether the user is asking about Mosaic data models, classic / project semantic layer, runtime analytics, cubes / datasets, AI agents, platform admin, or data validation. When uncertain, consult `memory/reference_strategy_surface_matrix.md`.
 2. **Read the relevant memory file.** `memory/MEMORY.md` is the index — every other file has a `type` frontmatter (`user`, `project`, `feedback`, `reference`) and a one-line description. Load only the files you need.
 3. **Use the skills when they fit** (precedence above).
-   - `strategy-data-modeling/SKILL.md` — the modeling-planning layer: declare business process, grain, attributes, facts, metrics, relationships, hierarchies, time semantics, and validation before build / migration / review work.
-   - `skill/SKILL.md` — the `build-mosaic-model` skill (discovery + build + ACL + security filter + publish + post-build edits).
-   - `strategy-automation/SKILL.md` — the NLQ router: points you at the right memory + helper for any Strategy task.
-   - `strategy-validation/SKILL.md` — paired-query data-correctness validation against any reference source.
+   - `skills/strategy-data-modeling/SKILL.md` — the modeling-planning layer: declare business process, grain, attributes, facts, metrics, relationships, hierarchies, time semantics, and validation before build / migration / review work.
+   - `skills/build-mosaic-model/SKILL.md` — the `build-mosaic-model` skill (discovery + build + ACL + security filter + publish + post-build edits).
+   - `skills/strategy-automation/SKILL.md` — the NLQ router: points you at the right memory + helper for any Strategy task.
+   - `skills/strategy-validation/SKILL.md` — paired-query data-correctness validation against any reference source.
 4. **Use environment configuration, never hardcoded values.** `MSTR_BASE`, `MSTR_USER`, `MSTR_PASSWORD`, `MSTR_PROJECT_ID` or `MSTR_PROJECT_NAME`, `MSTR_DEST_FOLDER_ID`. See `.env.example` + `memory/reference_strategy_env.md`.
-5. **Probe live specs when endpoint details matter.** `python3 skill/scripts/build_mosaic.py openapi-summary` and `... openapi-search "<term>"` hit `/api/openapi.yaml` directly.
+5. **Probe live specs when endpoint details matter.** `python3 skills/build-mosaic-model/scripts/build_mosaic.py openapi-summary` and `... openapi-search "<term>"` hit `/api/openapi.yaml` directly.
 6. **Classify automation coverage honestly.** Use `memory/reference_strategy_automation_coverage.md`: wrapped helper, generic REST hook, specialized hook, captured fallback, or known gap. Generic `api-call` reachability is an API hook, but not a finished workflow wrapper.
 7. **On any REST failure, grep `memory/reference_strategy_error_codes.md` FIRST.** Every observed `8004cc##` / iServerCode maps to the memory file with the fix. Do not retry blind — all observed codes are class-of-error, not transient.
 
 For Mosaic work, distinguish the entry path:
-- **Modeling design / review first:** if the request is still deciding business process, grain, facts, dimensions, relationships, hierarchies, time semantics, or validation scope, route through `strategy-data-modeling/SKILL.md` before touching build helpers.
+- **Modeling design / review first:** if the request is still deciding business process, grain, facts, dimensions, relationships, hierarchies, time semantics, or validation scope, route through `skills/strategy-data-modeling/SKILL.md` before touching build helpers.
 - **Legacy-to-Mosaic migration:** mine/read the classic semantic layer first, then use its attributes, forms, facts, metrics, relationships, filters, and reports as the blueprint for the new Mosaic model.
 - **Brand-new Mosaic model:** start from warehouse discovery plus ERD/data dictionary/preflight checks, then build and validate against the best available comparator.
 
@@ -65,7 +65,7 @@ For Mosaic work, distinguish the entry path:
 
 - **Classify Mosaic vs legacy before every write.** Before hitting any endpoint that differs between the two families (publish, refresh, execute, serve-mode, ACL, security filter), call `GET /api/objects/{id}?type=3` and branch on `subtype`: 779 → Mosaic data model, 776 → classic Intelligent Cube, anything else → stop and classify further. See `memory/reference_mosaic_vs_legacy_surfaces.md` for the endpoint-pair cheat sheet. For publishing, `memory/reference_mosaic_publish_path.md` is canonical: both trigger paths work on a properly-typed Mosaic model (`POST /api/cubes/{id}?cubeAction=publish` is what the UI uses and the reliable trigger on the observed Strategy ONE Cloud family; the Modeling-native 3-step flow returns per-table status). Never trust the 202/204 alone — poll `publishStatus` (or probe the model via a Trino/MCP `count(*)` query) until tables are loaded before declaring success.
 - **Consumer-grade naming is the ship bar.** Any model you build or modify must pass the checklist in `memory/feedback_mosaic_ship_bar.md` — business-named attributes, non-empty form names, business-friendly descriptions, sensible metric formats, no hardcoded example usernames or personal names.
-- **Every Mosaic build closes with data validation or an explicit pending note.** Route through `strategy-validation/SKILL.md`; validation is comparator-dependent, and the reference source can be another Mosaic model, a classic project report/model, a flat file, direct warehouse SQL, an external system/API, or a saved REST fixture (NOT Mosaic-to-Mosaic only). If no trusted comparator is available, say validation is pending and do not call the build shippable.
+- **Every Mosaic build closes with data validation or an explicit pending note.** Route through `skills/strategy-validation/SKILL.md`; validation is comparator-dependent, and the reference source can be another Mosaic model, a classic project report/model, a flat file, direct warehouse SQL, an external system/API, or a saved REST fixture (NOT Mosaic-to-Mosaic only). If no trusted comparator is available, say validation is pending and do not call the build shippable.
 - **Changesets are the unit of write.** Open → mutate → commit, or discard on failure. Relationships / ACLs / translations typically require a separate changeset after object creation.
 - **Preserve tenant-verified gotchas.** When a script's endpoint returns 404 or a payload shape changes, update both the script and the corresponding memory file. Never silently work around.
 - **Never hardcode credentials, tenant IDs, or personal names.** Pull from env vars; parameterize security filters.
@@ -76,11 +76,13 @@ For Mosaic work, distinguish the entry path:
 ## Repo layout (quick reference)
 
 - `memory/` — durable knowledge, indexed by `memory/MEMORY.md`.
-- `skill/` — `build-mosaic-model` skill + all REST helper CLIs under `skill/scripts/`.
-- `strategy-data-modeling/SKILL.md` — modeling-planning layer for grain, dimensions, metrics, relationships, hierarchies, and validation design.
-- `strategy-automation/SKILL.md` — NLQ router.
-- `strategy-validation/SKILL.md` — data-correctness validator.
-- `.env.example` — env-var template (copy to `.env`).
+- `skills/build-mosaic-model/` — the build skill: SKILL.md, examples/, and all REST helper CLIs under `scripts/`.
+- `skills/strategy-data-modeling/SKILL.md` — modeling-planning layer for grain, dimensions, metrics, relationships, hierarchies, and validation design.
+- `skills/strategy-automation/SKILL.md` — NLQ router.
+- `skills/strategy-validation/SKILL.md` — data-correctness validator.
+- `tests/` — hermetic unit tests (`python3 -m unittest discover -s tests`); run in CI.
+- `captures/` — dated tenant-specific transcripts (raw payload files stay local per `.gitignore`).
+- `.env.example` — env-var template (copy to `.env`); `pyproject.toml` — dependency declaration + lint config.
 - `README.md` — human setup guide, per-AI-tool onboarding.
 
 ## Memory index
@@ -113,6 +115,6 @@ The memory writes say "MCP" — don't hunt for a server-id prefix. If your tool 
 
 ## Running under specific LLM harnesses
 
-All harnesses follow the same contract: read this file, load `memory/MEMORY.md` on demand, invoke `skill/scripts/build_mosaic.py` (and siblings) via whatever shell/tool-call mechanism is available. Harness-specific notes live in the root shim for that harness (`CLAUDE.md`, `CODEX.md`, `GEMINI.md`, `GROK.md`, `OLLAMA.md`, `CURSOR.md`) — one file per harness, maintained there only. Any harness without a shim needs no configuration: read this file plus the memory index and follow the routing.
+All harnesses follow the same contract: read this file, load `memory/MEMORY.md` on demand, invoke `skills/build-mosaic-model/scripts/build_mosaic.py` (and siblings) via whatever shell/tool-call mechanism is available. Harness-specific notes live in the root shim for that harness (`CLAUDE.md`, `CODEX.md`, `GEMINI.md`, `GROK.md`, `OLLAMA.md`, `CURSOR.md`) — one file per harness, maintained there only. Any harness without a shim needs no configuration: read this file plus the memory index and follow the routing.
 
 Note for skill-aware harnesses (Claude Code included): the `SKILL.md` files here are read on demand via the routing above — they are NOT auto-discovered project skills unless you copy them under `.claude/skills/` or install them as a plugin.

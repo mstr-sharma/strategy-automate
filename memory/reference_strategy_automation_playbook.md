@@ -15,7 +15,7 @@ Goal: a user should be able to ask in natural language for nearly any Strategy (
    - If the user wants to modernize legacy reports/documents/tables into Mosaic, load `reference_strategy_legacy_to_mosaic_mining.md`.
    - If the task requires modeling judgment, classic schema interpretation, or translation from old MicroStrategy project design to the new world, load `reference_strategy_design_transition.md`.
 3. Find the endpoint or wrapper:
-   - Known Mosaic build/modeling: `skill/scripts/build_mosaic.py` and `reference_mosaic_modeling_concepts.md`.
+   - Known Mosaic build/modeling: `skills/build-mosaic-model/scripts/build_mosaic.py` and `reference_mosaic_modeling_concepts.md`.
    - Unknown REST: `openapi-search`, then `api-call`.
    - Published model query/semantics: Mosaic MCP or Trino.
    - Stable admin wrappers: mstrio-py if faster/cleaner than raw REST.
@@ -34,15 +34,15 @@ Goal: a user should be able to ask in natural language for nearly any Strategy (
 ## Core command patterns
 ```bash
 cd "$REPO"
-python3 skill/scripts/build_mosaic.py openapi-summary --limit 80
-python3 skill/scripts/build_mosaic.py openapi-search "securityFilters" --context 2
-python3 skill/scripts/build_mosaic.py api-call --method GET --path /api/projects
-python3 skill/scripts/build_mosaic.py api-call --method PATCH --path /api/model/dataModels/ID --json-file /tmp/body.json
-python3 skill/scripts/build_mosaic.py resolve-users --file users.csv
-python3 skill/scripts/build_mosaic.py search-objects --name "Customer" --limit 20
-python3 skill/scripts/build_mosaic.py get-model-object --kind legacy_attribute --object-id ATTR_ID --show-expression-as tokens
-python3 skill/scripts/strategy_semantic_mine.py --mode top-down --report "Revenue Report"
-python3 skill/scripts/strategy_semantic_mine.py --mode reverse --seed TABLE_ID;15
+python3 skills/build-mosaic-model/scripts/build_mosaic.py openapi-summary --limit 80
+python3 skills/build-mosaic-model/scripts/build_mosaic.py openapi-search "securityFilters" --context 2
+python3 skills/build-mosaic-model/scripts/build_mosaic.py api-call --method GET --path /api/projects
+python3 skills/build-mosaic-model/scripts/build_mosaic.py api-call --method PATCH --path /api/model/dataModels/ID --json-file /tmp/body.json
+python3 skills/build-mosaic-model/scripts/build_mosaic.py resolve-users --file users.csv
+python3 skills/build-mosaic-model/scripts/build_mosaic.py search-objects --name "Customer" --limit 20
+python3 skills/build-mosaic-model/scripts/build_mosaic.py get-model-object --kind legacy_attribute --object-id ATTR_ID --show-expression-as tokens
+python3 skills/build-mosaic-model/scripts/strategy_semantic_mine.py --mode top-down --report "Revenue Report"
+python3 skills/build-mosaic-model/scripts/strategy_semantic_mine.py --mode reverse --seed TABLE_ID;15
 ```
 
 ## Choosing the automation surface

@@ -4,7 +4,7 @@ import unittest
 
 
 ROOT = os.path.dirname(os.path.dirname(__file__))
-sys.path.insert(0, os.path.join(ROOT, "skill", "scripts"))
+sys.path.insert(0, os.path.join(ROOT, "skills", "build-mosaic-model", "scripts"))
 
 import build_mosaic as bm  # noqa: E402
 import preflight_model_check as pf  # noqa: E402

@@ -73,12 +73,12 @@ Final report: `N/N passed` plus a table of any failures with the smallest reprod
 
 ## Helper script
 
-`skill/scripts/strategy_validate_models.py` is the pluggable runner.
+`skills/build-mosaic-model/scripts/strategy_validate_models.py` is the pluggable runner.
 
 ### File adapter (works for any comparator — dump rows first, then diff)
 
 ```bash
-python3 skill/scripts/strategy_validate_models.py \
+python3 skills/build-mosaic-model/scripts/strategy_validate_models.py \
   --model-file /tmp/model_rows.csv \
   --reference-file /tmp/reference_rows.csv \
   --key region,nation \
@@ -91,7 +91,7 @@ python3 skill/scripts/strategy_validate_models.py \
 Implemented. Runs the same SQL against two Mosaic models through the Strategy Trino endpoint (host derived from `MSTR_BASE`, schema from `MSTR_PROJECT_NAME`, basic auth with `MSTR_USER` / `MSTR_PASSWORD`). Model name becomes the table name (lowercased, double-quoted). Use `%s` or `{{MODEL}}` as the model placeholder in the SQL:
 
 ```bash
-python3 skill/scripts/strategy_validate_models.py \
+python3 skills/build-mosaic-model/scripts/strategy_validate_models.py \
   --model "retail_model_v2" \
   --reference-mosaic "retail_model_v1" \
   --query 'SELECT "region (region name)", SUM("revenue") FROM %s GROUP BY 1' \
@@ -141,7 +141,7 @@ A structurally valid model can still be numerically wrong (broken conformance, w
 ## Non-goals
 
 - This is not a performance benchmark; latency/throughput is out of scope.
-- This is not a schema validator. For "does the shape look right" (attribute count, form categories, relationship graph) use `build_mosaic.py validate-model` or `skill/scripts/strategy_mosaic_inventory.py`.
+- This is not a schema validator. For "does the shape look right" (attribute count, form categories, relationship graph) use `build_mosaic.py validate-model` or `skills/build-mosaic-model/scripts/strategy_mosaic_inventory.py`.
 - This is not a SQL linter or a metric-lineage tool — it checks numeric correctness only.
 - Security-filter effectiveness is a separate validation (confirm the right rows are *hidden*, not just that aggregates match); route that through `memory/reference_strategy_validation_workflows.md`.
 

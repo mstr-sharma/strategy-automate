@@ -41,7 +41,7 @@ If step 9 is unavailable on the tenant, fall back to: attempt a publish on a kno
 
 ## Helper-integration idea
 
-Add `python3 skill/scripts/build_mosaic.py preflight --project-id ... --datasource-id ... --dest-folder ... --mode [build|publish|migrate]` that runs the relevant subset above and prints PASS/FAIL per check. Today this is an ad-hoc script.
+Add `python3 skills/build-mosaic-model/scripts/build_mosaic.py preflight --project-id ... --datasource-id ... --dest-folder ... --mode [build|publish|migrate]` that runs the relevant subset above and prints PASS/FAIL per check. Today this is an ad-hoc script.
 
 ## Related
 

@@ -118,7 +118,7 @@ If any of these fire, pause and ask the user before building:
 
 ## Validation hooks — prove the translation was right
 
-Every build plan produces three categories of validation queries for `strategy-validation/SKILL.md`:
+Every build plan produces three categories of validation queries for `skills/strategy-validation/SKILL.md`:
 
 1. **Grain check.** `COUNT(*)` and `COUNT(DISTINCT <natural key>)` on each table — match against warehouse truth.
 2. **Dimension rollup.** For each conformed attribute, `SUM(metric) GROUP BY attribute` compared against reference total. Catches under-joined relationships — rollup inflation / deflation.

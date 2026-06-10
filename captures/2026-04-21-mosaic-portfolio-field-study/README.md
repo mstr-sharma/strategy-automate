@@ -9,7 +9,7 @@ Regenerated with:
 
 ```bash
 cd $REPO
-MSTR_PASSWORD=... /usr/bin/python3 skill/scripts/strategy_mosaic_inventory.py \
+MSTR_PASSWORD=... /usr/bin/python3 skills/build-mosaic-model/scripts/strategy_mosaic_inventory.py \
   --workers 12 --out /tmp/strategy-mosaic-inventory-full.json
 ```
 
@@ -36,10 +36,10 @@ MSTR_PASSWORD=... /usr/bin/python3 skill/scripts/strategy_mosaic_inventory.py \
 
 ```bash
 # Narrow by name fragment for iterative analysis
-MSTR_PASSWORD=... /usr/bin/python3 skill/scripts/strategy_mosaic_inventory.py \
+MSTR_PASSWORD=... /usr/bin/python3 skills/build-mosaic-model/scripts/strategy_mosaic_inventory.py \
   --model-name "BREAD" --out /tmp/mosaic-bread.json
 
 # Single known model
-MSTR_PASSWORD=... /usr/bin/python3 skill/scripts/strategy_mosaic_inventory.py \
+MSTR_PASSWORD=... /usr/bin/python3 skills/build-mosaic-model/scripts/strategy_mosaic_inventory.py \
   --model-name "snowflake tpch_sf1 test" --max-models 1
 ```

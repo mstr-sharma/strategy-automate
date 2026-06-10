@@ -56,9 +56,9 @@ The Mosaic MCP tools (`get_projects`, `get_mosaic_models`, `get_semantics`, `que
 Every environment has different internal IDs. Do not paste production IDs into memory. The repo helpers resolve IDs at runtime:
 
 - **Projects:** `GET /api/projects` → choose by name, read `id`.
-- **Datasources (DB instances):** `python3 skill/scripts/build_mosaic.py list-datasources` → filter by name, read `id`.
+- **Datasources (DB instances):** `python3 skills/build-mosaic-model/scripts/build_mosaic.py list-datasources` → filter by name, read `id`.
 - **Destination folder (for new models):** browse `/api/folders/{id}` from a well-known root (e.g., `preDefined/8` PublicObjects) and pick a target.
-- **Reference TPCH (or other seed) model:** `python3 skill/scripts/build_mosaic.py search-objects --name "<seed model name>" --type 3` → read `id`.
+- **Reference TPCH (or other seed) model:** `python3 skills/build-mosaic-model/scripts/build_mosaic.py search-objects --name "<seed model name>" --type 3` → read `id`.
 - **Universal ID form** `45C11FA478E745FEA08D781CEA190FE5` — this IS a Strategy platform-wide constant, shared across all tenants. Safe to use as-is.
 
 ## Local workflow
@@ -67,7 +67,7 @@ Every environment has different internal IDs. Do not paste production IDs into m
 cp .env.example .env          # one-time
 # edit .env with your tenant values
 set -a; source .env; set +a   # export into shell
-python3 skill/scripts/build_mosaic.py auth-probe
+python3 skills/build-mosaic-model/scripts/build_mosaic.py auth-probe
 ```
 
 CI / automation should inject the same variables from the platform's secret store; never commit a populated `.env`.

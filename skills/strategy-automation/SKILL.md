@@ -23,9 +23,9 @@ This skill is the **NLQ classifier**. After classifying the surface, it hands of
 ```
 strategy-automation (this skill — classify)
   ├─► strategy-data-modeling (plan, Kimball-first)    ← all modeling work routes here
-  │     └─► skill/SKILL.md (build-mosaic-model)
+  │     └─► skills/build-mosaic-model/SKILL.md (build-mosaic-model)
   │           └─► strategy-validation (verify)
-  ├─► skill/SKILL.md directly                         ← only for post-build admin edits on known-good plans
+  ├─► skills/build-mosaic-model/SKILL.md directly                         ← only for post-build admin edits on known-good plans
   ├─► strategy-validation directly                    ← for data-correctness checks on an existing model
   └─► REST / mstrio-py / MCP                          ← for admin/runtime/non-modeling work
 ```
@@ -34,16 +34,16 @@ strategy-automation (this skill — classify)
 
 ## Tool Router
 
-- **Any semantic-model design / review / migration / cleanup:** route to `strategy-data-modeling/SKILL.md`. That skill is Kimball-first and produces the model plan before any REST write. Do not re-implement modeling decisions in this skill.
-- **Legacy-to-Mosaic migration:** `strategy-data-modeling/SKILL.md` owns the plan. It will use `strategy_semantic_inventory.py` or `strategy_semantic_mine.py` for discovery, then hand off to `skill/SKILL.md` for the build. Do not treat migration as a greenfield shared-column inference job unless no legacy semantic source exists.
-- **Brand-new Mosaic model:** same — `strategy-data-modeling/SKILL.md` plans, `skill/SKILL.md` builds, `strategy-validation/SKILL.md` verifies.
-- **Direct post-build edits on a known-good model (rename, ACL change, single-metric format fix):** `skill/SKILL.md` (build-mosaic-model) accepts those directly without re-planning.
+- **Any semantic-model design / review / migration / cleanup:** route to `skills/strategy-data-modeling/SKILL.md`. That skill is Kimball-first and produces the model plan before any REST write. Do not re-implement modeling decisions in this skill.
+- **Legacy-to-Mosaic migration:** `skills/strategy-data-modeling/SKILL.md` owns the plan. It will use `strategy_semantic_inventory.py` or `strategy_semantic_mine.py` for discovery, then hand off to `skills/build-mosaic-model/SKILL.md` for the build. Do not treat migration as a greenfield shared-column inference job unless no legacy semantic source exists.
+- **Brand-new Mosaic model:** same — `skills/strategy-data-modeling/SKILL.md` plans, `skills/build-mosaic-model/SKILL.md` builds, `skills/strategy-validation/SKILL.md` verifies.
+- **Direct post-build edits on a known-good model (rename, ACL change, single-metric format fix):** `skills/build-mosaic-model/SKILL.md` (build-mosaic-model) accepts those directly without re-planning.
 - **Classic-to-modern modeling judgment:** read `reference_strategy_design_transition.md` before translating legacy project schema concepts into Mosaic/USL/AI-ready models.
 - **Classic/project semantic-layer or admin workflows:** read `reference_strategy_legacy_semantic_admin.md`; use top-level `/api/model/...` changeset endpoints for legacy objects and `/api/users`, `/api/securityFilters`, `/api/usergroups`, `/api/objects` for admin/member operations.
-- **Deep classic semantic inspection:** read `reference_strategy_tutorial_semantic_field_study.md`; use `skill/scripts/strategy_semantic_inventory.py` to inventory attributes, facts, metrics, filters, prompts, system hierarchy, user hierarchies, fact extensions, metric dimensionality/conditionality, and prompt/filter internals before cloning or modernizing.
-- **Deep Mosaic semantic inspection / legacy↔Mosaic bridge:** read `reference_strategy_mosaic_field_study.md`; use `skill/scripts/strategy_mosaic_inventory.py` to inventory every Mosaic data model (subType 779) — tables, attributes, factMetrics, custom metrics, hierarchy, security filters, externalDataModels — and reference the classic→Mosaic translation matrix for object-by-object mapping. Use `/usr/bin/python3` on this workstation (Anaconda OpenSSL hangs on {MSTR_BASE host} TLS).
-- **Legacy-to-Mosaic discovery:** read `reference_strategy_legacy_to_mosaic_mining.md`; use `skill/scripts/strategy_semantic_mine.py` to mine reports/documents into candidate tables or reverse from tables into attributes/facts/metrics/reports before building a Mosaic model.
-- **Classic schema objects → Mosaic model (shortcut):** if the user says "build a Mosaic model from these attributes/facts/metrics", "port these schema objects to Mosaic", or supplies a list of Strategy object IDs (32-hex UUIDs) with object-type context, route to `skill/scripts/build_mosaic.py build-from-schema-objects`. See `reference_mosaic_schema_object_import.md` for flags, changeset sequencing, batch behavior, and known limitations (ApplySimple, conditional filters, level metrics). Prerequisite: the user must supply attribute/fact/metric object IDs; run `strategy_semantic_mine.py` first if only report or table names are known.
+- **Deep classic semantic inspection:** read `reference_strategy_tutorial_semantic_field_study.md`; use `skills/build-mosaic-model/scripts/strategy_semantic_inventory.py` to inventory attributes, facts, metrics, filters, prompts, system hierarchy, user hierarchies, fact extensions, metric dimensionality/conditionality, and prompt/filter internals before cloning or modernizing.
+- **Deep Mosaic semantic inspection / legacy↔Mosaic bridge:** read `reference_strategy_mosaic_field_study.md`; use `skills/build-mosaic-model/scripts/strategy_mosaic_inventory.py` to inventory every Mosaic data model (subType 779) — tables, attributes, factMetrics, custom metrics, hierarchy, security filters, externalDataModels — and reference the classic→Mosaic translation matrix for object-by-object mapping. Use `/usr/bin/python3` on this workstation (Anaconda OpenSSL hangs on {MSTR_BASE host} TLS).
+- **Legacy-to-Mosaic discovery:** read `reference_strategy_legacy_to_mosaic_mining.md`; use `skills/build-mosaic-model/scripts/strategy_semantic_mine.py` to mine reports/documents into candidate tables or reverse from tables into attributes/facts/metrics/reports before building a Mosaic model.
+- **Classic schema objects → Mosaic model (shortcut):** if the user says "build a Mosaic model from these attributes/facts/metrics", "port these schema objects to Mosaic", or supplies a list of Strategy object IDs (32-hex UUIDs) with object-type context, route to `skills/build-mosaic-model/scripts/build_mosaic.py build-from-schema-objects`. See `reference_mosaic_schema_object_import.md` for flags, changeset sequencing, batch behavior, and known limitations (ApplySimple, conditional filters, level metrics). Prerequisite: the user must supply attribute/fact/metric object IDs; run `strategy_semantic_mine.py` first if only report or table names are known.
 - **Defensive wiring helpers — required reading for any custom relationship-wiring script:** `reference_mosaic_safety_helpers.md` indexes `mosaic_safety.py` (stateless: error-code parsing, expression builders, attributeLookupTable bulk-response readers, role-playing detection) and the stateful companions in `build_mosaic.py` (`put_relationships_merged`, `validate_join_table_membership`, `post_build_validate_topology`, typed `open_cs`). Always close wiring scripts with `validate-topology --strict`. The relationship PUT is destructive — see the Relationships section of `reference_mosaic_rest_gotchas.md` before issuing one directly. Multi-FK-to-same-dim patterns: `feedback_mosaic_role_playing_dimensions.md`.
 - **Security filters:** if no Mosaic data-model ID is in the request, treat it as a classic project security filter: create definition with `/api/model/securityFilters`, assign users/groups with `/api/securityFilters/{id}/members`. Use `/api/model/dataModels/{id}/securityFilters` only for Mosaic data-model security filters.
 - **Attributes and metrics:** route by container. Classic/project objects use `/api/model/attributes|metrics`; Mosaic-contained objects use `/api/model/dataModels/{id}/attributes|metrics|factMetrics`; Push Data dataset attributes/metrics live in `/api/datasets` definitions.
@@ -54,13 +54,13 @@ strategy-automation (this skill — classify)
 - **Platform admin:** read `reference_strategy_admin_platform.md`; datasource admin, distribution/subscriptions, migrations/packages, monitors/caches, project load/unload, settings, search/browse, and object ownership have separate endpoint families.
 - **AI/Agent/Bot:** read `reference_strategy_ai_agents.md`; prefer Auto Agent `/api/questions` and `/api/v2/bots` paths; treat `/api/bots` as legacy/deprecated unless required.
 - **Validation/testing:** read `reference_strategy_validation_workflows.md`; do not run live write tests until the user signs off on the numbered workflows and cleanup behavior.
-- **Data-correctness validation (post-build, pre-ship):** route through `strategy-validation/SKILL.md` and `reference_strategy_data_validation.md` (covers both the design-time 10-check suite and the runnable 5-query paired-query suite). Reference can be another Mosaic model, legacy/classic report, flat file, direct warehouse SQL, or a saved REST fixture — NOT Mosaic-to-Mosaic only. Required after every build per `feedback_mosaic_ship_bar.md` checklist item 8.
+- **Data-correctness validation (post-build, pre-ship):** route through `skills/strategy-validation/SKILL.md` and `reference_strategy_data_validation.md` (covers both the design-time 10-check suite and the runnable 5-query paired-query suite). Reference can be another Mosaic model, legacy/classic report, flat file, direct warehouse SQL, or a saved REST fixture — NOT Mosaic-to-Mosaic only. Required after every build per `feedback_mosaic_ship_bar.md` checklist item 8.
 - **Drop-in ERDs, dictionaries, rosters, or legacy update briefs:** read `reference_strategy_intake_patterns.md`, normalize files to supported JSON/YAML/CSV/DBML/Mermaid/SQL formats, then resolve IDs before writing.
 - **Any REST endpoint not wrapped yet:** use:
   ```bash
   cd "$REPO"
-  python3 skill/scripts/build_mosaic.py openapi-search "<term>" --context 2
-  python3 skill/scripts/build_mosaic.py api-call --method GET --path /api/projects
+  python3 skills/build-mosaic-model/scripts/build_mosaic.py openapi-search "<term>" --context 2
+  python3 skills/build-mosaic-model/scripts/build_mosaic.py api-call --method GET --path /api/projects
   ```
   This is a generic API hook, not proof that the workflow has a typed wrapper or full validation.
 - **Users and access targets:** use `resolve-users` before ACL/security/user writes; use `create-users` for roster dry-runs and `--yes` only when the user clearly wants creation.

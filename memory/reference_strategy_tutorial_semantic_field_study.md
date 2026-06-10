@@ -10,7 +10,7 @@ Raw field-study output stays in `/tmp`; do not commit raw tenant payloads. Regen
 
 ```bash
 cd "$REPO"
-python3 skill/scripts/strategy_semantic_inventory.py \
+python3 skills/build-mosaic-model/scripts/strategy_semantic_inventory.py \
   --workers 12 \
   --include-definition-bodies \
   --out /tmp/strategy-tutorial-semantic-inventory-full.json

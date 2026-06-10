@@ -1,4 +1,4 @@
-"""Tests for the shared helpers in skill/scripts/_client.py."""
+"""Tests for the shared helpers in skills/build-mosaic-model/scripts/_client.py."""
 from __future__ import annotations
 
 import argparse
@@ -10,7 +10,7 @@ from unittest import mock
 
 
 ROOT = os.path.dirname(os.path.dirname(__file__))
-sys.path.insert(0, os.path.join(ROOT, "skill", "scripts"))
+sys.path.insert(0, os.path.join(ROOT, "skills", "build-mosaic-model", "scripts"))
 
 import _client  # noqa: E402
 from _client import (  # noqa: E402

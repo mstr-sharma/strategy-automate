@@ -18,7 +18,7 @@ Two classic-lane heuristics worth keeping here:
 For deep read-only inspection of object internals before cloning, updating, or modernizing a legacy semantic layer, read `reference_strategy_tutorial_semantic_field_study.md` and use:
 
 ```bash
-python3 skill/scripts/strategy_semantic_inventory.py --workers 8 --out /tmp/strategy-semantic-inventory.json
+python3 skills/build-mosaic-model/scripts/strategy_semantic_inventory.py --workers 8 --out /tmp/strategy-semantic-inventory.json
 ```
 
 Add `--include-definition-bodies` only when you need raw bodies for analysis, and keep that output in `/tmp`.

@@ -150,4 +150,4 @@ Every new model must pass both the display rule and the format rule before `vali
 5. Every metric has a number-format token list matching its category (currency/percent/integer/decimal).
 6. Relationships connect the right hierarchy — spot-check with a query that joins 2+ dim levels and a fact.
 7. No hardcoded example users or personal names anywhere in the build script or filter definitions.
-8. At least one validation query returns aggregates matching a known-good reference (see `strategy-validation/SKILL.md` and `memory/reference_strategy_data_validation.md` for the paired-query validation suite; comparator can be another Mosaic model, a classic report, a flat file, direct warehouse SQL, or a REST fixture).
+8. At least one validation query returns aggregates matching a known-good reference (see `skills/strategy-validation/SKILL.md` and `memory/reference_strategy_data_validation.md` for the paired-query validation suite; comparator can be another Mosaic model, a classic report, a flat file, direct warehouse SQL, or a REST fixture).

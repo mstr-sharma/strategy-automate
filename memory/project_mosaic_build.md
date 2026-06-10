@@ -8,10 +8,11 @@ This repo is a **one-stop Strategy (formerly MicroStrategy) automation brain** f
 ## Repo layout
 
 - `memory/` — the durable knowledge base. `MEMORY.md` is the index; every other file is a typed memory (user / feedback / project / reference).
-- `skill/` — the `build-mosaic-model` skill: SKILL.md plus `scripts/` (the REST helper CLIs: `build_mosaic.py`, `strategy_mosaic_inventory.py`, `strategy_semantic_inventory.py`, `strategy_semantic_mine.py`, `strategy_validate.py`).
-- `strategy-automation/` — the NLQ router skill that chooses between surfaces and points Claude at the right memory + helper.
-- `strategy-validation/` — the data-validation skill (paired-query correctness checks against any reference source — Mosaic, legacy report, flat file, warehouse SQL, REST fixture).
-- Root: `README.md`, `.env.example`, `.gitignore`.
+- `skills/build-mosaic-model/` — the build skill: SKILL.md plus `examples/` and `scripts/` (the REST helper CLIs: `build_mosaic.py`, `strategy_mosaic_inventory.py`, `strategy_semantic_inventory.py`, `strategy_semantic_mine.py`, `strategy_validate.py`).
+- `skills/strategy-automation/` — the NLQ router skill that chooses between surfaces and points Claude at the right memory + helper.
+- `skills/strategy-data-modeling/` — the Kimball-first modeling-planning skill.
+- `skills/strategy-validation/` — the data-validation skill (paired-query correctness checks against any reference source — Mosaic, legacy report, flat file, warehouse SQL, REST fixture).
+- Root: `README.md`, `.env.example`, `.gitignore`, `pyproject.toml`, `LICENSE`.
 
 ## Why
 
@@ -26,10 +27,10 @@ A single, composable Strategy automation brain that:
 
 ## How to add to this repo
 
-1. **New endpoint or workflow?** First prove the hook with `openapi-search` and a read-only or dry-run call. Add a subcommand to `skill/scripts/build_mosaic.py` when the workflow is common, risky, multi-step, or needs payload construction/read-back. Keep `skill/SKILL.md` in sync with the script's flags.
+1. **New endpoint or workflow?** First prove the hook with `openapi-search` and a read-only or dry-run call. Add a subcommand to `skills/build-mosaic-model/scripts/build_mosaic.py` when the workflow is common, risky, multi-step, or needs payload construction/read-back. Keep `skills/build-mosaic-model/SKILL.md` in sync with the script's flags.
 2. **New kind of durable knowledge?** Add a memory file in `memory/` with the standard frontmatter (`name`, `description`, `type`), then add a one-line pointer to `memory/MEMORY.md`.
 3. **New platform surface or unavailable API?** Update `reference_strategy_automation_coverage.md` and `reference_strategy_task_catalog.md` with the hook level or known gap.
-4. **New skill surface?** Sibling directory with a `SKILL.md`. Add routing in `strategy-automation/SKILL.md` so other sessions find it.
+4. **New skill surface?** New directory under `skills/` with a `SKILL.md`. Add routing in `skills/strategy-automation/SKILL.md` so other sessions find it.
 5. **Tenant-specific value discovered?** Do **not** commit it. Add an env-var lookup and document it in `.env.example` / `reference_strategy_env.md`.
 6. **Before trusting an old endpoint note?** Re-probe with `openapi-summary` / `openapi-search` against the live `/api/openapi.yaml` and update the memory file.
 

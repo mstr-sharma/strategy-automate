@@ -5,7 +5,7 @@ description: Stub reference for Strategy's delivery surface — email/file/histo
 type: reference
 ---
 
-Part of the platform coverage contract (see `reference_strategy_automation_coverage.md`). Not yet a wrapped helper — treat as **generic REST hook** until a typed wrapper ships in `skill/scripts/`.
+Part of the platform coverage contract (see `reference_strategy_automation_coverage.md`). Not yet a wrapped helper — treat as **generic REST hook** until a typed wrapper ships in `skills/build-mosaic-model/scripts/`.
 
 ## Endpoint families
 
@@ -103,5 +103,5 @@ Observed server behaviors (tenant-family: Strategy ONE Cloud, library version cu
 
 Follow-up hardening (recorded as a gap, not yet implemented):
 
-- Add a typed `create-subscription` helper to `skill/scripts/build_mosaic.py` (or a sibling) so subscription payloads stop being assembled ad hoc. Helper should take `--report-id`, `--project-id`, `--schedule`, `--recipient-user`, and resolve addresses server-side.
+- Add a typed `create-subscription` helper to `skills/build-mosaic-model/scripts/build_mosaic.py` (or a sibling) so subscription payloads stop being assembled ad hoc. Helper should take `--report-id`, `--project-id`, `--schedule`, `--recipient-user`, and resolve addresses server-side.
 - After helper creation, capture additional verified variants under `captures/`: prompt-bearing reports, dossier email deliveries, history-list deliveries, and explicit send-preview status inspection when the tenant exposes run-history endpoints.

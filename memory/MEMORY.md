@@ -1,4 +1,4 @@
-> **Authoring rules:** one fact per file with `name`/`description`/`type` frontmatter, indexed here with a one-line hook. Cite code by function or subcommand name with a repo-root-relative path (e.g. `cmd_kill_sessions()` in `skill/scripts/build_mosaic.py`) — never line numbers, which rot on every refactor.
+> **Authoring rules:** one fact per file with `name`/`description`/`type` frontmatter, indexed here with a one-line hook. Cite code by function or subcommand name with a repo-root-relative path (e.g. `cmd_kill_sessions()` in `skills/build-mosaic-model/scripts/build_mosaic.py`) — never line numbers, which rot on every refactor.
 
 ## Meta, env, and operating rules
 - [User profile](user_profile.md) — Strategy Sales Engineer persona; values terse, working-code outputs across Mosaic + classic semantic layer.
@@ -24,7 +24,7 @@
 
 ## Mosaic modeling (design-time, payload shapes)
 - [build_mosaic.py CLI map](reference_mosaic_build_skill.md) — subcommand index for the build helper; start here when you don't know which subcommand to run.
-- [Mosaic preflight check](reference_mosaic_preflight_skill.md) — `skill/scripts/preflight_model_check.py` invoked as step 6 of build-mosaic-model. 6 categories: naming, attr-vs-metric, datatype, joinability, blueprint-fit, governance. ERROR findings stop the build.
+- [Mosaic preflight check](reference_mosaic_preflight_skill.md) — `skills/build-mosaic-model/scripts/preflight_model_check.py` invoked as step 6 of build-mosaic-model. 6 categories: naming, attr-vs-metric, datatype, joinability, blueprint-fit, governance. ERROR findings stop the build.
 - [Mosaic REST API map](reference_mosaic_rest_api.md) — verified endpoint paths (auth, datasources, catalog, data models, changesets, security, translations).
 - [Mosaic modeling concepts](reference_mosaic_modeling_concepts.md) — attributes, metrics (compound/conditional/level/transformation), relationships, filters, transformations — payload shapes.
 - [Mosaic build config schema](reference_mosaic_config_schema.md) — declarative config fields and post-build derived-metric workflow.
