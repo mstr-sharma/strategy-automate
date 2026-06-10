@@ -64,7 +64,7 @@ Required: `MSTR_BASE`, `MSTR_USER`, `MSTR_PASSWORD`, and either `MSTR_PROJECT_ID
 python3 -m pip install --user requests
 ```
 
-`requests` is the only non-stdlib dependency. If your default Python is Anaconda and you see SSL-handshake timeouts against your tenant, switch to `/usr/bin/python3` — some Anaconda builds ship an old OpenSSL that hangs on Strategy Cloud TLS.
+`requests` is the only non-stdlib dependency, declared in [`pyproject.toml`](pyproject.toml) (dependency declaration only — scripts stay directly runnable, no install required). Optionally add `PyYAML` for YAML configs (used by `build-from-config` and other `--file *.yaml` inputs); without it the scripts fall back to a `ruby -ryaml` one-liner for YAML parsing. If your default Python is Anaconda and you see SSL-handshake timeouts against your tenant, switch to `/usr/bin/python3` — some Anaconda builds ship an old OpenSSL that hangs on Strategy Cloud TLS.
 
 ### 3. Verify tenant connectivity
 

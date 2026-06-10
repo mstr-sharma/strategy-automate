@@ -10,7 +10,6 @@ Credentials are runtime-only. Do not write secrets or exported business data.
 from __future__ import annotations
 
 import argparse
-import getpass
 import json
 import os
 import re
@@ -19,17 +18,12 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
-import requests
-
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _client import (  # noqa: E402
-    BaseMSTR, response_json, items_from_payload, compact_json,
+    BaseMSTR, add_auth_args, client_from_args, items_from_payload, response_json,
+    normalize_id as oid,  # flat accessor — search rows expose `id`, never `information.objectId`
 )
 
-
-DEFAULT_BASE = os.environ.get("MSTR_BASE", "")
-DEFAULT_USER = os.environ.get("MSTR_USER", "")
-DEFAULT_PROJECT_NAME = os.environ.get("MSTR_PROJECT_NAME", "")
 
 OBJECT_TYPES = {
     "filter": 1,
@@ -60,13 +54,9 @@ TYPE_ALIASES = {
 }
 
 
-def oid(obj: dict[str, Any]) -> str | None:
-    # Keep the legacy flat-field accessor here — the mine script treats search-result
-    # rows which only expose `id`, never `information.objectId`.
-    return obj.get("id") or obj.get("objectId") or obj.get("object_id")
-
-
 def oname(obj: dict[str, Any]) -> str:
+    # Stays local: _client.normalize_name also falls back to `username`, which this
+    # script's flat accessor deliberately does not.
     return str(obj.get("name") or obj.get("display") or obj.get("title") or "")
 
 
@@ -113,13 +103,11 @@ class MSTR(BaseMSTR):
     """Mining client — BaseMSTR + legacy-semantic-specific search helpers."""
 
     def quick_search(self, name: str, obj_type: int | None = None, limit: int = 50) -> list[dict[str, Any]]:
-        params: dict[str, Any] = {"name": name, "pattern": 4, "limit": limit, "getAncestors": "true"}
-        if obj_type is not None:
-            params["type"] = obj_type
-        resp = self.request("GET", "/api/searches/results", params=params)
-        return items_from_payload(response_json(resp))
+        return self.search_results(name, obj_type, limit=limit, paginate=False)
 
     def quick_dependents(self, object_id: str, target_type: int | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        # Bespoke search-results call (usesObjectId lineage params, non-raising) —
+        # deliberately NOT routed through BaseMSTR.search_results.
         params: dict[str, Any] = {
             "usesObjectId": object_id,
             "usesObjectProjectId": self.project_id,
@@ -476,12 +464,7 @@ def summarize(state: MineState, args: argparse.Namespace) -> dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base", default=os.environ.get("MSTR_BASE", DEFAULT_BASE))
-    parser.add_argument("--user", default=os.environ.get("MSTR_USER", DEFAULT_USER))
-    parser.add_argument("--password", default=os.environ.get("MSTR_PASSWORD", ""))
-    parser.add_argument("--login-mode", type=int, default=int(os.environ.get("MSTR_LOGIN_MODE", "1")))
-    parser.add_argument("--project-name", default=os.environ.get("MSTR_PROJECT_NAME", DEFAULT_PROJECT_NAME))
-    parser.add_argument("--project-id", default=os.environ.get("MSTR_PROJECT_ID", ""))
+    add_auth_args(parser, project_id=True)
     parser.add_argument("--mode", choices=("top-down", "reverse"), required=True)
     parser.add_argument("--seed", action="append", default=[], help="Name, ID, or ID;type. Top-down seeds are reports/documents; reverse seeds are tables.")
     parser.add_argument("--report", action="append", default=[], help="Top-down report name or ID.")
@@ -497,8 +480,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    password = args.password or getpass.getpass("Password: ")
-    m = MSTR(args.base, args.user, password, args.login_mode, args.project_name)
+    m = client_from_args(args, MSTR)
     try:
         m.login()
         if args.project_id:

@@ -12,25 +12,22 @@ Writes raw inventory to /tmp by default; do not commit raw tenant payloads.
 from __future__ import annotations
 
 import argparse
-import getpass
 import json
 import os
 import sys
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 
 import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _client import BaseMSTR, response_json, items_from_payload, oid, oname  # noqa: E402
+from _client import (  # noqa: E402
+    Auth, InventoryClient, add_auth_args, client_from_args, collect_named_values,
+    collect_texts, dedupe_by_id, dump_inventory, expression_kind, items_from_payload,
+    now_id, oid, oname, read_parallel, response_json, walk,
+)
 
 
-DEFAULT_BASE = os.environ.get("MSTR_BASE", "")
-DEFAULT_USER = os.environ.get("MSTR_USER", "")
-DEFAULT_PROJECT_NAME = os.environ.get("MSTR_PROJECT_NAME", "")
 DATA_MODEL_TYPE = 3
 DATA_MODEL_SUBTYPE = 779
 
@@ -49,120 +46,14 @@ SUBRESOURCES: list[tuple[str, str, dict[str, str]]] = [
 ]
 
 
-def now_id() -> str:
-    return datetime.now().strftime("%Y%m%d-%H%M%S")
-
-
-def walk(value: Any):
-    if isinstance(value, dict):
-        yield value
-        for child in value.values():
-            yield from walk(child)
-    elif isinstance(value, list):
-        for child in value:
-            yield from walk(child)
-
-
-def collect_texts(value: Any, limit: int = 8) -> list[str]:
-    texts: list[str] = []
-    for node in walk(value):
-        text = node.get("text") if isinstance(node, dict) else None
-        if isinstance(text, str) and text and text not in texts:
-            texts.append(text)
-            if len(texts) >= limit:
-                break
-    return texts
-
-
-def collect_named_values(value: Any, key: str, limit: int = 20) -> list[str]:
-    values: list[str] = []
-    for node in walk(value):
-        if not isinstance(node, dict):
-            continue
-        item = node.get(key)
-        if isinstance(item, str) and item and item not in values:
-            values.append(item)
-            if len(values) >= limit:
-                break
-    return values
-
-
-def collect_subtypes(value: Any) -> Counter:
-    counts: Counter = Counter()
-    for node in walk(value):
-        if not isinstance(node, dict):
-            continue
-        st = str(node.get("subType") or node.get("subtype") or "").lower()
-        if st:
-            counts[st] += 1
-    return counts
-
-
-def expression_kind(value: Any) -> str:
-    if not isinstance(value, dict):
-        return ""
-    expr = value.get("expression") or value.get("qualification") or value.get("definition") or value
-    if isinstance(expr, dict):
-        tree = expr.get("tree") or expr.get("predicateTree")
-        if isinstance(tree, dict) and tree.get("type"):
-            return str(tree["type"])
-        if expr.get("text"):
-            return "text"
-    return ""
-
-
-@dataclass
-class Auth:
-    base: str
-    headers: dict[str, str]
-    cookies: dict[str, str]
-    project_id: str
-
-
-class Client(BaseMSTR):
-    """Mosaic inventory client — BaseMSTR + login-then-resolve convenience."""
-
-    def login(self) -> None:  # type: ignore[override]
-        super().login()
-        self.resolve_project()
-
-    def auth(self) -> Auth:
-        return Auth(self.base, dict(self.session.headers), self.session.cookies.get_dict(), self.project_id)
+class Client(InventoryClient):
+    """Mosaic inventory client — adds the data-model search."""
 
     def search_data_models(self, limit: int) -> list[dict[str, Any]]:
         """Search all Mosaic data models (type=3, subType=779) in the project."""
-        out: list[dict[str, Any]] = []
-        offset = 0
-        while True:
-            resp = self.session.get(
-                f"{self.base}/api/searches/results",
-                params={
-                    "name": "",
-                    "type": DATA_MODEL_TYPE,
-                    "pattern": 4,
-                    "limit": limit,
-                    "offset": offset,
-                    "getAncestors": "true",
-                },
-                timeout=60,
-            )
-            if not resp.ok:
-                raise RuntimeError(f"search failed: {resp.status_code} {resp.text[:300]}")
-            rows = items_from_payload(response_json(resp))
-            filtered = [r for r in rows if int(r.get("subtype") or r.get("subType") or 0) == DATA_MODEL_SUBTYPE]
-            out.extend(filtered)
-            if len(rows) < limit:
-                break
-            offset += limit
-        seen = set()
-        deduped = []
-        for item in out:
-            object_id = oid(item)
-            if not object_id or object_id in seen:
-                continue
-            seen.add(object_id)
-            deduped.append(item)
-        return deduped
+        rows = self.search_results(obj_type=DATA_MODEL_TYPE, limit=limit, timeout=60)
+        return dedupe_by_id(
+            [r for r in rows if int(r.get("subtype") or r.get("subType") or 0) == DATA_MODEL_SUBTYPE])
 
 
 def read_subresource(auth: Auth, model_id: str, path_suffix: str, params: dict[str, str]) -> dict[str, Any]:
@@ -439,11 +330,7 @@ def portfolio_analysis(models: list[dict[str, Any]]) -> dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base", default=os.environ.get("MSTR_BASE", DEFAULT_BASE))
-    parser.add_argument("--user", default=os.environ.get("MSTR_USER", DEFAULT_USER))
-    parser.add_argument("--password", default=os.environ.get("MSTR_PASSWORD", ""))
-    parser.add_argument("--login-mode", type=int, default=int(os.environ.get("MSTR_LOGIN_MODE", "1")))
-    parser.add_argument("--project-name", default=os.environ.get("MSTR_PROJECT_NAME", DEFAULT_PROJECT_NAME))
+    add_auth_args(parser)
     parser.add_argument("--search-limit", type=int, default=200)
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--max-models", type=int, default=0, help="0 = all visible data models")
@@ -455,8 +342,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    password = args.password or getpass.getpass("Password: ")
-    client = Client(args.base, args.user, password, args.login_mode, args.project_name)
+    client = client_from_args(args, Client)
     started = now_id()
     try:
         client.login()
@@ -472,16 +358,8 @@ def main() -> int:
             items = items[: args.max_models]
         print(f"Found {len(items)} data models. Reading subresources with {args.workers} workers...", file=sys.stderr)
 
-        definitions: dict[str, dict[str, Any]] = {}
-        with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
-            futures = {pool.submit(read_model, auth, item): item for item in items}
-            done = 0
-            for future in as_completed(futures):
-                item = futures[future]
-                definitions[oid(item) or ""] = future.result()
-                done += 1
-                if done % 10 == 0 or done == len(items):
-                    print(f"  {done}/{len(items)}", file=sys.stderr)
+        definitions = read_parallel(
+            items, lambda item: read_model(auth, item), args.workers, progress_every=10)
 
         models = [summarize_model(item, definitions.get(oid(item) or "", {})) for item in items]
         inventory: dict[str, Any] = {
@@ -496,9 +374,7 @@ def main() -> int:
         if args.include_definition_bodies:
             inventory["definitionBodies"] = definitions
 
-        path = args.out or f"/tmp/strategy-mosaic-inventory-{started}.json"
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(inventory, f, indent=2)
+        path = dump_inventory(inventory, args.out, "strategy-mosaic-inventory", started)
 
         print(json.dumps({
             "ok": True,

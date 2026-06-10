@@ -18,10 +18,21 @@ Import pattern for a sibling script:
 """
 from __future__ import annotations
 
+import argparse
+import getpass
 import json
-from typing import Any, Iterable
+import os
+import sys
+import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Callable, Iterable
 
-import requests
+try:
+    import requests
+except ImportError:  # file-only consumers (strategy_validate_models) tolerate absence
+    requests = None  # type: ignore[assignment]
 
 
 # ── Payload helpers (pure functions) ─────────────────────────────────────────
@@ -44,6 +55,10 @@ DEFAULT_LIST_KEYS: tuple[str, ...] = (
     "attributes", "metrics", "factMetrics", "tables",
     "securityFilters", "links", "externalDataModels", "folders",
 )
+
+# Narrow key set for /api/searches/results envelopes — never the modeling-object
+# containers, so a search payload's sub-lists don't get unwrapped by accident.
+SEARCH_LIST_KEYS: tuple[str, ...] = ("result", "results", "objects", "items", "data")
 
 
 def items_from_payload(payload: Any, keys: Iterable[str] = DEFAULT_LIST_KEYS) -> list[dict[str, Any]]:
@@ -107,6 +122,74 @@ def compact_json(value: Any, limit: int = 800) -> str:
     return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
+def dedupe_by_id(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop rows whose oid() is missing or already seen, keeping first occurrence."""
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        object_id = oid(row)
+        if not object_id or object_id in seen:
+            continue
+        seen.add(object_id)
+        out.append(row)
+    return out
+
+
+def now_id() -> str:
+    return datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+# ── JSON-tree helpers (pure functions) ───────────────────────────────────────
+
+def walk(value: Any):
+    """Depth-first generator over every dict in a nested dict/list payload."""
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from walk(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from walk(child)
+
+
+def collect_texts(value: Any, limit: int = 8) -> list[str]:
+    """Unique `text` values found anywhere in the payload, in walk order."""
+    texts: list[str] = []
+    for node in walk(value):
+        text = node.get("text")
+        if isinstance(text, str) and text and text not in texts:
+            texts.append(text)
+            if len(texts) >= limit:
+                break
+    return texts
+
+
+def collect_named_values(value: Any, key: str, limit: int = 20) -> list[str]:
+    """Unique string values of `key` found anywhere in the payload, in walk order."""
+    values: list[str] = []
+    for node in walk(value):
+        item = node.get(key)
+        if isinstance(item, str) and item and item not in values:
+            values.append(item)
+            if len(values) >= limit:
+                break
+    return values
+
+
+def expression_kind(value: Any) -> str:
+    """Classify a modeling-object body's expression: tree type, 'text', or ''."""
+    if not isinstance(value, dict):
+        return ""
+    expr = value.get("expression") or value.get("qualification") or value.get("definition") or value
+    if isinstance(expr, dict):
+        tree = expr.get("tree") or expr.get("predicateTree")
+        if isinstance(tree, dict) and tree.get("type"):
+            return str(tree["type"])
+        if expr.get("text"):
+            return "text"
+    return ""
+
+
 # ── Base HTTP client ─────────────────────────────────────────────────────────
 
 class BaseMSTR:
@@ -126,6 +209,8 @@ class BaseMSTR:
 
     def __init__(self, base: str, username: str, password: str,
                  login_mode: int, project_name: str):
+        if requests is None:
+            raise SystemExit("requests is required for the REST client (pip install requests).")
         self.base = base.rstrip("/")
         self.username = username
         self.password = password
@@ -201,3 +286,111 @@ class BaseMSTR:
             return self.request(method, path, **kwargs)
         except Exception:
             return None
+
+    # Search ───────────────────────────────────────────────────────────────
+
+    def search_results(self, name: str = "", obj_type: int | None = None, *,
+                       pattern: int = 4, limit: int = 200, get_ancestors: bool = True,
+                       paginate: bool = True, keys: Iterable[str] = DEFAULT_LIST_KEYS,
+                       timeout: int = 90) -> list[dict[str, Any]]:
+        """GET /api/searches/results. With paginate=True follows offset pages until
+        a short page; with paginate=False returns the single page (no offset param).
+        `keys` picks the list-container keys to unwrap. Raises on non-2xx (via
+        `request`); rows are NOT deduped — wrap with dedupe_by_id when needed."""
+        out: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            params: dict[str, Any] = {"name": name, "pattern": pattern, "limit": limit}
+            if obj_type is not None:
+                params["type"] = obj_type
+            if paginate:
+                params["offset"] = offset
+            if get_ancestors:
+                params["getAncestors"] = "true"
+            resp = self.request("GET", "/api/searches/results", params=params, timeout=timeout)
+            rows = items_from_payload(response_json(resp), keys)
+            out.extend(rows)
+            if not paginate or len(rows) < limit:
+                return out
+            offset += limit
+
+
+# ── Shared parts of the inventory scripts ────────────────────────────────────
+
+@dataclass
+class Auth:
+    """Session-auth snapshot for raw requests.get calls in worker threads."""
+    base: str
+    headers: dict[str, str]
+    cookies: dict[str, str]
+    project_id: str
+
+
+class InventoryClient(BaseMSTR):
+    """BaseMSTR + login-then-resolve + auth snapshot, shared by the inventory scripts."""
+
+    def login(self) -> None:  # type: ignore[override]
+        super().login()
+        self.resolve_project()
+
+    def auth(self) -> Auth:
+        return Auth(self.base, dict(self.session.headers),
+                    self.session.cookies.get_dict(), self.project_id or "")
+
+
+def read_parallel(items: list[dict[str, Any]], reader: Callable[[dict[str, Any]], dict[str, Any]],
+                  workers: int, progress_every: int = 0) -> dict[str, dict[str, Any]]:
+    """Map `reader(item)` over a thread pool; key results by oid(item). When
+    progress_every > 0, prints done/total to stderr every N completions and at the end."""
+    definitions: dict[str, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        futures = {pool.submit(reader, item): item for item in items}
+        done = 0
+        for future in as_completed(futures):
+            definitions[oid(futures[future]) or ""] = future.result()
+            done += 1
+            if progress_every and (done % progress_every == 0 or done == len(items)):
+                print(f"  {done}/{len(items)}", file=sys.stderr)
+    return definitions
+
+
+def dump_inventory(inventory: Any, out: str, prefix: str, run_id: str) -> str:
+    """Write inventory JSON to `out`, or to /tmp as {prefix}-{run_id}.json. Returns the path."""
+    path = out or os.path.join(tempfile.gettempdir(), f"{prefix}-{run_id}.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(inventory, f, indent=2)
+    return path
+
+
+# ── CLI helpers ──────────────────────────────────────────────────────────────
+
+def add_auth_args(parser: argparse.ArgumentParser, *, password: bool = True,
+                  login_mode: bool = True, project_name: bool = True,
+                  project_id: bool = False,
+                  help_text: dict[str, str] | None = None) -> argparse.ArgumentParser:
+    """Add the standard --base/--user/--password/--login-mode/--project-name auth
+    flags with MSTR_* env defaults (read at call time, not import time). Keyword
+    toggles drop/add flags per script; help_text overrides per-flag help, keyed
+    by flag name without the leading dashes."""
+    h = help_text or {}
+    parser.add_argument("--base", default=os.environ.get("MSTR_BASE", ""), help=h.get("base"))
+    parser.add_argument("--user", default=os.environ.get("MSTR_USER", ""), help=h.get("user"))
+    if password:
+        parser.add_argument("--password", default=os.environ.get("MSTR_PASSWORD", ""), help=h.get("password"))
+    if login_mode:
+        parser.add_argument("--login-mode", type=int, default=int(os.environ.get("MSTR_LOGIN_MODE", "1")),
+                            help=h.get("login-mode"))
+    if project_name:
+        parser.add_argument("--project-name", default=os.environ.get("MSTR_PROJECT_NAME", ""),
+                            help=h.get("project-name"))
+    if project_id:
+        parser.add_argument("--project-id", default=os.environ.get("MSTR_PROJECT_ID", ""),
+                            help=h.get("project-id"))
+    return parser
+
+
+def client_from_args(args: argparse.Namespace, cls: type = BaseMSTR) -> Any:
+    """Build a `cls` client from add_auth_args flags, prompting for the password
+    when neither --password nor MSTR_PASSWORD supplied one."""
+    password = args.password or getpass.getpass("Password: ")
+    return cls(args.base, args.user, password, args.login_mode, args.project_name)

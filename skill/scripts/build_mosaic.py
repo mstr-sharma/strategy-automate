@@ -942,8 +942,7 @@ def open_cs(m: MSTR, *, schema_edit: bool = False, release_self_locks: bool = Fa
     schema_edit=True  — adding/modifying form expressions on attributes, or
                         otherwise touching the schema graph itself. Using the
                         wrong type silently produces 8004ccde or no-ops the
-                        write. The chosen type is recorded on the session so
-                        assert_changeset_type() can fail fast at call sites.
+                        write. The chosen type is recorded on the session.
 
     release_self_locks=True — if open fails with 8004cc41 (schemaEdit lock
                               conflict) and the existing lock is owned by the
@@ -1005,25 +1004,6 @@ def commit_cs(m: MSTR, cs: str):
         m._cs_types.pop(cs, None)
     if not r.ok:
         die(f"commit {cs}: {format_mstr_error(r)}")
-
-
-def assert_changeset_type(m: MSTR, cs: str, *, schema_edit: bool) -> None:
-    """Fail fast if the active changeset is the wrong type for the imminent
-    write. Catches the common mistake of PATCHing an attribute form inside a
-    relationship-wiring (data) changeset, or PUTting a relationship inside a
-    schema-edit changeset. See memory/feedback_mosaic_gotchas.md.
-    """
-    actual = (getattr(m, "_cs_types", {}) or {}).get(cs)
-    if actual is None:
-        return  # changeset not opened via open_cs() — caller knows what they're doing
-    want = "schema" if schema_edit else "data"
-    if actual != want:
-        die(
-            f"changeset {cs} was opened with schemaEdit={actual=='schema'}; "
-            f"this write requires schemaEdit={schema_edit}. "
-            "Open a new changeset of the correct type — using the wrong one "
-            "silently produces 8004ccde or no-op writes."
-        )
 
 
 def format_mstr_error(response, prefix: str = "") -> str:
@@ -1134,45 +1114,6 @@ def put_relationships_merged(
     if not r.ok:
         return False, added, len(merged), format_mstr_error(r)
     return True, added, len(merged), ""
-
-
-def validate_join_table_membership(
-    m: MSTR,
-    model_id: str,
-    parent_attr_id: str,
-    child_attr_id: str,
-    join_table_id: str,
-) -> tuple[bool, str]:
-    """Pre-flight check for Strategy error 8004ccc7.
-
-    Fetches both attribute definitions and verifies the join table appears in
-    each attribute's expression table set. If either side is missing, returns
-    (False, human-readable reason). Caller should add the missing form
-    expression via PATCH BEFORE issuing the relationship PUT.
-
-    See mosaic_safety.JOIN_TABLE_RULE_DOC for the underlying rule.
-    """
-    if not (parent_attr_id and child_attr_id and join_table_id):
-        return False, "validate_join_table_membership: missing one of parent/child/join-table id"
-
-    p_full = _fetch_attribute(m, model_id, parent_attr_id)
-    c_full = _fetch_attribute(m, model_id, child_attr_id)
-    p_tids = _attr_table_ids(p_full)
-    c_tids = _attr_table_ids(c_full)
-
-    missing = []
-    if join_table_id not in p_tids:
-        missing.append("parent")
-    if join_table_id not in c_tids:
-        missing.append("child")
-    if not missing:
-        return True, ""
-    return (
-        False,
-        f"{'+'.join(missing)} attribute(s) have no expression on join "
-        f"table {join_table_id} — would trip 8004ccc7. "
-        + ms.JOIN_TABLE_RULE_DOC,
-    )
 
 
 # ── Post-build topology validation ───────────────────────────────────────────

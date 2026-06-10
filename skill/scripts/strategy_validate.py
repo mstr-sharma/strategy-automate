@@ -10,27 +10,20 @@ This runner is intentionally conservative:
 from __future__ import annotations
 
 import argparse
-import getpass
 import json
 import os
 import sys
-import time
+import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any
-
-import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _client import (  # noqa: E402
-    BaseMSTR, compact_json, response_json,
-    normalize_id, normalize_name, ancestor_names,
+    SEARCH_LIST_KEYS, BaseMSTR, add_auth_args, ancestor_names, client_from_args,
+    compact_json, items_from_payload, normalize_id, normalize_name, now_id,
+    response_json,
 )
 
-
-DEFAULT_BASE = os.environ.get("MSTR_BASE", "")
-DEFAULT_USER = os.environ.get("MSTR_USER", "")
-DEFAULT_PROJECT_NAME = os.environ.get("MSTR_PROJECT_NAME", "")
 
 # Subject-matter overrides. Defaults target the MicroStrategy Tutorial project so
 # the runner works out-of-the-box there; override via env to point at any project
@@ -49,22 +42,14 @@ VALIDATE_SF_NAME    = os.environ.get("MSTR_VALIDATE_SF_NAME",
 
 
 def now_run_id() -> str:
-    return "run-" + datetime.now().strftime("%Y%m%d-%H%M%S")
+    return "run-" + now_id()
 
 
 def items_from_search(payload: Any) -> list[dict[str, Any]]:
     """Narrow variant of items_from_payload — only the top-level search-result
     containers, never the modeling-object containers (attributes/metrics/etc).
     Keeps this script from accidentally unwrapping sub-lists in a search envelope."""
-    if isinstance(payload, list):
-        return [x for x in payload if isinstance(x, dict)]
-    if not isinstance(payload, dict):
-        return []
-    for key in ("result", "results", "objects", "items", "data"):
-        val = payload.get(key)
-        if isinstance(val, list):
-            return [x for x in val if isinstance(x, dict)]
-    return []
+    return items_from_payload(payload, SEARCH_LIST_KEYS)
 
 
 def payload_contains_value(value: Any, needle: str) -> bool:
@@ -98,10 +83,6 @@ def best_named(candidates: list[dict[str, Any]], name: str, preferred_ancestors:
     return scored[0][1]
 
 
-def exact_named(candidates: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
-    return best_named(candidates, name)
-
-
 @dataclass
 class StepResult:
     workflow: int
@@ -115,11 +96,8 @@ class MSTR(BaseMSTR):
     """Live-validation client — BaseMSTR + search/read/changeset helpers."""
 
     def search(self, name: str, obj_type: int | None = None, limit: int = 20, pattern: int = 4) -> list[dict[str, Any]]:
-        params: dict[str, Any] = {"name": name, "pattern": pattern, "limit": limit, "getAncestors": "true"}
-        if obj_type is not None:
-            params["type"] = obj_type
-        resp = self.request("GET", "/api/searches/results", params=params)
-        return items_from_search(response_json(resp))
+        return self.search_results(name, obj_type, pattern=pattern, limit=limit,
+                                   paginate=False, keys=SEARCH_LIST_KEYS)
 
     def read_object(self, object_id: str, obj_type: int) -> dict[str, Any]:
         resp = self.request("GET", f"/api/objects/{object_id}", params={"type": obj_type})
@@ -184,7 +162,7 @@ class Runner:
     def write_ledger(self) -> None:
         if not self.created:
             return
-        path = f"/tmp/strategy-validation-{self.args.run_id}.json"
+        path = os.path.join(tempfile.gettempdir(), f"strategy-validation-{self.args.run_id}.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump({"runId": self.args.run_id, "created": self.created}, f, indent=2)
         self.add(0, "cleanup ledger", "info", path)
@@ -656,11 +634,7 @@ class Runner:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base", default=os.environ.get("MSTR_BASE", DEFAULT_BASE))
-    parser.add_argument("--user", default=os.environ.get("MSTR_USER", DEFAULT_USER))
-    parser.add_argument("--password", default=os.environ.get("MSTR_PASSWORD", ""))
-    parser.add_argument("--login-mode", type=int, default=int(os.environ.get("MSTR_LOGIN_MODE", "1")))
-    parser.add_argument("--project-name", default=os.environ.get("MSTR_PROJECT_NAME", DEFAULT_PROJECT_NAME))
+    add_auth_args(parser)
     parser.add_argument("--run-id", default=now_run_id())
     parser.add_argument("--workflow", type=int, action="append", choices=range(1, 11), help="Run a specific workflow; repeatable")
     parser.add_argument("--yes", action="store_true", help="Allow write workflows")
@@ -671,8 +645,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    password = args.password or getpass.getpass("Password: ")
-    m = MSTR(args.base, args.user, password, args.login_mode, args.project_name)
+    m = client_from_args(args, MSTR)
     try:
         m.login()
         m.resolve_project()
