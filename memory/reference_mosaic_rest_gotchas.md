@@ -109,7 +109,8 @@ Always tell the helper which mode per tenant via `MSTR_LOGIN_MODE`. Different us
 - Category hierarchy + fact joins fail with `A cartesian join is detected` until the bridging entity attribute (Subcategory on both `LU_SUBCATEG` and `LU_ITEM`) exists AND the relationships are wired. Both are required.
 
 ## Delete
-- `DELETE /api/model/dataModels/{id}` returns `HTTP 204` on success, `HTTP 404` if already deleted. Treat 404 as idempotent success when cleaning up mid-script orphans.
+- Verified path on Strategy ONE Cloud: `DELETE /api/objects/{id}?type=3` (generic objects endpoint).
+- `DELETE /api/model/dataModels/{id}` worked on some Library builds but **404s on the observed Strategy ONE Cloud tenant family** — a 404 there means try the objects path, NOT idempotent success. (resolved 2026: newer tenant-verified observation wins — see `reference_strategy_object_cloning.md`)
 
 ## Session cap
 - Canonical coverage: `feedback_build_mosaic_session_leak.md` — symptom (`500 Maximum number of interactive session per user for project exceeded …`, `8004cb0a` / iServerCode `-2147072486`), the one-session-one-process rule, try/finally `m.logout()`, and recovery. (Earlier guidance here to wait 5–10 min after capping is superseded: iServer reaps project-interactive sessions on a ~30-min idle timer — budget the full 30 minutes and do not paper over with retries.)

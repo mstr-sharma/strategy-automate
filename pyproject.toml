@@ -6,7 +6,7 @@
 name = "strategy-automate"
 version = "0.1.0"
 description = "A Strategy (formerly MicroStrategy) automation brain for AI coding assistants — every part of the platform that exposes an API, SDK, MCP, CLI, or reproducible hook. Covers Mosaic data-model creation and modification, classic semantic-layer inspection and migration, runtime analytics, cubes and datasets, security and governance, platform admin, AI agents, and data validation."
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 dependencies = ["requests"]
 
 [project.optional-dependencies]

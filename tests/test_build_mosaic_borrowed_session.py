@@ -10,6 +10,8 @@ When the caller supplies --auth-token (+ cookies) on the CLI, MSTR.login() must:
 These tests stub out requests.Session so they assert on side effects without
 hitting the network.
 """
+import contextlib
+import io
 import os
 import sys
 import types
@@ -132,7 +134,10 @@ class BorrowedSessionAuthTests(unittest.TestCase):
         m = bm.MSTR(_args(user="alice", password="hunter2"))
         m.s = _FakeSession()
         try:
-            m.login(identity=False)
+            # die() prints "FATAL: login: ..." to stderr before raising —
+            # swallow it so the suite output stays clean.
+            with contextlib.redirect_stderr(io.StringIO()):
+                m.login(identity=False)
         except (Exception, SystemExit):
             pass  # die() raises SystemExit when there's no auth-token header
         self.assertFalse(m.borrowed_session)

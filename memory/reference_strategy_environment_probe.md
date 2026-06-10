@@ -47,5 +47,4 @@ Add `python3 skills/build-mosaic-model/scripts/build_mosaic.py preflight --proje
 
 - `feedback_build_mosaic_session_leak.md` — why step 2 matters.
 - `reference_strategy_project_loading.md` — step 3 details.
-- `reference_mosaic_publish_path.md` — step 9 + publish specifics.
-- `reference_mosaic_publishable_datatypes.md` — don't attempt publish before column types are clean.
+- `reference_mosaic_publish_path.md` — step 9 + publish specifics + DataType preconditions (don't attempt publish before column types are clean).
