@@ -9,26 +9,21 @@ summarizes the system hierarchy relationship graph. Writes raw inventory to
 from __future__ import annotations
 
 import argparse
-import getpass
 import json
 import os
-import re
 import sys
-from collections import Counter, defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
-from datetime import datetime
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _client import BaseMSTR, response_json, items_from_payload, oid, oname  # noqa: E402
+from collections import Counter
 from typing import Any
 
 import requests
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _client import (  # noqa: E402
+    Auth, InventoryClient, add_auth_args, client_from_args, collect_named_values,
+    collect_texts, dedupe_by_id, dump_inventory, expression_kind, items_from_payload,
+    now_id, oid, oname, read_parallel, response_json, walk,
+)
 
-DEFAULT_BASE = os.environ.get("MSTR_BASE", "")
-DEFAULT_USER = os.environ.get("MSTR_USER", "")
-DEFAULT_PROJECT_NAME = os.environ.get("MSTR_PROJECT_NAME", "")
 
 FAMILIES = {
     "attributes": {"type": 12, "path": "/api/model/attributes/{id}", "singular": "attribute"},
@@ -38,10 +33,6 @@ FAMILIES = {
     "prompts": {"type": 10, "path": "/api/model/prompts/{id}", "singular": "prompt"},
     "hierarchies": {"path": "/api/model/hierarchies/{id}", "singular": "hierarchy"},
 }
-
-
-def now_id() -> str:
-    return datetime.now().strftime("%Y%m%d-%H%M%S")
 
 
 def subtype(obj: dict[str, Any]) -> str:
@@ -57,27 +48,6 @@ def ancestors_path(obj: dict[str, Any]) -> str:
         return ""
     names = [str(a.get("name") or "") for a in reversed(ancestors) if isinstance(a, dict) and a.get("name")]
     return " / ".join(names)
-
-
-def walk(value: Any):
-    if isinstance(value, dict):
-        yield value
-        for child in value.values():
-            yield from walk(child)
-    elif isinstance(value, list):
-        for child in value:
-            yield from walk(child)
-
-
-def collect_texts(value: Any, limit: int = 8) -> list[str]:
-    texts: list[str] = []
-    for node in walk(value):
-        text = node.get("text")
-        if isinstance(text, str) and text and text not in texts:
-            texts.append(text)
-            if len(texts) >= limit:
-                break
-    return texts
 
 
 def collect_table_refs(value: Any) -> list[dict[str, Any]]:
@@ -100,17 +70,6 @@ def collect_object_refs(value: Any) -> Counter:
     return counts
 
 
-def collect_named_values(value: Any, key: str, limit: int = 20) -> list[str]:
-    values: list[str] = []
-    for node in walk(value):
-        item = node.get(key)
-        if isinstance(item, str) and item and item not in values:
-            values.append(item)
-            if len(values) >= limit:
-                break
-    return values
-
-
 def collect_refs_by_subtype(value: Any, wanted: str, limit: int = 10) -> list[dict[str, str]]:
     refs: dict[str, dict[str, str]] = {}
     wanted = wanted.lower()
@@ -126,63 +85,11 @@ def collect_refs_by_subtype(value: Any, wanted: str, limit: int = 10) -> list[di
     return list(refs.values())[:limit]
 
 
-def expression_kind(value: Any) -> str:
-    if not isinstance(value, dict):
-        return ""
-    expr = value.get("expression") or value.get("qualification") or value.get("definition") or value
-    if isinstance(expr, dict):
-        tree = expr.get("tree") or expr.get("predicateTree")
-        if isinstance(tree, dict) and tree.get("type"):
-            return str(tree["type"])
-        if expr.get("text"):
-            return "text"
-    return ""
-
-
-@dataclass
-class Auth:
-    base: str
-    headers: dict[str, str]
-    cookies: dict[str, str]
-    project_id: str
-
-
-class Client(BaseMSTR):
-    """Classic semantic-inventory client — BaseMSTR + login-then-resolve."""
-
-    def login(self) -> None:  # type: ignore[override]
-        super().login()
-        self.resolve_project()
-
-    def auth(self) -> Auth:
-        return Auth(self.base, dict(self.session.headers),
-                    self.session.cookies.get_dict(), self.project_id or "")
+class Client(InventoryClient):
+    """Classic semantic-inventory client — family search + hierarchy reads."""
 
     def search_all(self, obj_type: int, limit: int) -> list[dict[str, Any]]:
-        out: list[dict[str, Any]] = []
-        offset = 0
-        while True:
-            resp = self.session.get(
-                f"{self.base}/api/searches/results",
-                params={"name": "", "type": obj_type, "pattern": 4, "limit": limit, "offset": offset, "getAncestors": "true"},
-                timeout=60,
-            )
-            if not resp.ok:
-                raise RuntimeError(f"search type {obj_type} failed: {resp.status_code} {resp.text[:300]}")
-            rows = items_from_payload(response_json(resp))
-            out.extend(rows)
-            if len(rows) < limit:
-                break
-            offset += limit
-        seen = set()
-        deduped = []
-        for item in out:
-            object_id = oid(item)
-            if not object_id or object_id in seen:
-                continue
-            seen.add(object_id)
-            deduped.append(item)
-        return deduped
+        return dedupe_by_id(self.search_results(obj_type=obj_type, limit=limit, timeout=60))
 
     def list_hierarchies(self) -> list[dict[str, Any]]:
         resp = self.session.get(f"{self.base}/api/model/hierarchies", timeout=60)
@@ -404,11 +311,7 @@ def family_analysis(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base", default=os.environ.get("MSTR_BASE", DEFAULT_BASE))
-    parser.add_argument("--user", default=os.environ.get("MSTR_USER", DEFAULT_USER))
-    parser.add_argument("--password", default=os.environ.get("MSTR_PASSWORD", ""))
-    parser.add_argument("--login-mode", type=int, default=int(os.environ.get("MSTR_LOGIN_MODE", "1")))
-    parser.add_argument("--project-name", default=os.environ.get("MSTR_PROJECT_NAME", DEFAULT_PROJECT_NAME))
+    add_auth_args(parser)
     parser.add_argument("--families", nargs="*", choices=sorted(FAMILIES), default=sorted(FAMILIES))
     parser.add_argument("--search-limit", type=int, default=200)
     parser.add_argument("--max-definitions-per-family", type=int, default=0, help="0 means read every visible definition.")
@@ -421,8 +324,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    password = args.password or getpass.getpass("Password: ")
-    client = Client(args.base, args.user, password, args.login_mode, args.project_name)
+    client = client_from_args(args, Client)
     started = now_id()
     try:
         client.login()
@@ -450,12 +352,8 @@ def main() -> int:
             else:
                 to_read = items
             print(f"Reading {len(to_read)}/{len(items)} {family} definitions...", file=sys.stderr)
-            definitions: dict[str, dict[str, Any]] = {}
-            with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
-                futures = {pool.submit(read_definition, auth, family, item): item for item in to_read}
-                for future in as_completed(futures):
-                    item = futures[future]
-                    definitions[oid(item) or ""] = future.result()
+            definitions = read_parallel(
+                to_read, lambda item, family=family: read_definition(auth, family, item), args.workers)
             rows = [summarize_item(family, item, definitions.get(oid(item) or "")) for item in items]
             inventory["families"][family] = rows
             inventory["analysis"][family] = family_analysis(rows)
@@ -473,9 +371,7 @@ def main() -> int:
             if args.include_definition_bodies and hierarchy.get("ok"):
                 inventory["systemHierarchyBody"] = hierarchy.get("body")
 
-        path = args.out or f"/tmp/strategy-tutorial-semantic-inventory-{started}.json"
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(inventory, f, indent=2)
+        path = dump_inventory(inventory, args.out, "strategy-semantic-inventory", started)
         print(json.dumps({
             "ok": True,
             "runId": started,

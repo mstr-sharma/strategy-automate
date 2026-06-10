@@ -48,21 +48,22 @@ Auth env: MSTR_BASE, MSTR_USER, MSTR_PASSWORD, MSTR_LOGIN_MODE, MSTR_PROJECT_ID
 (same as build_mosaic.py).
 """
 from __future__ import annotations
-import argparse, json, os, re, sys
-from dataclasses import dataclass, field, asdict
-from typing import Any
+import argparse, json, os, re, sys, tempfile
+from dataclasses import dataclass, asdict
 
 sys.path.insert(0, os.path.dirname(__file__))
-import build_mosaic as bm  # reuse session, DB instance / table discovery
+import build_mosaic as bm  # reuse session, discovery, and classification heuristics
+from _client import add_auth_args  # noqa: E402
 
 SEVERITY = {"ERROR": 3, "WARN": 2, "INFO": 1}
 
 LOCALE_SUFFIXES = {"_DE","_ES","_FR","_IT","_JA","_KO","_PO","_SCH","_ZH","_EN"}
 AUDIT_COLS = {"LOAD_TS","LOAD_DATE","LOAD_TIMESTAMP","LAST_UPDATED_AT","ETL_BATCH_ID","DW_CREATED_AT","DW_UPDATED_AT","SOURCE_SYSTEM","INGESTION_DATE"}
 PII_HINTS = ("EMAIL","SSN","DOB","BIRTH","PHONE","FAX","ADDRESS","ZIP","POSTCODE","LAT","LON","IP_ADDR","CREDIT_CARD","PASSWORD")
-ID_TOKENS = ("_ID","ID","_KEY","KEY","_CD","_CODE","CODE","_NO","NO","_NUM","NUM","_NUMBER","NUMBER")
-NATURAL_NUMERIC_DIMS = ("YEAR","MONTH","QUARTER","WEEK","DAY","FISCAL","QTR")  # numeric but not metrics
-NUMERIC_DATATYPES = {"integer","int","decimal","double","float","numeric","real","bigint","smallint","tinyint","number"}
+# ID/key suffixes, numeric-dimension tokens, and numeric datatypes are
+# deliberately NOT redefined here — predictions delegate to build_mosaic
+# (bm.ID_COLUMN_SUFFIXES, bm.NATURAL_NUMERIC_DIMS, bm.NUMERIC_TYPES) so the
+# preflight can never drift from what the build actually does.
 
 @dataclass
 class Finding:
@@ -88,7 +89,9 @@ class ColumnInfo:
 
     @property
     def is_numeric(self):
-        return (self.datatype or "").lower() in NUMERIC_DATATYPES
+        # Same substring semantics as bm.classify_columns.
+        dt = (self.datatype or "").lower()
+        return any(t in dt for t in bm.NUMERIC_TYPES)
 
 
 def classify_column(tname: str, col: dict) -> ColumnInfo:
@@ -101,7 +104,7 @@ def classify_column(tname: str, col: dict) -> ColumnInfo:
     for s in LOCALE_SUFFIXES:
         if upper.endswith(s):
             locale = s.lstrip("_"); break
-    is_id = any(upper.endswith(t) or upper == t.strip("_") for t in ID_TOKENS)
+    is_id = bm._looks_like_identifier_col(name)
     is_audit = upper in AUDIT_COLS
     is_pii = any(h in upper for h in PII_HINTS)
     return ColumnInfo(
@@ -117,10 +120,10 @@ def predict_role(ci: ColumnInfo) -> str:
     """What role will the auto-builder assign? returns: 'attribute' | 'metric' | 'skip'."""
     if ci.is_audit: return "skip"
     if ci.locale_suffix: return "attribute"  # descriptor form candidate, not a metric
-    if ci.looks_id: return "attribute"
-    if any(t in ci.name.upper() for t in NATURAL_NUMERIC_DIMS): return "attribute"
-    if ci.is_numeric: return "metric"
-    return "attribute"
+    # Delegate to the build's actual classifier so prediction == reality.
+    _attrs, metrics = bm.classify_columns(
+        [{"name": ci.name, "dataType": ci.datatype}], set(), set())
+    return "metric" if metrics else "attribute"
 
 
 # ── Checks ────────────────────────────────────────────────────────────────────
@@ -168,7 +171,7 @@ def check_classification(cols: list[ColumnInfo], findings: list[Finding]):
             findings.append(Finding("INFO","AMBIGUOUS_ID",
                 f"{c.table}.{c.name}","Numeric column matches ID tokens but not ending in ID.",
                 "Confirm it is an attribute/key, or force via --metric-cols if this is actually additive."))
-        if c.is_numeric and not c.looks_id and any(t in c.name.upper() for t in NATURAL_NUMERIC_DIMS):
+        if c.is_numeric and not c.looks_id and bm._looks_like_numeric_dimension(c.name):
             findings.append(Finding("WARN","NUMERIC_DIM_AS_METRIC",
                 f"{c.table}.{c.name}","Numeric dimension (year/month/qtr) will be summed as a metric.",
                 "Declare as attribute."))
@@ -276,16 +279,12 @@ Expected blueprint JSON (produced by strategy_semantic_mine.py or hand-authored)
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--base", default=os.environ.get("MSTR_BASE",""))
-    p.add_argument("--user", default=os.environ.get("MSTR_USER",""))
-    p.add_argument("--password", default=os.environ.get("MSTR_PASSWORD",""))
-    p.add_argument("--login-mode", type=int, default=int(os.environ.get("MSTR_LOGIN_MODE","1")))
-    p.add_argument("--project-id", default=os.environ.get("MSTR_PROJECT_ID",""))
+    add_auth_args(p, project_name=False, project_id=True)
     p.add_argument("--instance", required=True)
     p.add_argument("--schema", required=True)
     p.add_argument("--tables", nargs="+", required=True)
     p.add_argument("--blueprint", help="JSON blueprint from the legacy semantic layer (see schema).")
-    p.add_argument("--out", default="/tmp/preflight.json")
+    p.add_argument("--out", default=os.path.join(tempfile.gettempdir(), "preflight.json"))
     p.add_argument("--fail-on", choices=["ERROR","WARN","INFO"], default="ERROR",
                    help="Exit non-zero if any finding at this severity or higher.")
     p.add_argument("-v","--verbose", action="store_true")

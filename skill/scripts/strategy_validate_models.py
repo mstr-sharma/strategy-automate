@@ -23,6 +23,9 @@ try:
 except ImportError:
     requests = None  # type: ignore
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _client import add_auth_args  # noqa: E402  (tolerates absent requests)
+
 
 NULL_SENTINEL = "<NULL>"
 
@@ -288,12 +291,11 @@ def parse_args() -> argparse.Namespace:
                         help="Trino host (defaults to the host component of --base / MSTR_BASE).")
     parser.add_argument("--trino-schema",
                         help="Trino schema (defaults to --project-name / MSTR_PROJECT_NAME lowercased).")
-    parser.add_argument("--base", default=os.environ.get("MSTR_BASE", ""),
-                        help="MSTR Library base URL (used to derive Trino host).")
-    parser.add_argument("--user", default=os.environ.get("MSTR_USER", ""),
-                        help="MSTR username (reused for Trino basic auth).")
-    parser.add_argument("--project-name", default=os.environ.get("MSTR_PROJECT_NAME", ""),
-                        help="MSTR project name (lowercased → Trino schema).")
+    add_auth_args(parser, password=False, login_mode=False, help_text={
+        "base": "MSTR Library base URL (used to derive Trino host).",
+        "user": "MSTR username (reused for Trino basic auth).",
+        "project-name": "MSTR project name (lowercased → Trino schema).",
+    })
 
     # Still-pending adapters.
     parser.add_argument("--reference-sql-file")
