@@ -8,7 +8,7 @@ Tested with **Claude Code** and **Codex CLI**. Every other harness (Gemini CLI, 
 
 ## How agents route work
 
-The cold-start routing tree, the strict skill-precedence chain, and all operating rules live in [`AGENTS.md`](AGENTS.md) — maintained there only. In one line: `strategy-automation` classifies the surface, `strategy-data-modeling` plans the model, `skill/SKILL.md` executes via REST, `strategy-validation` verifies the numbers, and on any Strategy error code the first stop is [`memory/reference_strategy_error_codes.md`](memory/reference_strategy_error_codes.md).
+The cold-start routing tree, the strict skill-precedence chain, and all operating rules live in [`AGENTS.md`](AGENTS.md) — maintained there only. In one line: `strategy-automation` classifies the surface, `strategy-data-modeling` plans the model, `skills/build-mosaic-model/SKILL.md` executes via REST, `strategy-validation` verifies the numbers, and on any Strategy error code the first stop is [`memory/reference_strategy_error_codes.md`](memory/reference_strategy_error_codes.md).
 
 ## Repo layout
 
@@ -21,27 +21,31 @@ strategy-automate/
 ├── memory/                        # durable knowledge, indexed by MEMORY.md
 │   ├── MEMORY.md                  # flat index — grep or scan to find the right file
 │   ├── reference_strategy_error_codes.md    # error code → memory with the fix
-│   ├── reference_data_modeling_foundations.md  # Kimball foundations
-│   ├── reference_mosaic_*.md                # Mosaic payload shapes, publish, ACL, SF, clone
+│   ├── reference_data_modeling_foundations.md  # Kimball foundations (all design sections)
+│   ├── reference_mosaic_*.md                # Mosaic payload shapes, publish, ACL, SF
 │   ├── reference_strategy_*.md              # surface matrix, env, OpenAPI, legacy, etc.
 │   ├── feedback_*.md                        # durable fixes learned from failures
-│   └── checklist_*.md                       # pre-build / build / review gates
-├── skill/                         # build-mosaic-model skill
-│   ├── SKILL.md
-│   ├── examples/                  # model_plan / attribute_plan / relationship_plan / validation_suite templates
-│   └── scripts/
-│       ├── _client.py               # shared BaseMSTR + payload helpers
-│       ├── build_mosaic.py          # subcommands for auth, catalog, build, publish, wire-relationships, SF, ACL, translate, validate-model, … (see --help)
-│       ├── preflight_model_check.py
-│       ├── strategy_mosaic_inventory.py   # walk every Mosaic data model (subType 779)
-│       ├── strategy_semantic_inventory.py # walk classic attrs / facts / metrics / filters / hierarchies
-│       ├── strategy_semantic_mine.py      # top-down / reverse lineage for legacy → Mosaic
-│       ├── strategy_validate_models.py    # file-adapter + live Mosaic-to-Mosaic Trino diff
-│       └── strategy_validate.py           # live-tenant runtime-workflow validator
-├── strategy-data-modeling/SKILL.md   # Kimball-first planning layer
-├── strategy-automation/SKILL.md      # NLQ router + surface classifier
-├── strategy-validation/SKILL.md      # paired-query numeric-correctness validator
-└── captures/                      # raw tenant payloads, dated — NOT durable knowledge
+│   └── checklist_*.md                       # modeling playbook + review gate
+├── skills/
+│   ├── build-mosaic-model/        # the execution skill
+│   │   ├── SKILL.md
+│   │   ├── examples/              # model_plan / attribute_plan / relationship_plan / validation_suite templates
+│   │   └── scripts/
+│   │       ├── _client.py               # shared BaseMSTR, auth args, search, inventory helpers
+│   │       ├── build_mosaic.py          # subcommands for auth, catalog, build, publish, wire-relationships, SF, ACL, translate, validate-model, … (see --help)
+│   │       ├── preflight_model_check.py
+│   │       ├── strategy_mosaic_inventory.py   # walk every Mosaic data model (subType 779)
+│   │       ├── strategy_semantic_inventory.py # walk classic attrs / facts / metrics / filters / hierarchies
+│   │       ├── strategy_semantic_mine.py      # top-down / reverse lineage for legacy → Mosaic
+│   │       ├── strategy_validate_models.py    # file-adapter + live Mosaic-to-Mosaic Trino diff
+│   │       └── strategy_validate.py           # live-tenant runtime-workflow validator
+│   ├── strategy-data-modeling/SKILL.md   # Kimball-first planning layer
+│   ├── strategy-automation/SKILL.md      # NLQ router + surface classifier
+│   └── strategy-validation/SKILL.md      # paired-query numeric-correctness validator
+├── tests/                         # hermetic unit tests (run in CI)
+├── captures/                      # dated tenant transcripts; raw payloads stay local
+├── pyproject.toml LICENSE         # deps + lint config; MIT
+└── .github/workflows/tests.yml   # CI: unittest + ruff
 ```
 
 ## Setup
@@ -69,8 +73,8 @@ python3 -m pip install --user requests
 ### 3. Verify tenant connectivity
 
 ```bash
-python3 skill/scripts/build_mosaic.py auth-probe
-python3 skill/scripts/build_mosaic.py list-datasources
+python3 skills/build-mosaic-model/scripts/build_mosaic.py auth-probe
+python3 skills/build-mosaic-model/scripts/build_mosaic.py list-datasources
 ```
 
 ### 4. Wire the repo into your AI tool
@@ -99,14 +103,14 @@ Schema: <schema>
 Tables: <T1>, <T2>, <T3>
 ```
 
-For multi-DB builds (e.g., Postgres + Snowflake), route through [`strategy-data-modeling/SKILL.md`](strategy-data-modeling/SKILL.md) first — declare conformed dims, classify tables, pick the topology before hitting REST. Case-mismatch FKs (`<entity>_id` vs `<ENTITY>_ID`) and semantically-same-but-differently-named FKs (`primary_<entity>_id` vs `<entity>_id`) silently break auto-conformance unless you pass `--conformance-map` or `--fk-map` to `build`. See [`memory/feedback_mosaic_relationship_wiring.md`](memory/feedback_mosaic_relationship_wiring.md) for the six-step recipe.
+For multi-DB builds (e.g., Postgres + Snowflake), route through [`skills/strategy-data-modeling/SKILL.md`](skills/strategy-data-modeling/SKILL.md) first — declare conformed dims, classify tables, pick the topology before hitting REST. Case-mismatch FKs (`<entity>_id` vs `<ENTITY>_ID`) and semantically-same-but-differently-named FKs (`primary_<entity>_id` vs `<entity>_id`) silently break auto-conformance unless you pass `--conformance-map` or `--fk-map` to `build`. See [`memory/feedback_mosaic_relationship_wiring.md`](memory/feedback_mosaic_relationship_wiring.md) for the six-step recipe.
 
 End-to-end chain in a single Python process (avoids session-cap trips — see [`memory/feedback_build_mosaic_session_leak.md`](memory/feedback_build_mosaic_session_leak.md)):
 
 ```bash
-python3 skill/scripts/build_mosaic.py build-from-config --config model-spec.yaml
+python3 skills/build-mosaic-model/scripts/build_mosaic.py build-from-config --config model-spec.yaml
 # or
-python3 skill/scripts/build_mosaic.py build \
+python3 skills/build-mosaic-model/scripts/build_mosaic.py build \
   --name "Sales Mosaic" \
   --source "Snowflake Prod:SALES:CUSTOMER,ORDER,LINEITEM" \
   --dictionary /tmp/sales.dict.json \
@@ -118,7 +122,7 @@ python3 skill/scripts/build_mosaic.py build \
 For multi-DB or mixed-case builds where auto-conformance leaves orphan FKs:
 
 ```bash
-python3 skill/scripts/build_mosaic.py wire-relationships \
+python3 skills/build-mosaic-model/scripts/build_mosaic.py wire-relationships \
   --model-id <model_id> \
   --hints /tmp/fk-hints.json \
   --dry-run
@@ -129,7 +133,7 @@ Validates step-3 (self-reference → `8004ccdb`) and step-5 (relationship_table 
 ### Publish an in-memory Mosaic model (same process as build)
 
 ```bash
-python3 skill/scripts/build_mosaic.py publish --model-id <model_id> --skip-classify
+python3 skills/build-mosaic-model/scripts/build_mosaic.py publish --model-id <model_id> --skip-classify
 ```
 
 `--skip-classify` bypasses the `GET /api/objects/{id}?type=3` surface check when you already know the target is a Mosaic model — saves one project-scoped call against the session cap when chaining build → publish.
@@ -139,7 +143,7 @@ python3 skill/scripts/build_mosaic.py publish --model-id <model_id> --skip-class
 File adapter (dump rows from any comparator, then diff):
 
 ```bash
-python3 skill/scripts/strategy_validate_models.py \
+python3 skills/build-mosaic-model/scripts/strategy_validate_models.py \
   --model-file /tmp/model_rows.csv \
   --reference-file /tmp/reference_rows.csv \
   --key region,nation --measures revenue,orders \
@@ -149,19 +153,19 @@ python3 skill/scripts/strategy_validate_models.py \
 Live Mosaic-to-Mosaic (via Trino, no external files):
 
 ```bash
-python3 skill/scripts/strategy_validate_models.py \
+python3 skills/build-mosaic-model/scripts/strategy_validate_models.py \
   --model "<new_model>" --reference-mosaic "<reference_model>" \
   --query 'SELECT "region (region name)", SUM("revenue") FROM %s GROUP BY 1' \
   --key 'region (region name)' --measures revenue \
   --out /tmp/validation.json
 ```
 
-See [`strategy-validation/SKILL.md`](strategy-validation/SKILL.md) and [`memory/reference_strategy_data_validation.md`](memory/reference_strategy_data_validation.md) for the 5-query minimum suite, the 10-check design suite, comparator-source decision matrix, and failure-triage mapped to Kimball root causes.
+See [`skills/strategy-validation/SKILL.md`](skills/strategy-validation/SKILL.md) and [`memory/reference_strategy_data_validation.md`](memory/reference_strategy_data_validation.md) for the 5-query minimum suite, the 10-check design suite, comparator-source decision matrix, and failure-triage mapped to Kimball root causes.
 
 ### Inspect every Mosaic model in a project
 
 ```bash
-python3 skill/scripts/strategy_mosaic_inventory.py --workers 12
+python3 skills/build-mosaic-model/scripts/strategy_mosaic_inventory.py --workers 12
 ```
 
 Writes structured JSON to `/tmp`. Portfolio rollups + per-model attributes, metrics, relationships, security filters, external-data-model links.
@@ -169,8 +173,8 @@ Writes structured JSON to `/tmp`. Portfolio rollups + per-model attributes, metr
 ### Mine a classic project for Mosaic candidates
 
 ```bash
-python3 skill/scripts/strategy_semantic_mine.py --mode top-down --report "Revenue Report"
-python3 skill/scripts/strategy_semantic_mine.py --mode reverse --table LU_PRODUCT
+python3 skills/build-mosaic-model/scripts/strategy_semantic_mine.py --mode top-down --report "Revenue Report"
+python3 skills/build-mosaic-model/scripts/strategy_semantic_mine.py --mode reverse --table LU_PRODUCT
 ```
 
 See [`memory/reference_strategy_legacy_to_mosaic_mining.md`](memory/reference_strategy_legacy_to_mosaic_mining.md) — it's the start-here hub for classic → Mosaic migrations (4-step sequence: mining → field-study → blueprint/clone decision → build).
@@ -178,8 +182,8 @@ See [`memory/reference_strategy_legacy_to_mosaic_mining.md`](memory/reference_st
 ### Automate an API surface that has no typed helper yet
 
 ```bash
-python3 skill/scripts/build_mosaic.py openapi-search "<domain word>" --context 3
-python3 skill/scripts/build_mosaic.py api-call --method GET --path /api/projects
+python3 skills/build-mosaic-model/scripts/build_mosaic.py openapi-search "<domain word>" --context 3
+python3 skills/build-mosaic-model/scripts/build_mosaic.py api-call --method GET --path /api/projects
 ```
 
 Generic REST reachability is part of platform-hook coverage. Promote to a typed helper when the workflow becomes common, risky, multi-step, or needs strict verification or cleanup.
@@ -192,13 +196,13 @@ Security posture for humans: no hardcoded credentials, tenant IDs, or industry-s
 
 ## Contributing
 
-1. **New endpoint or workflow** → prove the hook with `openapi-search` + read-only `api-call`; add a subcommand to [`skill/scripts/build_mosaic.py`](skill/scripts/build_mosaic.py) when it deserves a typed helper; update [`memory/reference_mosaic_build_skill.md`](memory/reference_mosaic_build_skill.md) and the relevant `SKILL.md`.
+1. **New endpoint or workflow** → prove the hook with `openapi-search` + read-only `api-call`; add a subcommand to [`skills/build-mosaic-model/scripts/build_mosaic.py`](skills/build-mosaic-model/scripts/build_mosaic.py) when it deserves a typed helper; update [`memory/reference_mosaic_build_skill.md`](memory/reference_mosaic_build_skill.md) and the relevant `SKILL.md`.
 2. **New durable knowledge** → add a memory file with `name` / `description` / `type` frontmatter, then point to it from [`memory/MEMORY.md`](memory/MEMORY.md). Cite code by function/subcommand name, never line numbers. New error codes MUST add a row to [`memory/reference_strategy_error_codes.md`](memory/reference_strategy_error_codes.md).
 3. **New platform surface or known gap** → update [`memory/reference_strategy_automation_coverage.md`](memory/reference_strategy_automation_coverage.md) and [`memory/reference_strategy_task_catalog.md`](memory/reference_strategy_task_catalog.md).
-4. **New skill surface** → sibling directory with a `SKILL.md`; add routing in [`strategy-automation/SKILL.md`](strategy-automation/SKILL.md) so other sessions find it. Skills must stay one-way (classify → plan → build → verify).
+4. **New skill surface** → new directory under `skills/` with a `SKILL.md`; add routing in [`skills/strategy-automation/SKILL.md`](skills/strategy-automation/SKILL.md) so other sessions find it. Skills must stay one-way (classify → plan → build → verify).
 5. **Dated tenant-specific content** goes under `captures/<YYYY-MM-DD>-<topic>/`, not in memory.
 6. **Do not commit** tenant IDs, usernames, passwords, personal names, or industry-specific terminology (see generalization rule above).
 
 ## License
 
-MIT (or internal use per your org's policy).
+MIT — see [LICENSE](LICENSE).

@@ -4,7 +4,7 @@ description: Minimum validation suite for any Strategy / Mosaic model — compar
 type: reference
 tags: [validation, mosaic, classic, build, migration, kimball]
 ---
-Companion to the `strategy-validation` skill (`strategy-validation/SKILL.md`) and the Mosaic ship-bar checklist (`feedback_mosaic_ship_bar.md`).
+Companion to the `strategy-validation` skill (`skills/strategy-validation/SKILL.md`) and the Mosaic ship-bar checklist (`feedback_mosaic_ship_bar.md`).
 
 ## When validation is required
 
@@ -115,12 +115,12 @@ Do NOT call a new build shippable if:
 
 ## Helper script
 
-`skill/scripts/strategy_validate_models.py` — pluggable runner.
+`skills/build-mosaic-model/scripts/strategy_validate_models.py` — pluggable runner.
 
 **File adapter (any comparator — dump rows first).** Compares CSV/JSON result files:
 
 ```bash
-python3 skill/scripts/strategy_validate_models.py \
+python3 skills/build-mosaic-model/scripts/strategy_validate_models.py \
   --model-file /tmp/model_rows.json \
   --reference-file /tmp/reference_rows.json \
   --key region,nation \
@@ -131,7 +131,7 @@ python3 skill/scripts/strategy_validate_models.py \
 **Live Mosaic-to-Mosaic adapter (implemented).** Runs the same SQL against two Mosaic models through the Strategy Trino endpoint in one call:
 
 ```bash
-python3 skill/scripts/strategy_validate_models.py \
+python3 skills/build-mosaic-model/scripts/strategy_validate_models.py \
   --model "<new_model>" \
   --reference-mosaic "<reference_model>" \
   --query 'SELECT "<attr> (<form>)", SUM("<metric>") FROM %s GROUP BY 1' \
@@ -153,7 +153,7 @@ Until a live adapter exists for a source, run ad-hoc through the appropriate sou
 
 ## Related
 
-- `strategy-validation/SKILL.md` — runnable paired-query validator skill.
+- `skills/strategy-validation/SKILL.md` — runnable paired-query validator skill.
 - `reference_mosaic_build_validation.md` — runnable post-build gate invoked via `build_mosaic.py validate-model`; F/W checks + diff/regression mode.
 - `feedback_mosaic_relationship_wiring.md` — fixes the #1 cause of validation failures (broken conformance).
 - `reference_data_modeling_foundations.md` — Kimball grain + conformed-dim principles that underpin every validation check.

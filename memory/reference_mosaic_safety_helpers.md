@@ -6,7 +6,7 @@ type: reference
 
 ## What's in there
 
-`skill/scripts/mosaic_safety.py` collects the pure-function defensive helpers
+`skills/build-mosaic-model/scripts/mosaic_safety.py` collects the pure-function defensive helpers
 that surfaced from the TPC-DS Galaxy build. The file holds NO network calls
 and NO MSTR session state — every function takes already-fetched response
 bodies or plain dicts and returns parsed data or fresh payloads.
@@ -92,17 +92,17 @@ underlying logic:
 ```bash
 # Validate post-build topology — recommended as the LAST step of every
 # wiring or build script:
-python3 skill/scripts/build_mosaic.py validate-topology \
+python3 skills/build-mosaic-model/scripts/build_mosaic.py validate-topology \
   --model-id <id> --strict --json
 
 # Wire relationships in merge-aware mode (default) — pass --replace only
 # when you explicitly want the destructive wipe:
-python3 skill/scripts/build_mosaic.py wire-relationships \
+python3 skills/build-mosaic-model/scripts/build_mosaic.py wire-relationships \
   --model-id <id> --hints rels.yaml
 
 # Full validate-model now includes the W7 topology rollup with
 # --strict-isolation to promote isolated-attribute findings to FAIL:
-python3 skill/scripts/build_mosaic.py validate-model \
+python3 skills/build-mosaic-model/scripts/build_mosaic.py validate-model \
   --model-id <id> --strict-isolation
 ```
 

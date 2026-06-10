@@ -1,4 +1,4 @@
-"""Shared Strategy REST client + helpers for the scripts under skill/scripts/.
+"""Shared Strategy REST client + helpers for the scripts under skills/build-mosaic-model/scripts/.
 
 Extracted to de-duplicate ~40 LOC of login/session/response_json/items_from_payload
 boilerplate that previously lived in every inventory/validation/mining script. See

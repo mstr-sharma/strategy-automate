@@ -83,6 +83,6 @@ Coverage levels are defined in `reference_strategy_automation_coverage.md`: wrap
 ## When unsure
 Run:
 ```bash
-python3 skill/scripts/build_mosaic.py openapi-search "<domain word>" --context 3
+python3 skills/build-mosaic-model/scripts/build_mosaic.py openapi-search "<domain word>" --context 3
 ```
 Then make a read-only `api-call` to confirm response shape before writing.

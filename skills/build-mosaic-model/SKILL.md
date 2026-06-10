@@ -5,9 +5,9 @@ description: Build a Strategy Mosaic (MicroStrategy) semantic model from scratch
 
 # Build a Strategy Mosaic model from scratch
 
-This skill is the **execution layer** for Mosaic data-model creation and modification. The **planning layer** is `strategy-data-modeling/SKILL.md` — route through it first unless the user gave you a complete pre-planned build.
+This skill is the **execution layer** for Mosaic data-model creation and modification. The **planning layer** is `skills/strategy-data-modeling/SKILL.md` — route through it first unless the user gave you a complete pre-planned build.
 
-**Out of scope for this skill** — route to `strategy-automation/SKILL.md` and `memory/reference_strategy_surface_matrix.md`:
+**Out of scope for this skill** — route to `skills/strategy-automation/SKILL.md` and `memory/reference_strategy_surface_matrix.md`:
 - Classic / project semantic-layer objects (legacy attributes, project metrics/facts/filters, project security filters)
 - Runtime analytics (reports, dashboards, documents, prompt answers, exports)
 - AI / Agent / Bot work
@@ -77,7 +77,7 @@ A committed Mosaic data model containing:
 9. **Relationships (second changeset).** Issue only the PUTs that pass the step-3 and step-5 prerequisites in the wiring recipe.
 10. **Quality gate.** `validate-model --model-id M [--strict-orphans] [--diff-against OTHER_ID] [--json]` — enforces the rules in `feedback_mosaic_build_quality.md`. Exits non-zero on failure.
 11. **Publish (in-memory only).** `publish --model-id M`. ONE trigger per run — never fire `/api/cubes` AND `/api/dataModels/{id}/publish` together (see `memory/reference_mosaic_publish_path.md`). For `connect_live` models, skip publish — it's a no-op.
-12. **Validate data correctness.** Route through `strategy-validation/SKILL.md` with a trusted comparator. A build without validation is not shippable.
+12. **Validate data correctness.** Route through `skills/strategy-validation/SKILL.md` with a trusted comparator. A build without validation is not shippable.
 13. **Print the model URL.**
 
 ## Naming, descriptions, and inputs from ERDs / dictionaries

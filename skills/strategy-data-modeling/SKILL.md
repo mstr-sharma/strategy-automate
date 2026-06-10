@@ -5,14 +5,14 @@ description: Design, review, migrate, and operationalize Strategy semantic model
 
 # Strategy Data Modeling (Kimball-first planning layer)
 
-Use this skill when the user asks to design, inspect, explain, review, migrate, validate, or improve a Strategy / MicroStrategy semantic model. This skill is the **planning layer** that sits between `strategy-automation` (which classifies the surface) and execution skills (`skill/SKILL.md`, `strategy-validation/SKILL.md`).
+Use this skill when the user asks to design, inspect, explain, review, migrate, validate, or improve a Strategy / MicroStrategy semantic model. This skill is the **planning layer** that sits between `strategy-automation` (which classifies the surface) and execution skills (`skills/build-mosaic-model/SKILL.md`, `skills/strategy-validation/SKILL.md`).
 
 **Skill precedence (one-way, no loops):**
 
 ```
 strategy-automation (classify surface)
   └─► strategy-data-modeling (plan — this skill)
-        └─► skill/SKILL.md (build-mosaic-model) OR legacy mining
+        └─► skills/build-mosaic-model/SKILL.md (build-mosaic-model) OR legacy mining
               └─► strategy-validation (verify)
 ```
 
@@ -56,7 +56,7 @@ For any modeling request, produce or update a model plan containing:
 15. Validation suite
 16. Build sequence
 
-Prefer the templates in `skill/examples/`:
+Prefer the templates in `skills/build-mosaic-model/examples/`:
 
 - `model_plan_template.yaml`
 - `attribute_plan_template.yaml`

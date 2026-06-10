@@ -12,7 +12,7 @@ Legacy-to-Mosaic work always flows through these four memory files in order. Loa
 1. **Inspect the classic project** — THIS file (`reference_strategy_legacy_to_mosaic_mining.md`). Run `strategy_semantic_mine.py` top-down from reports/documents or reverse from tables to discover the attributes / facts / metrics / filters / prompts / hierarchies already in play.
 2. **Read the live classic inventory** — [`reference_strategy_tutorial_semantic_field_study.md`](reference_strategy_tutorial_semantic_field_study.md). Captures actual REST payload shapes for every object class; use as a Rosetta Stone when translating to Mosaic.
 3. **Pick the migration pattern** — [`feedback_mosaic_legacy_as_blueprint.md`](feedback_mosaic_legacy_as_blueprint.md) (blueprint-driven: mirror the classic shape into a new Mosaic model) OR [`reference_strategy_object_cloning.md`](reference_strategy_object_cloning.md) (clone-and-remap: copy an existing Mosaic model as a starting point). Blueprint-driven is correct when the classic project has meaningful semantics worth preserving; clone-and-remap is correct when a similar Mosaic model already exists in the tenant.
-4. **Build the Mosaic target** — route through `strategy-data-modeling/SKILL.md` (planning, Kimball-first) and `skill/SKILL.md` (execution). Validate with `strategy-validation/SKILL.md` against the original classic reports as the comparator.
+4. **Build the Mosaic target** — route through `skills/strategy-data-modeling/SKILL.md` (planning, Kimball-first) and `skills/build-mosaic-model/SKILL.md` (execution). Validate with `skills/strategy-validation/SKILL.md` against the original classic reports as the comparator.
 
 Related: [`reference_strategy_design_transition.md`](reference_strategy_design_transition.md) covers conceptual differences between classic and Mosaic; read it when a 1:1 mapping breaks down (e.g., compound metrics, fact extensions, consolidations).
 
@@ -28,11 +28,11 @@ For live examples of the object payloads this lane mines, read `reference_strate
 
 Script:
 ```bash
-python3 skill/scripts/strategy_semantic_mine.py --mode top-down --report "Revenue Report"
-python3 skill/scripts/strategy_semantic_mine.py --mode top-down --document "Executive Dashboard"
-python3 skill/scripts/strategy_semantic_mine.py --mode reverse --table "LU_PRODUCT"
-python3 skill/scripts/strategy_semantic_mine.py --mode reverse --seed TABLE_OBJECT_ID;15
-python3 skill/scripts/strategy_semantic_inventory.py --workers 8 --out /tmp/strategy-semantic-inventory.json
+python3 skills/build-mosaic-model/scripts/strategy_semantic_mine.py --mode top-down --report "Revenue Report"
+python3 skills/build-mosaic-model/scripts/strategy_semantic_mine.py --mode top-down --document "Executive Dashboard"
+python3 skills/build-mosaic-model/scripts/strategy_semantic_mine.py --mode reverse --table "LU_PRODUCT"
+python3 skills/build-mosaic-model/scripts/strategy_semantic_mine.py --mode reverse --seed TABLE_OBJECT_ID;15
+python3 skills/build-mosaic-model/scripts/strategy_semantic_inventory.py --workers 8 --out /tmp/strategy-semantic-inventory.json
 ```
 
 Outputs:

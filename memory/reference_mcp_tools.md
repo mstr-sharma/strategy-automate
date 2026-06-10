@@ -12,6 +12,6 @@ originSessionId: initial-session
 
 **Postman MCP:** NOT connected. `mcp-registry.search_mcp_registry(['postman','api'])` returns empty; `claude mcp list` shows no Postman server. When the user asks to "use the Postman agent", remind them it isn't connected and fall back to direct REST calls via the `build-mosaic-model` skill's helper script.
 
-**Strategy REST:** no first-class MCP; invoked directly by `$REPO/skill/scripts/build_mosaic.py` using credentials from memory.
+**Strategy REST:** no first-class MCP; invoked directly by `$REPO/skills/build-mosaic-model/scripts/build_mosaic.py` using credentials from memory.
 
 **Claude Preview / Claude in Chrome:** browser-automation MCPs — useful if we ever need to click through Strategy Library UI (e.g., to confirm a model shows up after commit), but not a substitute for the REST API.

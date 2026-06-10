@@ -11,11 +11,11 @@ Credentials must come from runtime input or environment variables. Never write p
 
 ## Verified runner
 
-Script: `$REPO/skill/scripts/strategy_validate.py`
+Script: `$REPO/skills/build-mosaic-model/scripts/strategy_validate.py`
 
 Command pattern:
 ```bash
-python3 skill/scripts/strategy_validate.py --yes --keep-security-artifacts --package-holder
+python3 skills/build-mosaic-model/scripts/strategy_validate.py --yes --keep-security-artifacts --package-holder
 ```
 
 Example passing run:
@@ -208,7 +208,7 @@ Verification:
 
 ## Additional hardening after first live run
 
-- Executable validation harness added at `skill/scripts/strategy_validate.py` with `--workflow`, `--yes`, `--keep-security-artifacts`, `--package-holder`, and `--run-id` flags.
+- Executable validation harness added at `skills/build-mosaic-model/scripts/strategy_validate.py` with `--workflow`, `--yes`, `--keep-security-artifacts`, `--package-holder`, and `--run-id` flags.
 - Cleanup ledger is written to `/tmp/strategy-validation-<run-id>.json`, never into the repo.
 - Runner includes idempotent find-or-create behavior for the security filter and duplicate user.
 - Runner resolves exact object names with ancestor scoring to avoid object-template/agent collisions.

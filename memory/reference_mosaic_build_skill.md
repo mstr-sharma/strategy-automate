@@ -4,8 +4,8 @@ description: Where the skill lives and what every subcommand of its helper scrip
 type: reference
 originSessionId: initial-session
 ---
-**Skill:** `$REPO/skill/SKILL.md`
-**Helper script:** `$REPO/skill/scripts/build_mosaic.py`
+**Skill:** `$REPO/skills/build-mosaic-model/SKILL.md`
+**Helper script:** `$REPO/skills/build-mosaic-model/scripts/build_mosaic.py`
 
 Invoke directly; auto-reads tenant defaults and requires `MSTR_PASSWORD` (or `--password`) for authenticated calls. Do not hardcode credentials in memory or skill files.
 

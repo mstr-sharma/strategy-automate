@@ -34,13 +34,13 @@ Modeling-Service wrapper returns the same condition with `8004cb0a`. If present,
 
 ## Why — iServer session ≠ auth token
 
-- `main()` already wraps dispatch in `try/finally: m.logout()` (`skill/scripts/build_mosaic.py`, `main()`). The Python-level auth token IS released on clean exit.
+- `main()` already wraps dispatch in `try/finally: m.logout()` (`skills/build-mosaic-model/scripts/build_mosaic.py`, `main()`). The Python-level auth token IS released on clean exit.
 - BUT **project-scoped requests open a separate iServer interactive session** that `DELETE /api/auth/login` does not immediately tear down. iServer reaps on its own ~30-min idle timer.
 - The default project interactive-session cap on most Strategy ONE Cloud tenants is ~5 per user per project.
 - **Which calls count:** anything touching `/api/objects/...`, `/api/model/...`, `/api/dataModels/...`, `/api/cubes/...`.
 - **Which calls don't count:** `/api/projects`, `/api/datasources`, `/api/users`, `/api/auth/*`.
 
-The `kill-sessions` helper only reaps auth tokens (its docstring says so — `cmd_kill_sessions()` in `skill/scripts/build_mosaic.py`). It cannot reap iServer project-interactive sessions from a non-admin token.
+The `kill-sessions` helper only reaps auth tokens (its docstring says so — `cmd_kill_sessions()` in `skills/build-mosaic-model/scripts/build_mosaic.py`). It cannot reap iServer project-interactive sessions from a non-admin token.
 
 ## How to apply — operational rules
 

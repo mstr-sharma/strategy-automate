@@ -1,4 +1,4 @@
-"""Tests for skill/scripts/mosaic_safety.py — stdlib unittest only."""
+"""Tests for skills/build-mosaic-model/scripts/mosaic_safety.py — stdlib unittest only."""
 import json
 import os
 import sys
@@ -6,7 +6,7 @@ import unittest
 
 
 ROOT = os.path.dirname(os.path.dirname(__file__))
-sys.path.insert(0, os.path.join(ROOT, "skill", "scripts"))
+sys.path.insert(0, os.path.join(ROOT, "skills", "build-mosaic-model", "scripts"))
 
 import mosaic_safety as ms  # noqa: E402
 
