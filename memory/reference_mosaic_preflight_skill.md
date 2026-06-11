@@ -1,12 +1,12 @@
 ---
 name: Mosaic preflight contextual data check
-description: Reference for `skill/scripts/preflight_model_check.py`. This is the gate the `build-mosaic-model` skill runs BEFORE build; it is not a standalone skill. Documents the 6 check categories, blueprint JSON schema, invocation syntax, and tunable lists.
+description: Reference for `skills/build-mosaic-model/scripts/preflight_model_check.py`. This is the gate the `build-mosaic-model` skill runs BEFORE build; it is not a standalone skill. Documents the 6 check categories, blueprint JSON schema, invocation syntax, and tunable lists.
 type: reference
 ---
 
-Preflight is step 6 of the `build-mosaic-model` execution flow (see `skill/SKILL.md`). It is not wrapped as its own `SKILL.md` — the script is invoked directly, and ERROR-severity findings stop the build.
+Preflight is step 6 of the `build-mosaic-model` execution flow (see `skills/build-mosaic-model/SKILL.md`). It is not wrapped as its own `SKILL.md` — the script is invoked directly, and ERROR-severity findings stop the build.
 
-Location: `skill/scripts/preflight_model_check.py`.
+Location: `skills/build-mosaic-model/scripts/preflight_model_check.py`.
 
 ## When to run
 
@@ -20,7 +20,7 @@ If the build is a tiny tweak to an existing model (single attribute rename, metr
 ## Invocation
 
 ```bash
-python3 skill/scripts/preflight_model_check.py \
+python3 skills/build-mosaic-model/scripts/preflight_model_check.py \
   --instance "<Your DB Instance>" --schema <YOUR_SCHEMA> \
   --tables T1 T2 T3 FACT \
   --blueprint /tmp/model_blueprint.json \

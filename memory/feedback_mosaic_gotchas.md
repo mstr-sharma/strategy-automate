@@ -1,6 +1,6 @@
 ---
 name: Mosaic API gotchas learned
-description: Undocumented-or-surprising Mosaic REST behaviors — catalog base64 IDs, X-MSTR-IdentityToken mandatory, pipeline vs warehouse_partition_table, character operator tokens, managed-attribute trap, publish path, /api/users lockdown, ACL endpoint asymmetry, snowflake + entity-first patterns, session-cap warning. Pair with reference_strategy_error_codes.md to grep from symptom to fix.
+description: Undocumented-or-surprising Mosaic REST behaviors — lifecycle symptom journal. Catalog base64 IDs, X-MSTR-IdentityToken mandatory, changeset commit rounds, managed-attribute trap (8004cd15), publish/delete paths, /api/users lockdown, ACL endpoint asymmetry, snowflake + entity-first patterns. Exact payload shapes live in reference_mosaic_rest_gotchas.md; session cap in feedback_build_mosaic_session_leak.md. Pair with reference_strategy_error_codes.md to grep from symptom to fix.
 type: feedback
 tags: [mosaic, build, payload, error-code]
 ---
@@ -55,7 +55,7 @@ Objects referenced inside a changeset must already exist (committed). Relationsh
 **How to apply:** in `build`, commit base model first, THEN open a second changeset for relationships, SF, ACL, translations.
 
 ### Opening too many sessions without logout throws "Maximum interactive sessions per user"
-When iterating on probes, the tenant caps at ~5 concurrent project-interactive sessions per user. Auth-token logout does NOT reap them — they time out after ~30 minutes. See `feedback_build_mosaic_session_leak.md` for the full budget rules and `reference_strategy_error_codes.md` for the `8004cb0a` / iServerCode `-2147072486` failure signature.
+Canonical coverage: `feedback_build_mosaic_session_leak.md` (cap ~5 per user per project; auth-token logout does NOT reap iServer sessions — ~30-min idle timer; one-session-one-process rule). Failure signature `8004cb0a` / iServerCode `-2147072486` in `reference_strategy_error_codes.md`.
 
 ---
 
@@ -67,7 +67,7 @@ When iterating on probes, the tenant caps at ~5 concurrent project-interactive s
 **How to apply:** any new endpoint that takes `{ns_id}` / `{tb_id}` in the path must use these encoders; similarly decode if the REST response returns them raw.
 
 ### `/api/datasources` is project-agnostic
-Returns every datasource visible to the user regardless of `X-MSTR-ProjectID`. Filter client-side if the user only wants those attached to a specific project.
+Canonical coverage: `reference_mosaic_rest_gotchas.md` § "DB instance + schema discovery" — returns everything visible to the user regardless of `X-MSTR-ProjectID`; filter client-side.
 
 ### Raw OpenAPI is at `/MicroStrategyLibrary/api/openapi.yaml`
 The Swagger UI SPA exists at `/api-docs/`, but the useful machine-readable spec is `/api/openapi.yaml` under the Library root. `api-docs/swagger-config` 404s on the current tenant. Use `openapi-summary` to confirm title/version/path count, and use `discover` for live catalog path variants.
@@ -77,8 +77,7 @@ The Swagger UI SPA exists at `/api-docs/`, but the useful machine-readable spec 
 ## Payload shapes
 
 ### Table creation requires the "pipeline" shape, not "warehouse_partition_table"
-The MSTR Modeling docs mention `type:"warehouse_partition_table"` but on some Strategy ONE Cloud tenants it returns 400 "Invalid value for field 'type'". Use `type:"pipeline"` with an inner `rootTable.children[0].importSource:{type:"single_table", dataSourceId, namespace, tableName, sql:""}`. See `build_mosaic.py::cmd_build` for the canonical shape, and `reference_mosaic_clone_pattern.md` for when to fall back to the object form.
-**How to apply:** always build the pipeline JSON with fresh UUIDs for every inner id, and set outer `physicalTable.columns` as `[{information:{name}, dataType, columnName}]` (no top-level id) while inner `pipeline.rootTable.children[].columns` uses `[{id, name, dataType, sourceDataType}]`.
+Canonical payload + ordering rules: `reference_mosaic_rest_gotchas.md` § "Physical tables" (full pipeline JSON, fresh-UUID rule, outer-vs-inner column shapes, clone-pattern fallback).
 
 ### Attributes must have a `displays` PATCH after create, or the changeset commit fails
 Error: `Attribute 'X' cannot be saved because it has no report display.` Post-create, PATCH `/attributes/{aid}` with `{"displays":{"reportDisplays":[{"id":<formId>}], "browseDisplays":[{"id":<formId>}]}}` using form IDs from the POST response. This is the `8004cf06` case in `reference_strategy_error_codes.md`.
@@ -87,16 +86,10 @@ Error: `Attribute 'X' cannot be saved because it has no report display.` Post-cr
 Pass the full `{type, precision, scale}` object (the same shape the describe-table response returns) rather than a string like `"float"`. A string returns 400 "Cannot deserialize value of type int from String 'float'".
 
 ### Fact metric `expression.tokens` operators use `type:"character"` not `"operator"`
-For a formula inside a fact metric, the operator token type is `character` (not `operator`, `metric_reference`, or `object_reference`). Working shape:
-```
-"tokens":[{"type":"column_reference","value":"TOTAL_COST"},
-          {"type":"character","value":"/"},
-          {"type":"column_reference","value":"QUANTITY_ORDERED"}]
-```
-This is what makes a "derived calculation" (fact metric with inline formula) finally commit.
+Canonical token shapes (operator/function/EOT tokens, full working example): `reference_mosaic_rest_gotchas.md` § "Fact metrics (custom formulas)".
 
 ### When payload shape is unknown: clone-and-remap
-Fetch a working object via `GET /api/model/dataModels/{refModelId}/attributes/{id}` (or `/factMetrics/{id}` / `/filters/{id}`), generate fresh UUIDs for every inner `id`, remap every `objectId` that points at a replaced table/attr/metric, POST it back. Full procedure in `reference_mosaic_clone_pattern.md`.
+Fetch a working object via `GET /api/model/dataModels/{refModelId}/attributes/{id}` (or `/factMetrics/{id}` / `/filters/{id}`), generate fresh UUIDs for every inner `id`, remap every `objectId` that points at a replaced table/attr/metric, POST it back. Full procedure in `reference_strategy_object_cloning.md`.
 **Why:** Modeling Service payloads are deeply nested and undocumented in places; the returned JSON is always a valid POST body.
 **How to apply:** for transformation/conditional/level metrics and advanced form types, clone from any existing Mosaic model in the tenant that already has that construct (find via `search-objects --type 3`) before writing new payloads from scratch.
 
@@ -105,7 +98,7 @@ Fetch a working object via `GET /api/model/dataModels/{refModelId}/attributes/{i
 ## Publish + delete
 
 ### Publish an in-memory data model via `POST /api/cubes/{modelId}` (empty body) → 202
-NOT `/api/cubes/{id}/instances` (the latter requires an already-published cube and returns 500 otherwise). Same model id is used as cube id. Public OpenAPI also lists `/api/dataModels/{dataModelId}/publish`, but the verified no-interaction path on Strategy ONE Cloud tenants is the cube POST. Do not fire both concurrently — see `feedback_mosaic_publish_endpoint_collision.md` for the iServerCode `-2147072194` lockout.
+NOT `/api/cubes/{id}/instances` (the latter requires an already-published cube and returns 500 otherwise). Same model id is used as cube id. Public OpenAPI also lists `/api/dataModels/{dataModelId}/publish`, but the verified no-interaction path on Strategy ONE Cloud tenants is the cube POST. Do not fire both concurrently — see `reference_mosaic_publish_path.md` ("Never fire both publish endpoints") for the iServerCode `-2147072194` lockout.
 
 ### Cube/model delete: `DELETE /api/objects/{id}?type=3`
 Returns 204 on success. Type 3 = data model.
@@ -156,17 +149,8 @@ Noise columns (present in every table but not real dimensions — e.g., SOURCE_S
 
 ### Relationships with shared keys need attribute-MERGE during creation, not after (superseded)
 
-> Superseded by `feedback_mosaic_relationship_wiring.md`. Kept here as background on the failures the current entity-first pattern solves.
-
-MSTR requires the parent attribute in a relationship to have an expression on the join (fact) table — not just the dimension table. So "Product ID" on PRODUCTS can't be the parent of a relationship joining via OPPORTUNITIES unless Product ID also has an expression on OPPORTUNITIES.
-
-**What doesn't work:**
-- Creating separate FK-side attributes per fact table ("Product ID (Opportunities)", "Product ID (Purchase Orders)") and wiring rel between them — MSTR rejects with `8004ccc7 "Table cannot be used as the join table for a relationship involving attribute"`.
-- PATCHing the parent attribute post-create to append a new expression on the fact table. The PATCH validator resolves column-reference tokens against MSTR's auto-generated "managed attribute" objects in `\Managed Objects\Dataset Schema Folder\`, hitting `8004cd15 "Object (of type: Attribute) not allowed in this place"` with managed attr IDs.
-- DELETE-then-recreate the parent attribute: MSTR errors with "cannot be deleted because other objects depend on it" once any metric/lookup references it, even mid-changeset.
-
-**What solved it:**
-Create shared-key attributes with multi-table expressions on the FIRST POST. The current `build_mosaic.py` entity-first pattern does this; for post-hoc wiring on an already-committed model, use `build_mosaic.py wire-relationships` — it validates the step-3/step-5 prerequisites before each PUT.
+> Superseded by `feedback_mosaic_relationship_wiring.md` (six-step conformance recipe). Fix: create shared-key attributes with multi-table expressions on the FIRST POST — the entity-first pattern in `build_mosaic.py` does this; for post-hoc wiring use `build_mosaic.py wire-relationships`.
+> Historical dead ends it replaced: separate per-fact FK attributes → `8004ccc7` "Table cannot be used as the join table…"; naive post-create expression-append PATCH resolves column-reference tokens against MSTR's auto-generated managed attributes in `\Managed Objects\Dataset Schema Folder\` → `8004cd15` "Object (of type: Attribute) not allowed in this place"; DELETE-then-recreate → "cannot be deleted because other objects depend on it", even mid-changeset.
 
 ---
 

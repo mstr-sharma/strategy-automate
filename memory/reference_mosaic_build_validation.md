@@ -6,7 +6,7 @@ type: reference
 Every Mosaic build ends with this validation pass before being reported as complete. Codifies the rules in `feedback_mosaic_build_quality.md` and `reference_mosaic_relationship_archetypes.md` into a small set of automatable checks. Run as a subcommand of the build helper:
 
 ```bash
-python3 skill/scripts/build_mosaic.py validate-model --model-id <dataModelId>
+python3 skills/build-mosaic-model/scripts/build_mosaic.py validate-model --model-id <dataModelId>
 ```
 
 Output is human-readable + a JSON payload. Exit code non-zero if any FAIL check trips.
@@ -16,7 +16,7 @@ Output is human-readable + a JSON payload. Exit code non-zero if any FAIL check 
 Each check is classified `FAIL` (build must be rejected) or `WARN` (review before ship).
 
 ### F1 — Empty form names (FAIL)
-Iterate every attribute in `/api/model/dataModels/{id}/attributes`; for each, assert `forms[i].name` is a non-empty string. Root cause of auto-hierarchy failures and blank UI labels. Fix at create time — post-hoc PATCH to rename forms fails on multiple tenants with `8004cc63`.
+Iterate every attribute in `/api/model/dataModels/{id}/attributes`; for each, assert `forms[i].name` is a non-empty string. Canonical rule, root cause (auto-hierarchy failures, blank UI labels), and the `8004cc63` fix-at-create-time note: `feedback_mosaic_ship_bar.md` § Form naming.
 
 ### F2 — Read-back integrity (FAIL)
 For every object listed under `/attributes`, `/tables`, `/factMetrics`, `/filters`: issue an individual `GET` by id. Any non-200 is a partial-commit regression (see TPC-H MODEL2's REGION → HTTP 500 while the commit reported success).
@@ -56,7 +56,7 @@ For every date/timestamp column referenced by any attribute, assert that Day/Mon
 ## Regression / diff mode
 
 ```bash
-python3 skill/scripts/build_mosaic.py validate-model --model-id <new> --diff-against <prev>
+python3 skills/build-mosaic-model/scripts/build_mosaic.py validate-model --model-id <new> --diff-against <prev>
 ```
 
 Prints a side-by-side count table (attributes, relationships, factMetrics) + a list of object names present in `<prev>` but missing in `<new>`. Use on every rebuild against an existing model — treat any count drop as a regression unless explicitly intended.

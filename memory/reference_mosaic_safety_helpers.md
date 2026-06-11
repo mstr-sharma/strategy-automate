@@ -6,7 +6,7 @@ type: reference
 
 ## What's in there
 
-`skill/scripts/mosaic_safety.py` collects the pure-function defensive helpers
+`skills/build-mosaic-model/scripts/mosaic_safety.py` collects the pure-function defensive helpers
 that surfaced from the TPC-DS Galaxy build. The file holds NO network calls
 and NO MSTR session state — every function takes already-fetched response
 bodies or plain dicts and returns parsed data or fresh payloads.
@@ -74,35 +74,36 @@ These need a live `MSTR` session and call into `mosaic_safety` for the
 underlying logic:
 
 - `put_relationships_merged(m, model_id, attr_id, new_rels, cs)` — GET existing
-  rels, dedupe, PUT the union; default for `cmd_wire_relationships`. See
-  `feedback_mosaic_relationship_put_wipes.md`.
+  rels, dedupe, PUT the union; default for `cmd_wire_relationships`. See the
+  Relationships section of `reference_mosaic_rest_gotchas.md`.
 - `get_attribute_relationships(m, model_id, attr_id)` — read current rels.
-- `validate_join_table_membership(m, model_id, p_id, c_id, join_id)` — verify
-  both attribute endpoints have an expression on the join table; pre-flight
-  for `8004ccc7`.
+- `wire-relationships --dry-run` pre-flight — validates self-reference
+  (`8004ccdb`) and relationship_table membership (`8004ccc7`) inline in
+  `cmd_wire_relationships` before any PUT; the dry run prints the plan and
+  skip reasons without writing.
 - `post_build_validate_topology(m, model_id, expected_tables=...)` — structured
   report: isolated attrs, fact tables without relationships, missing expected
   tables, numeric-named attrs that look like measures.
-- `open_cs(m, schema_edit=True|False)` — explicit changeset typing.
-- `assert_changeset_type(m, cs, schema_edit=...)` — fail fast if a write path
-  is using the wrong changeset type.
+- `open_cs(m, schema_edit=True|False)` — typed changeset opens
+  (open → mutate → `commit_cs`/`discard_cs`); picking the wrong type silently
+  produces `8004ccde` or no-ops the write.
 
 ## CLI surface added
 
 ```bash
 # Validate post-build topology — recommended as the LAST step of every
 # wiring or build script:
-python3 skill/scripts/build_mosaic.py validate-topology \
+python3 skills/build-mosaic-model/scripts/build_mosaic.py validate-topology \
   --model-id <id> --strict --json
 
 # Wire relationships in merge-aware mode (default) — pass --replace only
 # when you explicitly want the destructive wipe:
-python3 skill/scripts/build_mosaic.py wire-relationships \
+python3 skills/build-mosaic-model/scripts/build_mosaic.py wire-relationships \
   --model-id <id> --hints rels.yaml
 
 # Full validate-model now includes the W7 topology rollup with
 # --strict-isolation to promote isolated-attribute findings to FAIL:
-python3 skill/scripts/build_mosaic.py validate-model \
+python3 skills/build-mosaic-model/scripts/build_mosaic.py validate-model \
   --model-id <id> --strict-isolation
 ```
 

@@ -26,9 +26,9 @@ Verified 2026-04-21:
 Use the helper instead of manual curl:
 ```bash
 cd "$REPO"
-python3 skill/scripts/build_mosaic.py openapi-summary --limit 80
-python3 skill/scripts/build_mosaic.py openapi-search "dataModels" --context 2
-python3 skill/scripts/build_mosaic.py openapi-summary --out /tmp/strategy-openapi.yaml
+python3 skills/build-mosaic-model/scripts/build_mosaic.py openapi-summary --limit 80
+python3 skills/build-mosaic-model/scripts/build_mosaic.py openapi-search "dataModels" --context 2
+python3 skills/build-mosaic-model/scripts/build_mosaic.py openapi-summary --out /tmp/strategy-openapi.yaml
 ```
 
 If a local `openapi.yaml` exists in the Mosaic Build root, treat it as a reference/cache, not as the source of truth. Refresh it from the tenant when endpoint behavior matters.
@@ -37,18 +37,18 @@ Before searching by endpoint name, read `reference_strategy_surface_matrix.md` w
 
 For one-off REST operations that are not wrapped yet:
 ```bash
-python3 skill/scripts/build_mosaic.py api-call --method GET --path /api/projects
-python3 skill/scripts/build_mosaic.py api-call --method PATCH --path /api/model/dataModels/<id> --json-file /tmp/body.json
+python3 skills/build-mosaic-model/scripts/build_mosaic.py api-call --method GET --path /api/projects
+python3 skills/build-mosaic-model/scripts/build_mosaic.py api-call --method PATCH --path /api/model/dataModels/<id> --json-file /tmp/body.json
 ```
 
 This generic `api-call` path is the baseline API hook for every Strategy REST endpoint exposed by the tenant OpenAPI spec. Treat it as reachability, not as a full workflow wrapper; promote high-value or high-risk flows into typed helpers with dry-run/read-back/cleanup behavior.
 
 For read-first automation flows:
 ```bash
-python3 skill/scripts/build_mosaic.py search-objects --name "Object Name"
-python3 skill/scripts/build_mosaic.py resolve-users --user person@example.com
-python3 skill/scripts/build_mosaic.py get-model-object --kind legacy_attribute --object-id <id> --show-expression-as tokens
-python3 skill/scripts/build_mosaic.py patch-model-object --kind legacy_attribute --object-id <id> --json-file /tmp/patch.json --before-out /tmp/before.json --yes
+python3 skills/build-mosaic-model/scripts/build_mosaic.py search-objects --name "Object Name"
+python3 skills/build-mosaic-model/scripts/build_mosaic.py resolve-users --user person@example.com
+python3 skills/build-mosaic-model/scripts/build_mosaic.py get-model-object --kind legacy_attribute --object-id <id> --show-expression-as tokens
+python3 skills/build-mosaic-model/scripts/build_mosaic.py patch-model-object --kind legacy_attribute --object-id <id> --json-file /tmp/patch.json --before-out /tmp/before.json --yes
 ```
 
 Classic/project auth gotcha verified on `a verified Strategy Cloud tenant`: do not automatically add `X-MSTR-IdentityToken` for top-level classic Modeling Service reads/writes. `X-MSTR-AuthToken` plus `X-MSTR-ProjectID` worked; adding identity token caused `/api/model/metrics/{id}` to return a false "Wrong projectId" error. Mosaic data-model workflows may still require identity token; follow Mosaic-specific references when the surface is `/api/model/dataModels/...`.

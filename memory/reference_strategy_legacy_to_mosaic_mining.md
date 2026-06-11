@@ -1,6 +1,6 @@
 ---
 name: Legacy → Mosaic migration hub + semantic mining
-description: Start-here hub for classic-to-Mosaic migrations. Sequences the four related memories (mining → field study → blueprint → clone-and-remap) and documents the read-only discovery lane for classic attributes, facts, metrics, filters, prompts, reports, documents, and tables.
+description: Start-here hub for classic-to-Mosaic migrations. Sequences the four related memories (mining → field study → blueprint → clone-and-remap), carries the classic inventory checklist + object-by-object migration mapping, and documents the read-only discovery lane for classic attributes, facts, metrics, filters, prompts, reports, documents, and tables.
 type: reference
 tags: [mosaic, classic, migration, kimball]
 ---
@@ -11,8 +11,8 @@ Legacy-to-Mosaic work always flows through these four memory files in order. Loa
 
 1. **Inspect the classic project** — THIS file (`reference_strategy_legacy_to_mosaic_mining.md`). Run `strategy_semantic_mine.py` top-down from reports/documents or reverse from tables to discover the attributes / facts / metrics / filters / prompts / hierarchies already in play.
 2. **Read the live classic inventory** — [`reference_strategy_tutorial_semantic_field_study.md`](reference_strategy_tutorial_semantic_field_study.md). Captures actual REST payload shapes for every object class; use as a Rosetta Stone when translating to Mosaic.
-3. **Pick the migration pattern** — [`feedback_mosaic_legacy_as_blueprint.md`](feedback_mosaic_legacy_as_blueprint.md) (blueprint-driven: mirror the classic shape into a new Mosaic model) OR [`reference_mosaic_clone_pattern.md`](reference_mosaic_clone_pattern.md) (clone-and-remap: copy an existing Mosaic model as a starting point). Blueprint-driven is correct when the classic project has meaningful semantics worth preserving; clone-and-remap is correct when a similar Mosaic model already exists in the tenant.
-4. **Build the Mosaic target** — route through `strategy-data-modeling/SKILL.md` (planning, Kimball-first) and `skill/SKILL.md` (execution). Validate with `strategy-validation/SKILL.md` against the original classic reports as the comparator.
+3. **Pick the migration pattern** — [`feedback_mosaic_legacy_as_blueprint.md`](feedback_mosaic_legacy_as_blueprint.md) (blueprint-driven: mirror the classic shape into a new Mosaic model) OR [`reference_strategy_object_cloning.md`](reference_strategy_object_cloning.md) (clone-and-remap: copy an existing Mosaic model as a starting point). Blueprint-driven is correct when the classic project has meaningful semantics worth preserving; clone-and-remap is correct when a similar Mosaic model already exists in the tenant.
+4. **Build the Mosaic target** — route through `skills/strategy-data-modeling/SKILL.md` (planning, Kimball-first) and `skills/build-mosaic-model/SKILL.md` (execution). Validate with `skills/strategy-validation/SKILL.md` against the original classic reports as the comparator.
 
 Related: [`reference_strategy_design_transition.md`](reference_strategy_design_transition.md) covers conceptual differences between classic and Mosaic; read it when a 1:1 mapping breaks down (e.g., compound metrics, fact extensions, consolidations).
 
@@ -28,11 +28,11 @@ For live examples of the object payloads this lane mines, read `reference_strate
 
 Script:
 ```bash
-python3 skill/scripts/strategy_semantic_mine.py --mode top-down --report "Revenue Report"
-python3 skill/scripts/strategy_semantic_mine.py --mode top-down --document "Executive Dashboard"
-python3 skill/scripts/strategy_semantic_mine.py --mode reverse --table "LU_PRODUCT"
-python3 skill/scripts/strategy_semantic_mine.py --mode reverse --seed TABLE_OBJECT_ID;15
-python3 skill/scripts/strategy_semantic_inventory.py --workers 8 --out /tmp/strategy-semantic-inventory.json
+python3 skills/build-mosaic-model/scripts/strategy_semantic_mine.py --mode top-down --report "Revenue Report"
+python3 skills/build-mosaic-model/scripts/strategy_semantic_mine.py --mode top-down --document "Executive Dashboard"
+python3 skills/build-mosaic-model/scripts/strategy_semantic_mine.py --mode reverse --table "LU_PRODUCT"
+python3 skills/build-mosaic-model/scripts/strategy_semantic_mine.py --mode reverse --seed TABLE_OBJECT_ID;15
+python3 skills/build-mosaic-model/scripts/strategy_semantic_inventory.py --workers 8 --out /tmp/strategy-semantic-inventory.json
 ```
 
 Outputs:
@@ -109,6 +109,42 @@ Use when the user gives one or more warehouse tables and asks what existing sema
    - tables repeatedly referenced by high-value reports/documents: higher score.
    - lookup tables attached to high-cardinality attributes: include, but mark grain/relationship review.
    - bridge tables or many-to-many helpers: include only if relationship semantics are clear.
+
+## Classic inventory first + migration mapping
+
+**Operational rule:** for legacy-to-Mosaic work, the classic / project semantic layer is usually the blueprint. Do not treat migration as a greenfield shared-column inference exercise unless no reliable semantic source exists (`feedback_mosaic_legacy_as_blueprint.md`).
+
+Before migrating or modifying a classic project, inventory:
+
+- attributes and forms
+- facts and fact expressions
+- metrics and dependencies
+- hierarchies
+- transformations
+- tables and keys
+- reports / dossiers using the objects
+- security filters and ACLs
+
+Migration mapping — what each classic object becomes:
+
+| Classic object | Mosaic / modern concern |
+| --- | --- |
+| Attribute | attribute with forms and expressions |
+| Fact | fact column or measure source |
+| Metric | governed calculation |
+| Hierarchy | browse / drill path |
+| Transformation | time comparison rule (inlined as function calls in Mosaic — `reference_strategy_mosaic_field_study.md`) |
+| Logical table | physical dataset / table mapping |
+| Security filter | row-level security concern |
+| Report | validation target and usage evidence |
+
+**Do not migrate blindly.** A legacy object may encode years of business logic. Before simplifying:
+
+- mine report usage
+- inspect metric definitions
+- identify level metrics and transformations
+- compare outputs with trusted reports
+- preserve names users recognize unless there is a deliberate cleanup plan
 
 ## What to carry into Mosaic
 

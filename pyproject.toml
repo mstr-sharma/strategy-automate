@@ -1,0 +1,28 @@
+# Dependency declaration only. No [build-system] and no console-scripts on
+# purpose: scripts stay directly runnable as `python3 skills/build-mosaic-model/scripts/<name>.py ...`
+# (see README "Install Python deps").
+
+[project]
+name = "strategy-automate"
+version = "0.1.0"
+description = "A Strategy (formerly MicroStrategy) automation brain for AI coding assistants — every part of the platform that exposes an API, SDK, MCP, CLI, or reproducible hook. Covers Mosaic data-model creation and modification, classic semantic-layer inspection and migration, runtime analytics, cubes and datasets, security and governance, platform admin, AI agents, and data validation."
+requires-python = ">=3.9"
+dependencies = ["requests"]
+
+[project.optional-dependencies]
+# Optional: build_mosaic._load_yaml prefers PyYAML and, when it is absent, falls
+# back to a `ruby -ryaml` one-liner to convert YAML to JSON. Install this extra
+# to read YAML configs (build-from-config, --file *.yaml) without ruby.
+yaml = ["PyYAML"]
+
+[tool.ruff]
+# Lint only — no formatting config; do not reformat this repo.
+
+[tool.ruff.lint]
+select = ["F", "E9"]
+
+[tool.ruff.lint.per-file-ignores]
+# Pre-existing F541 (f-string without placeholders) / F841 (unused variable)
+# findings in these two files; scoped here so `ruff check` is clean repo-wide.
+"skills/build-mosaic-model/scripts/build_mosaic.py" = ["F541", "F841"]
+"skills/build-mosaic-model/scripts/preflight_model_check.py" = ["F541", "F841"]

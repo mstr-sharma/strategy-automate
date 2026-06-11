@@ -4,7 +4,7 @@ description: All skills, memories, scripts, helpers, and examples in this repo m
 type: feedback
 ---
 
-**Rule.** Every durable artifact in this repo — skills (`*/SKILL.md`), memory files (`memory/*.md`), Python helpers (`skill/scripts/*.py`), runnable examples, dictionary/ERD templates, shell snippets — must read as a general-purpose procedure that works against *any* Strategy tenant, *any* DB engine, *any* schema, *any* domain, and *any* user identity. A reader who has never seen this repo should be able to apply the artifact to their own environment without editing its text.
+**Rule.** Every durable artifact in this repo — skills (`*/SKILL.md`), memory files (`memory/*.md`), Python helpers (`skills/build-mosaic-model/scripts/*.py`), runnable examples, dictionary/ERD templates, shell snippets — must read as a general-purpose procedure that works against *any* Strategy tenant, *any* DB engine, *any* schema, *any* domain, and *any* user identity. A reader who has never seen this repo should be able to apply the artifact to their own environment without editing its text.
 
 **Why:** this repo's premise (see `AGENTS.md`) is a harness- and tenant-agnostic automation brain. Tenant-specific values in durable artifacts cause four concrete failures:
 
@@ -37,7 +37,7 @@ type: feedback
 
 - `memory/*.md`
 - Every `SKILL.md` (top-level skills and future additions)
-- Every `skill/scripts/*.py` and helper script
+- Every `skills/build-mosaic-model/scripts/*.py` and helper script
 - Every example, template, dictionary, ERD, or config committed to the repo
 - Every `README.md`, `AGENTS.md`, `CLAUDE.md`, and other harness entry points
 - Every test fixture (fixtures must use synthetic or public-benchmark data)
@@ -54,4 +54,4 @@ type: feedback
 - `AGENTS.md` "Operating rules" — the high-level "never hardcode" rule this memory elaborates (see the "Keep every durable artifact generalizable" bullet).
 - `reference_strategy_env.md` — the env-var / CLI-flag convention every script already implements.
 - `captures/2026-04-22-automation-audit/` — prior audit that found similar leaks (now under captures/, since it was a dated event log rather than a durable rule).
-- `feedback_consumer_grade_naming.md` — the related rule that forbids personal names in user-facing model content; same spirit, user-facing scope.
+- `feedback_mosaic_ship_bar.md` — the related rule that forbids personal names in user-facing model content (see its Cleanliness rules); same spirit, user-facing scope.

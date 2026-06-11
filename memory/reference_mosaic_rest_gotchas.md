@@ -1,6 +1,6 @@
 ---
 name: Mosaic REST API payload gotchas
-description: Exact payload shapes and ordering rules for creating Mosaic models / tables / attributes / metrics via REST — things the OpenAPI spec does not make obvious.
+description: Exact payload shapes and ordering rules for creating Mosaic models / tables / attributes / metrics / relationships via REST — pipeline table shape, column-objectId ephemerality, EOT + character operator tokens, and the destructive relationship PUT (use put_relationships_merged()). Things the OpenAPI spec does not make obvious.
 type: reference
 ---
 
@@ -12,8 +12,8 @@ Verified against a Strategy ONE Library Modeling Service in 2026. These rules ca
 - Model-scoped default folder IDs vary per tenant. Never hardcode. Always resolve from `/api/folders/preDefined/{type}` or `/api/folders/myPersonalObjects` for the current session's project.
 
 ## Physical tables
-- `POST /api/model/dataModels/{id}/tables`: the accepted shape on current Library servers is `physicalTable.type: "pipeline"` with a `pipeline` field containing a **stringified JSON** describing `rootTable → source → importSource`. `warehouse_partition_table` is rejected with `Invalid value for field 'type'`. A bare `normal` type rejects the `databaseInstance` field (`Unrecognized field: databaseInstance`).
-- The pipeline JSON shape that works (see `scripts/build_mosaic.py` L694–L722):
+- `POST /api/model/dataModels/{id}/tables`: the accepted shape on current Library servers (including Strategy ONE Cloud tenants, where the docs' alternative fails) is `physicalTable.type: "pipeline"` with a `pipeline` field containing a **stringified JSON** describing `rootTable → source → importSource`. `warehouse_partition_table` (mentioned in the MSTR Modeling docs) is rejected with 400 `Invalid value for field 'type'`. A bare `normal` type rejects the `databaseInstance` field (`Unrecognized field: databaseInstance`).
+- The pipeline JSON shape that works (see `_make_pipeline_table_body()`, used by `cmd_build`, in `skills/build-mosaic-model/scripts/build_mosaic.py`) — generate **fresh UUIDs for every inner id** on each build:
   ```json
   {
     "id": "<uuid>",
@@ -27,7 +27,8 @@ Verified against a Strategy ONE Library Modeling Service in 2026. These rules ca
     }
   }
   ```
-- The outer `physicalTable.columns` list is a separate flat array with `{information:{name}, dataType, columnName}` — both the outer and the inner pipeline `columns` must be present.
+- The outer `physicalTable.columns` list is a separate flat array with `{information:{name}, dataType, columnName}` — **no top-level `id`** — while the inner pipeline `rootTable.children[].columns` uses `{id, name, dataType, sourceDataType}`. Both the outer and the inner pipeline `columns` must be present.
+- When the pipeline shape misbehaves on a tenant, the fallback is the object form via clone-and-remap — see `reference_strategy_object_cloning.md`.
 
 ## Column objectIds (the #1 trap)
 - After `POST .../tables`, column objectIds are **visible inside the changeset** but are **ephemeral until commit**. A subsequent attribute/metric that references those IDs in the same uncommitted changeset will fail at commit with `Object with ID '...' and type 26 (Column) is not found in metadata`.
@@ -74,14 +75,21 @@ Verified against a Strategy ONE Library Modeling Service in 2026. These rules ca
      ]
   }, "tables":[{"objectId":"<od logical table id>","subType":"logical_table","name":"ORDER_DETAIL"}]}]
   ```
-- Operators (`* + - / ( )`) are `character` tokens. Functions (`Sum`, `Concat`, `ApplySimple`) are `function` tokens with `target.subType:"function"` and the well-known function objectId. Use `showExpressionAs=tokens` on a working metric to see the exact shape before inventing one.
+- Operators (`* + - / ( )`) are `character` tokens — NOT `operator`, `metric_reference`, or `object_reference`, all of which were tried and rejected. This is what makes a "derived calculation" (fact metric with an inline formula) finally commit. Functions (`Sum`, `Concat`, `ApplySimple`) are `function` tokens with `target.subType:"function"` and the well-known function objectId. Use `showExpressionAs=tokens` on a working metric to see the exact shape before inventing one.
 
 ## Relationships
 - `PUT /api/model/dataModels/{id}/attributes/{childId}/relationships?changesetId=<cs>` (or via header `X-MSTR-MS-Changeset`). Body is the full list, not a delta.
 - Must be a separate changeset from attribute creation. Attributes need to be committed first; otherwise the relationship references objects the server hasn't materialized yet.
 - `relationshipTable` is the fact/bridge table where the join actually occurs (for 1:M, the child's lookup table; for M:M, the bridge table).
-- **PUT is a wholesale REPLACE of the child's relationship list, not an append.** Calling PUT multiple times against the same child attribute (e.g., once per parent) within a single changeset wipes every previous PUT — only the last one survives. Every call returns `200` so the bug is silent. **Always consolidate all parents for a given child into ONE PUT call** with `relationships:[rel1, rel2, ...]`. This is the single most common silent-failure in Mosaic relationship wiring — observed on Item with 5 parents where all 5 POSTs returned 200 but only Warranty→Item persisted. Pattern: build a `per_child: dict[childId, list[relationship_body]]` map first, then one PUT per key.
-- **The UI does NOT use `PUT /attributes/{id}/relationships`.** The Studio UI routes all relationship writes through `POST /api/model/batch` (see `reference_mosaic_batch_api.md`), which has per-relationship add/remove sub-ops and avoids the wholesale-replace trap entirely. Our helpers should migrate to batch; until they do, the consolidated-PUT pattern above is the correct workaround for the current per-object write path.
+- **PUT is a wholesale REPLACE of the attribute's entire relationship inventory — in BOTH directions.** Strategy does NOT diff against the existing set, does NOT append, and does NOT respect direction: if you PUT attribute A with only its outgoing relationships, every incoming relationship that previously pointed AT A is silently deleted. Every call returns `200` and the script exits 0, so the wipe is invisible. This is the single most common silent failure in Mosaic relationship wiring. Two observed bites:
+  - Multiple PUTs against the same child attribute within one changeset (e.g., once per parent): only the last PUT survives. Observed on an Item attribute with 5 parents — all 5 calls returned 200 but only Warranty→Item persisted.
+  - Re-PUT in a later wiring pass: on a TPC-DS Galaxy build, Level-B relationships wired successfully, then Level-A wiring re-PUT the same shared FK attributes without the previously-written Level-B rels — the entire Level-B set was wiped with no error and no log line.
+- **The fix: use `put_relationships_merged()` in `skills/build-mosaic-model/scripts/build_mosaic.py`, never a raw PUT.** It (1) GETs the attribute's current relationships, (2) dedupes by `(parent_objectId, child_objectId, relationship_table_objectId)`, (3) PUTs the union — both old + new. `cmd_wire_relationships` groups plan rows by child attribute and uses the merge helper by default; the destructive full-replace mode is opt-in via `--replace`. (Older guidance to hand-build a `per_child: dict[childId, list[relationship_body]]` map and issue one consolidated PUT per child predates the merge helper and is superseded by it — consolidation alone does not protect incoming rels or later passes.)
+- **`--replace` is correct only for:** (a) cleanup — wiping a known-bad relationship graph to rebuild from a fresh hints file; (b) migration — intentionally replacing the legacy relationship set with a new conformed-dim layout, with a `--before-out` snapshot already saved. Anywhere else, the merge default is correct.
+- **Pre-flight:** if a wiring run might touch previously-wired attributes, dump their current relationships first: `build_mosaic.py get-model-object --kind attribute --model-id <id> --object-id <attr-id> --out before/<attr-id>.json`.
+- **Detection:** after wiring, run `build_mosaic.py validate-topology --model-id <id> --strict`. Non-zero exit means isolated attributes — exactly what a silent wipe produces.
+- Related code: `8004ccdb` (relationship self-reference — parent and child resolve to the same conformed attribute object id). Not caused by the wipe, but it often appears alongside it in cleanup scripts; see `feedback_mosaic_relationship_wiring.md`.
+- **The UI does NOT use `PUT /attributes/{id}/relationships`.** The Studio UI routes all relationship writes through `POST /api/model/batch` (see `reference_mosaic_batch_api.md`), which has per-relationship add/remove sub-ops and avoids the wholesale-replace trap entirely. Our helpers should migrate to batch; until they do, `put_relationships_merged()` is the standing mitigation for the per-object write path.
 
 ## Login modes per tenant (observed)
 | Tenant | Working modes | Notes |
@@ -92,7 +100,7 @@ Verified against a Strategy ONE Library Modeling Service in 2026. These rules ca
 Always tell the helper which mode per tenant via `MSTR_LOGIN_MODE`. Different users on the same tenant may have different SSO configs — test before assuming. The initial `/api/auth/login` call succeeds even when the user has no access to the target project, so a successful login is not proof of a working project session. Always validate by calling a project-scoped endpoint.
 
 ## DB instance + schema discovery
-- `list-datasources` lists every DB instance visible to the session, not the project.
+- `GET /api/datasources` (helper `list-datasources`) is **project-agnostic**: it returns every datasource visible to the user regardless of the `X-MSTR-ProjectID` header, not the project's attachments. Filter client-side if the user only wants datasources attached to a specific project.
 - `list-namespaces --instance-id X` can return 500 `Database error connection. Please try again` when the instance is orphaned or its credentials have rotated. Surface the full error; do not silently retry.
 - Warehouse schema names must be passed exactly as the datasource returns them (often uppercase). Trino federation schema naming is different from the MSTR project name — Trino schemas are typically lowercased with spaces preserved and require double-quoting in SQL (e.g., a project named `Shared Studio` becomes `"shared studio"` in Trino).
 
@@ -101,10 +109,8 @@ Always tell the helper which mode per tenant via `MSTR_LOGIN_MODE`. Different us
 - Category hierarchy + fact joins fail with `A cartesian join is detected` until the bridging entity attribute (Subcategory on both `LU_SUBCATEG` and `LU_ITEM`) exists AND the relationships are wired. Both are required.
 
 ## Delete
-- `DELETE /api/model/dataModels/{id}` returns `HTTP 204` on success, `HTTP 404` if already deleted. Treat 404 as idempotent success when cleaning up mid-script orphans.
+- Verified path on Strategy ONE Cloud: `DELETE /api/objects/{id}?type=3` (generic objects endpoint).
+- `DELETE /api/model/dataModels/{id}` worked on some Library builds but **404s on the observed Strategy ONE Cloud tenant family** — a 404 there means try the objects path, NOT idempotent success. (resolved 2026: newer tenant-verified observation wins — see `reference_strategy_object_cloning.md`)
 
 ## Session cap
-- Studio tenant enforces a per-user per-project interactive session cap. Symptom is `500 (Maximum number of interactive session per user for project exceeded while trying to login user … to project …)` on any API call that attempts a fresh session.
-- Every helper script creates a new session on login; long iterative debug loops exhaust the pool fast.
-- **Always call `m.logout()` (which sends `DELETE /api/auth/login`) at the end of a script run.** Wrap the session in try/finally so exceptions still release it.
-- If you hit the cap, wait 5–10 min for idle sessions to expire, or have an admin terminate them via `/api/sessions`. Do not paper over with retries.
+- Canonical coverage: `feedback_build_mosaic_session_leak.md` — symptom (`500 Maximum number of interactive session per user for project exceeded …`, `8004cb0a` / iServerCode `-2147072486`), the one-session-one-process rule, try/finally `m.logout()`, and recovery. (Earlier guidance here to wait 5–10 min after capping is superseded: iServer reaps project-interactive sessions on a ~30-min idle timer — budget the full 30 minutes and do not paper over with retries.)

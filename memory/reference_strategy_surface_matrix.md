@@ -1,6 +1,6 @@
 ---
 name: Strategy surface matrix
-description: Routing matrix for classic semantic objects, Mosaic data-model objects, runtime analytics, Push Data datasets, AI/agents, and admin/security.
+description: The ONE noun→surface routing file — classic semantic objects, Mosaic data-model objects, runtime analytics, cube/dataset families (Intelligent Cube, Super Cube/MTDI Push Data, DDA/MDX, Mosaic), AI/agents, and admin/security.
 type: reference
 originSessionId: codex-session
 ---
@@ -95,7 +95,7 @@ Keep four concepts separate:
 Classic object ACL:
 
 - Read object and ACL: `GET /api/objects/{id}?type=<EnumDSSXMLObjectTypes>`.
-- Update object ACL/name/folder/owner: `PUT /api/objects/{id}?type=<type>` with `acl` entries and optional `propagateACLToChildren`.
+- Update object ACL/name/folder/owner: `PUT /api/objects/{id}?type=<type>` with `acl` entries and optional `propagateACLToChildren`. Each `acl` entry carries `op` (`ADD`, `REPLACE`, etc.), `trustee`, `rights`, `denied`, `inheritable`, and `type`.
 - ACL rights are bitmask values: Browse `1`, Use/Execute `2`, Read `4`, Write `8`, Delete `16`, Control `32`, Use `64`, Execute `128`, Full `255`.
 - For folders, `inheritable` and propagation behavior control child object inheritance.
 
@@ -124,14 +124,38 @@ Security roles and privileges:
 
 ## Cubes and datasets
 
-Route cube requests by cube family:
+Use this section whenever the user says cube, OLAP, Intelligent Cube, Super Cube, MTDI, Push Data, dataset, refresh, publish, cache, or data extraction. Route cube requests by cube family.
 
-- **Intelligent Cube / OLAP cube:** project cube object, often subtype `report_cube`; create/update definition with `/api/model/cubes`, publish with `/api/v2/cubes/{cubeId}` or tenant-supported `/api/cubes/{cubeId}`, execute/read with `/api/cubes/{cubeId}/instances`.
-- **Super Cube / MTDI / Push Data dataset:** external-data cube created from uploaded data. Single-table path uses `POST /api/datasets`; multi-table path uses `POST /api/datasets/models`, `/uploadSessions`, and publish/status endpoints.
-- **DDA/MDX cube:** Cube API can retrieve/execute these runtime cube types; do not assume the create/update path is the same as Intelligent Cube or Push Data.
-- **Mosaic data model:** not the same thing as a classic cube. It is created under `/api/model/dataModels`; in-memory publish/materialization may use cube publish/cache endpoints on some tenants, but semantic editing stays under data-model endpoints.
+Intelligent Cube / OLAP cube (project cube object; official docs describe "Manage cube objects" as Modeling Service workflows):
 
-See `reference_strategy_cubes_and_datasets.md` for details.
+- Create definition: `POST /api/model/cubes`
+- Read definition: `GET /api/model/cubes/{cubeId}`
+- Update definition: `PUT /api/model/cubes/{cubeId}`
+- Publish/materialize: `POST /api/v2/cubes/{cubeId}` in current docs; some tenants also support `POST /api/cubes/{cubeId}`.
+- Execute/read data: `POST /api/cubes/{cubeId}/instances`, then `GET /api/cubes/{cubeId}/instances/{instanceId}`.
+- Browse cube elements: `/api/cubes/{cubeId}/attributes/{attributeId}/elements` and instance-specific variants.
+- Monitor cache: `/api/monitors/caches/...` and cube cache monitor endpoints.
+- Typical create body: `information.subType: "report_cube"`, `template.rows`/`template.columns`/`template.pageBy`, optional `filter`, `options.dataRefresh`, `dataPartition`, language options, optional `advancedProperties`. FFSQL cube variants can include `sourceType: "custom_sql_free_form"` and table definitions.
+
+Super Cube / MTDI / Push Data dataset (external-data cube created from uploaded data; official docs call this the Push Data API):
+
+- Single-table workflow: create and upload in one call with `POST /api/datasets`; update table data with `PATCH /api/datasets/{datasetId}/tables/{tableId}`. Good for small/simple single-table datasets.
+- Multi-table/incremental workflow: create dataset model with `POST /api/datasets/models`, create upload session with `POST /api/datasets/{datasetId}/uploadSessions`, upload chunks with `PUT /api/datasets/{datasetId}/uploadSessions/{uploadSessionId}`, publish with `POST .../uploadSessions/{uploadSessionId}/publish`, poll with `GET .../uploadSessions/{uploadSessionId}/publishStatus`.
+- Dataset publish/refresh/status endpoints include `/api/datasets/{datasetId}`, `/api/datasets/cubes/{id}/status`, `/api/datasets/{datasetId}/instances/{instanceId}/refresh`.
+- Dataset definitions include tables, column headers, dataset attributes, and dataset metrics. These are not the same as project schema attributes/metrics unless separately modeled.
+
+DDA/MDX cube (runtime retrieval/execution; treat as execution/data-access surfaces first):
+
+- Confirm the cube type/subtype and datasource/MDX role before writing.
+- Use `GET /api/cubes/{cubeId}` or object metadata to inspect.
+- Some endpoints include `X-MSTR-MdxDbRoleId`; do not assume Intelligent Cube create/update bodies apply.
+
+Mosaic data model (not the same thing as a classic cube — created and edited with `/api/model/dataModels`, not `/api/model/cubes`):
+
+- Semantic editing: `/api/model/dataModels/{dataModelId}/tables|attributes|metrics|factMetrics|relationships|securityFilters`.
+- Data serve mode: `connect_live`, `in_memory`, and tenant-supported `hybrid`.
+- Publish/materialization: see `reference_mosaic_publish_path.md` — the one publish file (UI-verified `/api/cubes/{id}?cubeAction=publish` trigger vs the 3-step `/api/dataModels` flow, single-trigger rule, dataType preconditions).
+- Query/semantic inspection: prefer Mosaic MCP (`get_semantics`, `query`) when connected; otherwise use REST cube/model APIs as available.
 
 ## Runtime analytics
 
@@ -163,4 +187,4 @@ Use mstrio-py when wrappers make a workflow safer, but keep the REST path in not
 - Classic Modeling: `mstrio.modeling.schema.attribute`, `mstrio.modeling.metric`, `mstrio.modeling.security_filter`.
 - Users/groups/security: `mstrio.users_and_groups`, `mstrio.access_and_security.security_role`, `mstrio.access_and_security.privilege`.
 - ACL helpers: `mstrio.utils.acl`; examples in `code_snippets/acl_mgmt.py`.
-- Cubes/datasets: `mstrio.project_objects.datasets.olap_cube`, `super_cube`, `cube_cache`, plus `mstrio.api.cubes` and `mstrio.api.datasets`.
+- Cubes/datasets: `mstrio.project_objects.datasets.olap_cube`, `super_cube`, `cube_cache`, plus `mstrio.api.cubes` and `mstrio.api.datasets`. Repo examples: `code_snippets/intelligent_cube.py`, `code_snippets/create_super_cube.py`, `code_snippets/cube_cache.py`, `workflows/import_cube_data_into_dataframe.py`. Use wrappers for reads, cache operations, and Push Data ergonomics; for generated automation memory, still record the REST endpoint family used and the object IDs created or modified.

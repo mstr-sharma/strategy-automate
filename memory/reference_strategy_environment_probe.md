@@ -41,11 +41,10 @@ If step 9 is unavailable on the tenant, fall back to: attempt a publish on a kno
 
 ## Helper-integration idea
 
-Add `python3 skill/scripts/build_mosaic.py preflight --project-id ... --datasource-id ... --dest-folder ... --mode [build|publish|migrate]` that runs the relevant subset above and prints PASS/FAIL per check. Today this is an ad-hoc script.
+Add `python3 skills/build-mosaic-model/scripts/build_mosaic.py preflight --project-id ... --datasource-id ... --dest-folder ... --mode [build|publish|migrate]` that runs the relevant subset above and prints PASS/FAIL per check. Today this is an ad-hoc script.
 
 ## Related
 
 - `feedback_build_mosaic_session_leak.md` — why step 2 matters.
 - `reference_strategy_project_loading.md` — step 3 details.
-- `reference_mosaic_publish_path.md` — step 9 + publish specifics.
-- `reference_mosaic_publishable_datatypes.md` — don't attempt publish before column types are clean.
+- `reference_mosaic_publish_path.md` — step 9 + publish specifics + DataType preconditions (don't attempt publish before column types are clean).
