@@ -6,7 +6,7 @@ __pycache__/
 .claude/
 
 # Optional generated API cache; refresh with:
-# python3 skill/scripts/build_mosaic.py openapi-summary --out openapi.yaml
+# python3 skills/build-mosaic-model/scripts/build_mosaic.py openapi-summary --out openapi.yaml
 /openapi.yaml
 /openapi.yml
 /openapi.json
@@ -16,4 +16,11 @@ __pycache__/
 .env.*
 !.env.example
 *.log
-captures/
+
+# captures/ READMEs (dated transcripts) are tracked institutional memory;
+# raw tenant payloads dumped next to them stay local
+captures/**/*.json
+captures/**/*.ndjson
+captures/**/*.har
+captures/**/*.csv
+captures/**/*.parquet

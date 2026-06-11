@@ -41,4 +41,4 @@ Each of these failure modes completes the build with 2xx status codes. The first
 - `feedback_mosaic_build_quality.md` — 11 ship-bar rules that apply after the plan is built.
 - `feedback_mosaic_legacy_as_blueprint.md` — when a classic model exists, mirror it instead of inferring.
 - `reference_mosaic_relationship_archetypes.md` — the 6 canonical join shapes the plan must pick from.
-- `feedback_mosaic_forms_and_formats.md` — per-attribute / per-metric form & format defaults, applied post-plan.
+- `feedback_mosaic_ship_bar.md` — per-attribute / per-metric form & format defaults (plus the full ship-bar checklist), applied post-plan.

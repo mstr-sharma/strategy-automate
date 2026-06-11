@@ -4,7 +4,7 @@ import unittest
 
 
 ROOT = os.path.dirname(os.path.dirname(__file__))
-sys.path.insert(0, os.path.join(ROOT, "skill", "scripts"))
+sys.path.insert(0, os.path.join(ROOT, "skills", "build-mosaic-model", "scripts"))
 
 import strategy_validate_models as svm  # noqa: E402
 

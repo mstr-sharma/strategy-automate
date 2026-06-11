@@ -16,13 +16,13 @@ This is the consolidated record from the first repo audit. The fixes landed on b
 
 1. **Data-correctness validator was promised but not implemented.**
    - Status: implemented for file/result-set comparisons; live adapters are explicitly incremental.
-   - Changes: added `skill/scripts/strategy_validate_models.py`; updated `strategy-validation/SKILL.md`, `memory/reference_strategy_data_validation.md`, and build output to report `data_validation.status=not_run` when no comparator is supplied.
+   - Changes: added `skills/build-mosaic-model/scripts/strategy_validate_models.py`; updated `skills/strategy-validation/SKILL.md`, `memory/reference_strategy_data_validation.md`, and build output to report `data_validation.status=not_run` when no comparator is supplied.
    - Follow-up: add live adapters for Mosaic MCP/Trino, classic report execution, warehouse SQL, and external REST sources as those workflows become repeatable.
 
 2. **Mosaic security filter helper created the wrong shape.**
    - Status: fixed for Mosaic data-model security filters.
    - Changes: `build_mosaic.py` now requires structured qualification input or shorthand `ATTR_ID[:FORM_ID]=VALUE`, creates `md_security_filter`, avoids placeholder `predicate_false`, and assigns members with `/Members`.
-   - Docs: `memory/reference_mosaic_security_filter.md`, `memory/reference_mosaic_modeling_concepts.md`, `memory/reference_strategy_openapi.md`, and `skill/SKILL.md` now distinguish Mosaic from classic/project security filters.
+   - Docs: `memory/reference_mosaic_security_filter.md`, `memory/reference_mosaic_modeling_concepts.md`, `memory/reference_strategy_openapi.md`, and `skills/build-mosaic-model/SKILL.md` now distinguish Mosaic from classic/project security filters.
 
 3. **Numeric ID columns could become bogus `SUM` metrics.**
    - Status: fixed and tested.
@@ -49,11 +49,11 @@ This is the consolidated record from the first repo audit. The fixes landed on b
 
 8. **Repo needed an explicit complete-automation coverage model.**
    - Status: added.
-   - Changes: new `memory/reference_strategy_automation_coverage.md`; wired into `AGENTS.md`, `README.md`, `strategy-automation/SKILL.md`, `memory/reference_strategy_automation_playbook.md`, `memory/reference_strategy_task_catalog.md`, and `memory/reference_strategy_surface_matrix.md`.
+   - Changes: new `memory/reference_strategy_automation_coverage.md`; wired into `AGENTS.md`, `README.md`, `skills/strategy-automation/SKILL.md`, `memory/reference_strategy_automation_playbook.md`, `memory/reference_strategy_task_catalog.md`, and `memory/reference_strategy_surface_matrix.md`.
 
 ## Verification run
 
-- `python3 -m py_compile skill/scripts/*.py`
+- `python3 -m py_compile skills/build-mosaic-model/scripts/*.py`
 - `python3 -m unittest discover -s tests` — 7 tests passed
 - `git diff --check`
 

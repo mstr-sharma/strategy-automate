@@ -5,7 +5,7 @@ type: reference
 tags: [mosaic, modeling, kimball, grain, build, translation]
 ---
 
-This memory sits upstream of `build-mosaic-model`, `reference_mosaic_modeling_concepts.md`, `reference_mosaic_relationship_archetypes.md`, and `feedback_mosaic_forms_and_formats.md`. Those documents describe *what Mosaic supports*. This one describes *how to decide what the model should contain* before writing a single changeset.
+This memory sits upstream of `build-mosaic-model`, `reference_mosaic_modeling_concepts.md`, `reference_mosaic_relationship_archetypes.md`, and `feedback_mosaic_ship_bar.md`. Those documents describe *what Mosaic supports*. This one describes *how to decide what the model should contain* before writing a single changeset.
 
 ## Output of a translation pass
 
@@ -118,7 +118,7 @@ If any of these fire, pause and ask the user before building:
 
 ## Validation hooks — prove the translation was right
 
-Every build plan produces three categories of validation queries for `strategy-validation/SKILL.md`:
+Every build plan produces three categories of validation queries for `skills/strategy-validation/SKILL.md`:
 
 1. **Grain check.** `COUNT(*)` and `COUNT(DISTINCT <natural key>)` on each table — match against warehouse truth.
 2. **Dimension rollup.** For each conformed attribute, `SUM(metric) GROUP BY attribute` compared against reference total. Catches under-joined relationships — rollup inflation / deflation.

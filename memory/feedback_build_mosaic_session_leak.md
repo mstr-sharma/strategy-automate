@@ -34,13 +34,13 @@ Modeling-Service wrapper returns the same condition with `8004cb0a`. If present,
 
 ## Why — iServer session ≠ auth token
 
-- `main()` already wraps dispatch in `try/finally: m.logout()` (`scripts/build_mosaic.py` line ~2703). The Python-level auth token IS released on clean exit.
+- `main()` already wraps dispatch in `try/finally: m.logout()` (`skills/build-mosaic-model/scripts/build_mosaic.py`, `main()`). The Python-level auth token IS released on clean exit.
 - BUT **project-scoped requests open a separate iServer interactive session** that `DELETE /api/auth/login` does not immediately tear down. iServer reaps on its own ~30-min idle timer.
 - The default project interactive-session cap on most Strategy ONE Cloud tenants is ~5 per user per project.
 - **Which calls count:** anything touching `/api/objects/...`, `/api/model/...`, `/api/dataModels/...`, `/api/cubes/...`.
 - **Which calls don't count:** `/api/projects`, `/api/datasources`, `/api/users`, `/api/auth/*`.
 
-The `kill-sessions` helper only reaps auth tokens (its docstring says so, `scripts/build_mosaic.py` line ~356). It cannot reap iServer project-interactive sessions from a non-admin token.
+The `kill-sessions` helper only reaps auth tokens (its docstring says so — `cmd_kill_sessions()` in `skills/build-mosaic-model/scripts/build_mosaic.py`). It cannot reap iServer project-interactive sessions from a non-admin token.
 
 ## How to apply — operational rules
 
@@ -69,7 +69,7 @@ The `kill-sessions` helper only reaps auth tokens (its docstring says so, `scrip
 ## Related
 
 - `reference_strategy_project_loading.md` — confirms that session cap fires on project-scoped calls, not on `/api/auth/login`.
-- `feedback_mosaic_publish_endpoint_collision.md` — the OTHER publish failure mode (firing both publish endpoints concurrently); distinct iServerCode `-2147072194`.
+- `reference_mosaic_publish_path.md` ("Never fire both publish endpoints") — the OTHER publish failure mode (firing both publish endpoints concurrently); distinct iServerCode `-2147072194`.
 - `feedback_mosaic_multi_db_connect_live.md` — multi-DB builds force `in_memory`, which forces publish, which is the session-cap fragile step.
 
 ## Helper-script features that implement this rule

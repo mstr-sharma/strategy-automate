@@ -1,16 +1,16 @@
 ---
-name: Strategy Tutorial semantic field study
-description: Live REST inventory of MicroStrategy Tutorial classic semantic objects, including attributes, facts, metrics, filters, prompts, hierarchies, and translation cues for Mosaic.
+name: tutorial-semantic-anatomy-and-translation
+description: Classic semantic-object anatomy (attributes, facts, metrics, filters, prompts, hierarchies, fact extensions), the Modeling Service endpoint map, auth nuances, and legacy→Mosaic translation rules — grounded in the public product-shipped Tutorial demo project. Load when inspecting, cloning, modernizing, or mining a classic semantic layer.
 type: reference
 originSessionId: codex-session
 ---
-Use this when the user asks to inspect, clone, modify, modernize, or mine a legacy/classic Strategy semantic layer. This is grounded in live REST reads from the `MicroStrategy Tutorial` project on `a verified Strategy Cloud tenant` on 2026-04-21.
+Use this when the user asks to inspect, clone, modify, modernize, or mine a legacy/classic Strategy semantic layer. Grounded in verified live REST reads from the `MicroStrategy Tutorial` project — the public product-shipped demo project, so its schema (object names, tables, expressions) is safe to cite as examples. The dated inventory snapshot (per-family counts, top-table rankings) lives in `captures/2026-04-21-tutorial-field-study/README.md`.
 
-Raw field-study output was written to `/tmp/strategy-tutorial-semantic-inventory-full.json`, with supplemental hierarchy verification at `/tmp/strategy-tutorial-hierarchies.json`; do not commit raw tenant payloads. Regenerate with:
+Raw field-study output stays in `/tmp`; do not commit raw tenant payloads. Regenerate with:
 
 ```bash
 cd "$REPO"
-python3 skill/scripts/strategy_semantic_inventory.py \
+python3 skills/build-mosaic-model/scripts/strategy_semantic_inventory.py \
   --workers 12 \
   --include-definition-bodies \
   --out /tmp/strategy-tutorial-semantic-inventory-full.json
@@ -27,29 +27,16 @@ For classic/project Modeling Service reads on this tenant:
 - Preserve Strategy session cookies when doing threaded reads. Headers alone can return false `ERR009` session-expired responses.
 - `showExpressionAs=tree` is best for analysis. Use `showFilterTokens=true` only for filters/security filters; sending filter-only params to attributes can produce misleading 400s.
 
-## Inventory outcome
+## Inventory lessons (dated counts in `captures/2026-04-21-tutorial-field-study/`)
 
-Classic object search found:
+The per-family search/read-count table and top-table rankings from the verified sweep live in the capture. The durable lessons:
 
-| Family | Search count | Definition reads OK | Definition reads failed | Main lesson |
-| --- | ---: | ---: | ---: | --- |
-| Attributes | 149 | 100 | 49 | Search returns real schema attributes plus Agent object-template attributes and transformation attributes. Filter by ancestor/subtype before editing. |
-| Facts | 36 | 36 | 0 | Fact bodies are very complete: expressions, table mappings, entry level, and fact extensions. |
-| Filters | 166 | 157 | 9 | Normal filter bodies read well; custom groups appeared in search as filter subtype `257` but are not supported by `/api/model/filters/{id}`. |
-| Metrics | 715 | 692 | 23 | Metric bodies expose expression trees, nested metrics, dimty, conditionality, transformations, subtotals, smart totals, thresholds, and formatting. Managed/training/system-subtotal variants can fail. |
-| Prompts | 189 | 91 | 98 | User-created prompts read; system prompts return an explicit "system prompt" error and should not be edited. |
-| User hierarchies | 6 | 6 | 0 | Hierarchy bodies expose drill/browse attributes and parent/child paths; combine with system hierarchy for relationship tables. |
-
-The system hierarchy read returned 73 relationships and 3 isolated attributes:
-
-- Relationship types: 58 one-to-many, 14 one-to-one, 1 many-to-many.
-- Top relationship tables: `LU_CUSTOMER`, `LU_SUPPLIER`, `LU_EMPLOYEE`, `LU_ITEM`, `LU_STORE`, `ORDER_FACT`.
-- Useful examples: `Catalog -> Item` many-to-many via `REL_CAT_ITEM`; `Category -> Subcategory` via `LU_SUBCATEG`; `Subcategory -> Item` via `LU_ITEM`; `Customer -> Order` via `ORDER_FACT`.
-
-Top table signals from definitions:
-
-- Attributes: `LU_CUSTOMER`, `LU_EMPLOYEE`, `LU_SUPPLIER`, `ORDER_FACT`, `ORDER_DETAIL`, `F_TUTORIAL_TARGETS`, `LU_ITEM`, `LU_STORE`, `LU_CALL_CTR`.
-- Facts: `ORDER_DETAIL`, `ORDER_FACT`, `CUSTOMER_SLS`, `F_TUTORIAL_REGION_TARGETS`, `INVENTORY_CURR`, `CITY_CTR_SLS`, `CITY_MNTH_SLS`, `CITY_SUBCATEG_SLS`.
+- Searches return noise alongside real schema objects: Agent object-template attributes/metrics, transformation attributes, custom groups (filter subtype `257`), system prompts, and managed/training/system-subtotal metrics all surface in search but fail or misbehave on the normal Modeling endpoints. Filter by ancestor/subtype before editing (details per family in the anatomy sections below).
+- Tutorial's system hierarchy mixes all three relationship types (58 one-to-many, 14 one-to-one, 1 many-to-many in the shipped demo schema) — a good fixture for verifying that classic→Mosaic translation preserves non-default cardinalities against Mosaic's one-to-many auto-inference bias.
+- Useful public-schema relationship examples: `Catalog -> Item` many-to-many via `REL_CAT_ITEM`; `Category -> Subcategory` via `LU_SUBCATEG`; `Subcategory -> Item` via `LU_ITEM`; `Customer -> Order` via `ORDER_FACT`.
+- Filters usually reference semantic objects/elements rather than directly listing warehouse tables; follow their referenced attributes/metrics to tables.
+- Metrics usually reference facts/metrics/filters, not tables directly; follow nested object references and fact definitions for warehouse table selection.
+- Fact expression table mappings are the strongest warehouse-table signal of any object family (see Fact anatomy).
 - Filters usually reference semantic objects/elements rather than directly listing warehouse tables; follow their referenced attributes/metrics to tables.
 - Metrics usually reference facts/metrics/filters, not tables directly; follow nested object references and fact definitions for warehouse table selection.
 

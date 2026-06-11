@@ -67,7 +67,7 @@ Use for: `Category IN (Books, Movies)` style filters. **This is what the Studio 
 
 - `elements[]` is the element list. Each entry has `display` (human label) and `elementId` (the internal key). For attributes whose ID form is non-numeric (string-keyed), `elementId` is `h<display-value>`. For numeric ID forms, `elementId` is the numeric value as a string.
 - `function: "in"` is the semantic (element in the set); a single-element list is equivalent to `equals` on that element.
-- No `form` binding is required — the list is interpreted against whatever the attribute's ID form is.
+- No `form` binding is required — the list is interpreted against whatever the attribute's ID form is. This also makes Shape B the only option for custom forms: Shape A (`predicate_form_qualification`) against a custom DESC form fails with `8004c767` — "attribute_form_custom … not found in metadata" (`8004cc7c` reported on some builds).
 - `qualification.text` is human-readable; the server regenerates it on save.
 
 When porting/cloning: if the source filter has `predicate_form_qualification`, do a shape-preserving copy. If it's `predicate_element_list` (which is what the UI writes), use Shape B. Do not mechanically rewrite one into the other — the SQL they generate can differ for compound-key or multi-form attributes.

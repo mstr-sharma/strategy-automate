@@ -33,15 +33,15 @@ Goal: the user should be able to drop artifacts into the workspace and ask for w
 ## Users, emails, and security
 - Resolve people before ACL/security writes:
   ```bash
-  python3 skill/scripts/build_mosaic.py resolve-users --file users.csv
+  python3 skills/build-mosaic-model/scripts/build_mosaic.py resolve-users --file users.csv
   ```
 - Dry-run new user creation by default:
   ```bash
-  python3 skill/scripts/build_mosaic.py create-users --file users.csv
+  python3 skills/build-mosaic-model/scripts/build_mosaic.py create-users --file users.csv
   ```
 - Execute only after review:
   ```bash
-  MSTR_NEW_USER_PASSWORD='...' python3 skill/scripts/build_mosaic.py create-users --file users.csv --yes
+  MSTR_NEW_USER_PASSWORD='...' python3 skills/build-mosaic-model/scripts/build_mosaic.py create-users --file users.csv --yes
   ```
 - Expected roster columns: `username`, `fullName` or `name`, `email`, optional `groups`/`memberships`, `enabled`, `standardAuth`, `requireNewPassword`, `languageId`.
 - For row-level security and ACLs, resolve users/groups to IDs first; prefer exact IDs in final write commands.
@@ -50,17 +50,17 @@ Goal: the user should be able to drop artifacts into the workspace and ask for w
 Use the read-first loop for any update to existing attributes, metrics, tables, filters, users, projects, or governance settings.
 1. Find candidates:
    ```bash
-   python3 skill/scripts/build_mosaic.py search-objects --name "Customer" --limit 20
+   python3 skills/build-mosaic-model/scripts/build_mosaic.py search-objects --name "Customer" --limit 20
    ```
 2. Read the exact object definition with parseable expressions:
    ```bash
-   python3 skill/scripts/build_mosaic.py get-model-object --kind legacy_attribute --object-id ATTR_ID --show-expression-as tokens --show-advanced-properties --out /tmp/customer.attr.before.json
+   python3 skills/build-mosaic-model/scripts/build_mosaic.py get-model-object --kind legacy_attribute --object-id ATTR_ID --show-expression-as tokens --show-advanced-properties --out /tmp/customer.attr.before.json
    ```
    For Mosaic-contained objects, pass `--model-id MODEL_ID --kind attribute|fact_metric|table|filter|security_filter`.
 3. Create a minimal patch JSON from the current object. Modeling Service `PATCH` replaces top-level fields, so include every top-level field you need to preserve.
 4. Apply through a changeset and save the before image:
    ```bash
-   python3 skill/scripts/build_mosaic.py patch-model-object --kind legacy_attribute --object-id ATTR_ID --json-file /tmp/customer.attr.patch.json --before-out /tmp/customer.attr.before.json --yes
+   python3 skills/build-mosaic-model/scripts/build_mosaic.py patch-model-object --kind legacy_attribute --object-id ATTR_ID --json-file /tmp/customer.attr.patch.json --before-out /tmp/customer.attr.before.json --yes
    ```
 5. Verify with a second `GET`, summarize changed fields, and record tenant-specific payload lessons in `feedback_mosaic_gotchas.md`.
 

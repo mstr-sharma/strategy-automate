@@ -1,15 +1,15 @@
 ---
-name: Strategy Mosaic field study + legacy bridge
-description: Live REST inventory of Mosaic data models on {MSTR_BASE host} ({MSTR_PROJECT_NAME} project) plus the object-by-object bridge from classic/project semantic-layer concepts to Mosaic equivalents.
+name: mosaic-portfolio-inventory-rules
+description: Mosaic portfolio inventory rules + legacy↔Mosaic translation — subType-779 REST discovery, the MCP-shows-published-catalog-only rule, the Mosaic sub-resource map, and the object-by-object classic→Mosaic translation matrix. Load when inspecting, cloning, translating, or converting between classic semantic objects and Mosaic data models.
 type: reference
 ---
 Use this when the user asks to inspect, clone, translate, or convert between legacy (classic project) semantic-layer objects and Mosaic data models. Pair with `reference_strategy_tutorial_semantic_field_study.md` (classic) and `reference_strategy_legacy_to_mosaic_mining.md` (discovery helper).
 
-Grounded in a live REST sweep on 2026-04-21 against `{MSTR_BASE host}` / project `{MSTR_PROJECT_NAME}` (id `{MSTR_PROJECT_ID}`). Raw inventory at `/tmp/strategy-mosaic-inventory-full.json`; do not commit raw tenant payloads. Regenerate with:
+Rules here are durable, grounded in a live REST portfolio sweep. The dated single-tenant snapshot (portfolio totals, distributions, permission stats, tenant dataset/model names, the anomalous model id) lives in `captures/2026-04-21-mosaic-portfolio-field-study/README.md`. Raw inventory output stays in `/tmp`; do not commit raw tenant payloads. Regenerate with:
 
 ```bash
 cd $REPO
-MSTR_PASSWORD=... /usr/bin/python3 skill/scripts/strategy_mosaic_inventory.py \
+MSTR_PASSWORD=... /usr/bin/python3 skills/build-mosaic-model/scripts/strategy_mosaic_inventory.py \
   --workers 12 --out /tmp/strategy-mosaic-inventory-full.json
 ```
 
@@ -18,9 +18,9 @@ Anaconda's OpenSSL hangs on `{MSTR_BASE host}` TLS; use `/usr/bin/python3`.
 ## Discovery
 
 - Mosaic data models surface in classic search as **type `3` (report), subType `779` (data_model)**. List via `/api/searches/results?type=3&pattern=4&limit=200&getAncestors=true` and filter `subtype==779`.
-- MCP MCP `get_mosaic_models` returned 133 in {MSTR_PROJECT_NAME}; REST search returned **156** (the extra 23 include legacy Hyper / MTDI datasets that still carry subType 779 but have no modern `dataServeMode`). Prefer REST when counts need to match metadata truth; MCP is the published-catalog view.
-- One data model (`2E5BC134AF423523BAF8C2A628980B86`) returned `8004e457 "Given object is not a Mosaic model"` on every `/api/model/dataModels/{id}/*` endpoint despite searching as subType 779 — a real anomaly to expect.
-- 117/156 `GET /api/model/dataModels/{id}/securityFilters` calls returned `8004c738 "User does not have Control access"` — that's the normal response when the session user did not author the filter. Only the owner can list per-model security filters.
+- **MCP shows published-catalog-only; prefer REST for metadata truth.** In the verified sweep, MCP `get_mosaic_models` returned 133 models where REST search returned **156** — the extra 23 were legacy Hyper / MTDI datasets that still carry subType 779 but have no modern `dataServeMode`. Prefer REST when counts need to match metadata truth; MCP is the published-catalog view.
+- Expect the occasional anomaly: a model can search as subType 779 yet return `8004e457 "Given object is not a Mosaic model"` on every `/api/model/dataModels/{id}/*` endpoint (one such model in the verified sweep; concrete id in the capture). Verify with a sub-resource probe before treating a search hit as writable.
+- `GET /api/model/dataModels/{id}/securityFilters` returns `8004c738 "User does not have Control access"` whenever the session user did not author the filter — only the owner can list per-model security filters. This is the normal response for the large majority of models when sweeping a tenant (exact stat in the capture); filter these out of inventory rather than treating them as failures.
 
 ## Mosaic sub-resource map (used by the inventory helper)
 
@@ -39,15 +39,14 @@ All inside `/api/model/dataModels/{dataModelId}`:
 - `/objects/{objectId}/translations?subType=...` — translations inside a changeset
 - `/links` — **requires `X-MSTR-MS-Changeset` even for GET** on {MSTR_BASE host}; skip for read-only inventory
 
-## Portfolio observations ({MSTR_PROJECT_NAME}, 156 models)
+## Durable portfolio patterns (dated stats in `captures/2026-04-21-mosaic-portfolio-field-study/`)
 
-- **Totals:** 3309 attributes, 1419 fact metrics, 168 custom metrics, 585 physical tables, 1 readable security filter (117 privilege-denied), 23 external-data-model links, 168 folders, 2693 hierarchy relationships.
-- **`dataServeMode` distribution:** 119 `in_memory`, 22 `connect_live`, 15 blank (legacy Hyper/MTDI datasets: Finanzas, Trimble Hyper, Customer Hyper, Agents Hyper, HomeDepot Sample Retail Data, Penguin Tenant/Cluster Hyper Dataset, etc.).
-- **Physical tables:** 585/585 are `physicalTable.type = "pipeline"`. Studio uses pipeline (build-from-cube) pattern universally — even `connect_live` models. `warehouse_partition_table` is the documented live shape but is not in active use; `freeform_sql` likewise unused here.
-- **Attribute forms:** 3085 system + 415 custom. Custom forms are almost always extra descriptive columns (e.g., `MANAGER_NAME`, `PRODUCT_NAME`, `region_name`) with category `"<Attr> None"` rather than `DESC`. Expressions stay simple (single-column `ApplySimple`-equivalent); complex `Concat`/`ApplySimple(...)` expressions found in classic Tutorial are rare here.
-- **Relationships:** 1830 `one_to_many` + 1 `many_to_many`; **zero `one_to_one`**. Mosaic auto-inference defaults every parent/child edge to one-to-many unless the user explicitly sets it. Classic Tutorial had 58/14/1 across the three types — translation from classic must preserve one-to-one edges deliberately.
-- **Metric shapes:** 1517/1587 carry `dimty|dimensionality|levels` (every Mosaic metric ships with a level since facts have entry levels). 98 are conditional. **Zero** `compound`, `transformation`, or `smartMetric`. Every advanced metric shape is expressed as an inline expression tree rather than object composition.
-- **External data models:** 12 models reference others (BREAD Comprehensive Analysis Suite references 5+ models; Unified Supplier Model, TB Integrated Asset Health, Cardmember Rewards Model, etc.).
+- **`dataServeMode` takes three values in practice:** `in_memory`, `connect_live`, and blank. Blank means a legacy Hyper/MTDI Super Cube surfaced as subType 779 — treat as read-only (see Storage / runtime translation below).
+- **Pipeline tables are universal.** Every physical table observed was `physicalTable.type = "pipeline"` — Studio uses the pipeline (build-from-cube) pattern even for `connect_live` models. `warehouse_partition_table` is the documented live shape but was not in active use; `freeform_sql` likewise unused.
+- **Custom attribute forms** are almost always extra descriptive columns with category `"<Attr> None"` rather than `DESC`, and `forms[].name` is frequently empty — identify forms by `category`. Expressions stay simple (single-column); complex `Concat`/`ApplySimple(...)` expressions found in classic Tutorial are rare in Mosaic-authored models.
+- **Relationship auto-inference bias:** Mosaic defaults every parent/child edge to `one_to_many` unless the user explicitly sets it — the verified portfolio had zero `one_to_one` edges, while classic Tutorial mixes 58 one-to-many / 14 one-to-one / 1 many-to-many. Translation from classic must preserve one-to-one and many-to-many edges deliberately.
+- **Metric shapes:** virtually every Mosaic metric carries `dimty|dimensionality|levels` (facts have entry levels, so every metric ships with a level); a minority are conditional (`hasConditionality`). **Zero** `compound`, `transformation`, or `smartMetric` objects — every advanced metric shape is expressed as an inline expression tree rather than object composition.
+- **External data models** (model-to-model composition) are in real production use; some models reference 5+ others.
 
 ## Attribute anatomy (Mosaic body → classic equivalent)
 
@@ -69,8 +68,8 @@ Mosaic `GET /api/model/dataModels/{mid}/attributes/{aid}?showExpressionAs=tree` 
 - **Simple aggregate** (dominant): `Sum({Extended Price})`, `Avg({Wait Time Minutes})`. `expression.tree.type = "object_reference"` wrapping a fact/metric ref with a function.
 - **Compound expression** (inlined): `Sum({Loans Approved}) / NullToZero(Sum({Applications Submitted}))`. `expression.tree.type = "operator"`, `functions` contain `divide, null_to_zero, sum`.
 - **Transformation-style** (inlined, not a separate transformation object): `PreviousYear({Transaction Date}({Transaction Date}),1,{Expense Amount})` and `(Sum({Expense Amount}) - PreviousYear(...)) / PreviousYear(...)` — these would be separate transformation objects in classic but are expressed as function calls in Mosaic.
-- **Level/conditional metadata** carried alongside the expression; no separate `conditionality` object in the live bodies we read, but `hasConditionality` keys appear on 98/1587.
-- **Subtotals / thresholds / smart totals / format** keys all present in the body schema even though this tenant doesn't populate them heavily.
+- **Level/conditional metadata** carried alongside the expression; no separate `conditionality` object in the live bodies we read, but `hasConditionality` keys appear on a minority of metrics.
+- **Subtotals / thresholds / smart totals / format** keys all present in the body schema even when not heavily populated.
 
 **Translation rules:**
 
@@ -101,7 +100,7 @@ Mosaic: **one layer** — `GET /api/model/dataModels/{mid}/hierarchy` returns al
 
 - Project system-hierarchy relationships inside a Mosaic model become model-hierarchy relationships; `parent/child/relationshipType/relationshipTable` tuple is preserved.
 - Classic **user hierarchies** (e.g., `Geography`, `Products`) do not port as-is; the attribute set becomes part of the Mosaic model, and drill paths are lost. Reconstruct in client apps / dashboards, not in the model.
-- Auto-inference bias: Mosaic marks almost everything as `one_to_many`. If the classic relationship is `one_to_one` or `many_to_many`, set it explicitly after import — the Studio portfolio shows this is currently under-modeled.
+- Auto-inference bias: Mosaic marks almost everything as `one_to_many`. If the classic relationship is `one_to_one` or `many_to_many`, set it explicitly after import — verified portfolios show this is chronically under-modeled.
 
 ## Filter, prompt, consolidation, custom group translation
 
@@ -120,12 +119,12 @@ Mosaic: **one layer** — `GET /api/model/dataModels/{mid}/hierarchy` returns al
 ## Storage / runtime translation
 
 - **In-memory Mosaic models** back onto the Intelligent Cube family — `POST /api/cubes/{id}/publish` (or studio-verified `POST /api/cubes/{id}`) publishes; `POST /api/cubes/{id}/refresh?refreshType=update|add|replace|incremental` refreshes. Incremental filter set via `PATCH /api/cubes/{id}` `incrementalRefresh.filterId`.
-- **Connect-live Mosaic models** skip cube storage but still require a `pipeline` table shape on this tenant. Direct `warehouse_partition_table` wiring is documented in `reference_mosaic_rest_api.md` but not in production use here.
+- **Connect-live Mosaic models** skip cube storage but still require a `pipeline` table shape on verified tenants. Direct `warehouse_partition_table` wiring is documented in `reference_mosaic_rest_api.md` but was not observed in production use.
 - **Hyper / MTDI Super Cubes** that now appear as subType 779 (`dataServeMode == ""`): treat as read-only. Do not attempt changeset writes; they need an explicit upgrade path that isn't covered by `/api/model/dataModels` writes.
 
 ## Things that do NOT cleanly cross the bridge
 
-- Classic **agent/template** attributes (`subtype 3072/1024`) and **system/transformation** attributes — already flagged in classic field study as `/api/model/attributes/{id}` failures; they are not Mosaic candidates.
+- Classic **agent/template** attributes (`subtype 3072/1024`) and **system/transformation** attributes — already flagged in the classic field study as `/api/model/attributes/{id}` failures; they are not Mosaic candidates.
 - Classic **prompts** — no Mosaic counterpart; migrate to runtime or agent UX.
 - Classic **custom groups / consolidations** — recreate as expression-level logic.
 - Classic **drill hierarchies (user hierarchies)** — the attribute set ports; the drill definition is lost.
@@ -136,15 +135,15 @@ Mosaic: **one layer** — `GET /api/model/dataModels/{mid}/hierarchy` returns al
 
 ```bash
 # Full sweep (writes /tmp/strategy-mosaic-inventory-<stamp>.json)
-MSTR_PASSWORD=... /usr/bin/python3 skill/scripts/strategy_mosaic_inventory.py --workers 12
+MSTR_PASSWORD=... /usr/bin/python3 skills/build-mosaic-model/scripts/strategy_mosaic_inventory.py --workers 12
 
 # Narrow by name fragment for iterative analysis
-MSTR_PASSWORD=... /usr/bin/python3 skill/scripts/strategy_mosaic_inventory.py \
-  --model-name "BREAD" --out /tmp/mosaic-bread.json
+MSTR_PASSWORD=... /usr/bin/python3 skills/build-mosaic-model/scripts/strategy_mosaic_inventory.py \
+  --model-name "<name fragment>" --out /tmp/mosaic-subset.json
 
 # Single known model
-MSTR_PASSWORD=... /usr/bin/python3 skill/scripts/strategy_mosaic_inventory.py \
-  --model-name "snowflake tpch_sf1 test" --max-models 1
+MSTR_PASSWORD=... /usr/bin/python3 skills/build-mosaic-model/scripts/strategy_mosaic_inventory.py \
+  --model-name "<exact model name>" --max-models 1
 ```
 
 Output fields per model: `counts`, `dataServeMode`, `attributes[]` (forms, relationships, tables), `factMetrics[]`, `customMetrics[]` (with `expressionText`, `expressionKind`, `functions`), `tables[]` (physicalType/columnCount), `hierarchy` (relationshipCount + types), `securityFilters[]`, `externalDataModels[]`, `subresourceStatuses` (ok + error per endpoint).

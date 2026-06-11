@@ -13,7 +13,7 @@ Do NOT use when the classic project has many `ApplySimple(...)` expressions or c
 ## Entry command
 
 ```bash
-python3 skill/scripts/build_mosaic.py build-from-schema-objects \
+python3 skills/build-mosaic-model/scripts/build_mosaic.py build-from-schema-objects \
   --name "Sales Model" \
   --attribute-ids A1,A2,A3 \
   --fact-ids F1,F2 \
@@ -26,12 +26,12 @@ python3 skill/scripts/build_mosaic.py build-from-schema-objects \
 For larger classic projects, pass IDs from files using the `@filepath` syntax:
 
 ```bash
-python3 skill/scripts/strategy_semantic_mine.py \
+python3 skills/build-mosaic-model/scripts/strategy_semantic_mine.py \
   --mode top-down --report "Revenue Report" \
   --out /tmp/mine.json
 
 # Extract IDs from the mine output, then:
-python3 skill/scripts/build_mosaic.py build-from-schema-objects \
+python3 skills/build-mosaic-model/scripts/build_mosaic.py build-from-schema-objects \
   --name "Revenue Model" \
   --attribute-ids @/tmp/attr_ids.txt \
   --fact-ids @/tmp/fact_ids.txt \
