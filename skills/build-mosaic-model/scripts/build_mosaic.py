@@ -1500,6 +1500,10 @@ def cmd_build(m: MSTR, args):
             dt    = c.get("dataType")
             if isinstance(dt, str): dt = {"type": dt}
             if not isinstance(dt, dict): dt = {"type": "utf8_char"}
+            # Publishable-dataType mapping — without this, warehouse-catalog
+            # sentinel types stall the in-memory publish (-2147212544); see
+            # memory/reference_mosaic_publish_path.md "DataType preconditions".
+            dt = sot.normalize_datatype(dt)
             outer_cols.append({
                 "information": {"name": cname},
                 "dataType": dt,
@@ -1797,6 +1801,7 @@ def cmd_build(m: MSTR, args):
             dt_obj = c.get("dataType")
             if not isinstance(dt_obj, dict):
                 dt_obj = {"type": str(dt_obj or "double"), "precision": 15, "scale": 4}
+            dt_obj = sot.normalize_datatype(dt_obj)
             base = friendly_col(cname)
             metric_name = f"Total {base}"
             metric_desc = f"SUM of {cname} from the {short_table} table."

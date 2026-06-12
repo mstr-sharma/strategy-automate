@@ -63,6 +63,32 @@ Per-table statuses: `reserved` → `schema_comparison_completed` → `loaded` (h
 | "Incremental refresh (add/update specific tables)" | 3-step Modeling flow with specific `refreshPolicy`. |
 | "Policy gate before declaring validation ready" | Always poll `/publishStatus` until every table `status:"loaded"`. Don't trust the 202/204 alone. |
 
+## Completion polling — what actually works (2026-06-11 correction)
+
+Observed on a Strategy ONE Cloud tenant (2026-06-11 capture): **`GET /api/cubes/{id}` is definition-only** — the response carries `id`, `name`, `result.definition.availableObjects` and NO status/size/rowCount fields, so it CANNOT serve as a publish-completion poll (an earlier revision of this file suggested it could). Verified completion probes, in order of preference:
+
+1. **Cube-execute probe**: `POST /api/v2/cubes/{id}/instances?limit=1` body `{}` — 200 with data ⇒ published; `500 iServerCode -2147072488 "Intelligent Cube … is not published"` ⇒ not (yet) materialized. Definitive in both directions.
+2. **3-step `publishStatus`** with the SAME instance that fired the 3-step publish — only valid when the 3-step flow was this run's single trigger.
+3. **Trino/MCP `count(*)`** when an MCP/Trino session is available.
+
+A `202` from `/api/cubes` or `204` from `/publish` proves only that the job was queued — and **`publishStatus` itself can LIE**. Verified 2026-06-11 (Strategy ONE Cloud family): `publishStatus` polled with the same instance that fired the 3-step publish returned `status=1, tables:[]` continuously for 5 minutes — and 9 seconds after the last poll, a cube-execute probe returned 200 with the full 3000-row cube. The cube had materialized while `publishStatus` still reported "running, no tables". Treat `status=1/tables:[]` as "unknown", never as "stalled": interleave the cube-execute probe (`POST /api/v2/cubes/{id}/instances?limit=1` → 200 = done, `-2147072488` = not yet) into every publish poll loop, and let IT decide.
+
+### Snowflake warehouse auto-resume makes publish look stalled
+
+Same observation set: publishes triggered against a COLD (auto-suspended) Snowflake warehouse showed nothing queryable for 10+ minutes (execute probe → `-2147072488` 12 minutes after a 202). After a connect_live query forced the warehouse to resume (~2-min first-query latency), a fresh trigger had the cube queryable within ~5 minutes. Publish jobs appear far more sensitive to warehouse-resume latency than interactive queries — they may sit invisible (`status=1, tables:[]`, no error) for the entire resume + queue window. Operational rules:
+1. Budget 10–15 minutes of execute-probe polling before declaring a publish dead on auto-suspend warehouses — or pre-warm the warehouse with any small live/catalog query right before triggering.
+2. Do NOT fire repeat triggers every few minutes "because nothing is happening" — queued jobs serialize on the cube lock and you can't tell which one landed.
+3. The differential ladder below still applies when the execute probe stays negative past that budget.
+
+### Differential ladder when publish stays unqueryable with clean types
+
+Run IN ORDER (each one short session; scripts in `captures/20260611-saama-pharma-build/`):
+1. **REF execute** — known-good model loads ⇒ cube-serving infra + privileges fine; failure is publish-specific.
+2. **Privileges** — `GET /api/sessions/privileges`: 162 Publish Intelligent Cube, 164 Web publish, 144 Administer Cubes, 316 Use Mosaic Studio.
+3. **1-table publish canary** (`canary_build.py`) — also unqueryable ⇒ not your model's shape/size.
+4. **connect_live canary** (`CANARY_SERVE_MODE=connect_live`) — live rows ⇒ warehouse + DS connection healthy, AND the warehouse is now HOT.
+5. **Hot-warehouse re-publish** — ONE fresh trigger right after step 4, then execute-probe for 10+ min. Loads ⇒ root cause was warehouse-resume latency (2026-06-11 outcome). Still nothing ⇒ genuine CubeServer/publish-pipeline failure — escalate to the tenant admin with trigger timestamps.
+
 ## Never fire both publish endpoints in the same run
 
 When publishing an in-memory Mosaic data model, call **exactly one** of the two publish endpoints per run:
