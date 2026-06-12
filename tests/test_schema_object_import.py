@@ -42,6 +42,38 @@ class TestNormalizeDatatype(unittest.TestCase):
         out = sot.normalize_datatype(None)
         self.assertEqual(out, {"type": "utf8_char", "precision": 32000, "scale": 0})
 
+    def test_decimal_positive_scale_becomes_double(self):
+        out = sot.normalize_datatype({"type": "decimal", "precision": 12, "scale": 2})
+        self.assertEqual(out, {"type": "double", "precision": 12, "scale": 2})
+
+    def test_decimal_sentinel_scale_becomes_int64(self):
+        out = sot.normalize_datatype({"type": "decimal", "precision": 38, "scale": MIN_INT})
+        self.assertEqual(out, {"type": "int64", "precision": 8, "scale": 0})
+
+    def test_decimal_bad_precision_defaults_to_38(self):
+        out = sot.normalize_datatype({"type": "decimal", "precision": -1, "scale": 4})
+        self.assertEqual(out, {"type": "double", "precision": 38, "scale": 4})
+
+    def test_time_stamp_warehouse_precisions_normalized(self):
+        self.assertEqual(
+            sot.normalize_datatype({"type": "time_stamp", "precision": 8, "scale": MIN_INT}),
+            {"type": "time_stamp", "precision": 26, "scale": 6})
+        self.assertEqual(
+            sot.normalize_datatype({"type": "time_stamp", "precision": 9, "scale": MIN_INT}),
+            {"type": "time_stamp", "precision": 23, "scale": 9})
+
+    def test_time_stamp_clean_passthrough(self):
+        src = {"type": "time_stamp", "precision": 26, "scale": 6}
+        self.assertEqual(sot.normalize_datatype(src), src)
+
+    def test_date_normalized_to_10_0(self):
+        out = sot.normalize_datatype({"type": "date", "precision": 0, "scale": MIN_INT})
+        self.assertEqual(out, {"type": "date", "precision": 10, "scale": 0})
+
+    def test_date_clean_passthrough(self):
+        src = {"type": "date", "precision": 10, "scale": 0}
+        self.assertEqual(sot.normalize_datatype(src), src)
+
 
 class TestExtractTableIds(unittest.TestCase):
     def test_attribute_single_form(self):

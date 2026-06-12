@@ -50,8 +50,23 @@ def normalize_datatype(dt: Any) -> dict:
     if src_type == "unsigned":
         return {"type": "integer", "precision": 2, "scale": 0}
 
-    if src_type == "decimal" and scale == 0:
-        return {"type": "int64", "precision": 8, "scale": 0}
+    if src_type == "decimal":
+        if scale in (0, None, _MIN_INT_SENTINEL):
+            return {"type": "int64", "precision": 8, "scale": 0}
+        # decimal(P,S>0) must become double(P,S) or the in-memory publish stalls
+        # with iServerCode -2147212544 (reference_mosaic_publish_path.md).
+        return {"type": "double",
+                "precision": precision if isinstance(precision, int) and precision > 0 else 38,
+                "scale": scale}
+
+    # Warehouse-catalog time_stamp precisions 8/9 map to the UI-clean shapes;
+    # already-clean values (26,6)/(23,9) pass through untouched (idempotent).
+    if src_type == "time_stamp" and precision in (8, 9):
+        return ({"type": "time_stamp", "precision": 26, "scale": 6} if precision == 8
+                else {"type": "time_stamp", "precision": 23, "scale": 9})
+
+    if src_type == "date" and (precision != 10 or scale != 0):
+        return {"type": "date", "precision": 10, "scale": 0}
 
     return dict(dt)
 

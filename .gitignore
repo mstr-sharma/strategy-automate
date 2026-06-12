@@ -17,10 +17,15 @@ __pycache__/
 !.env.example
 *.log
 
+# Operator-local credential notes (never commit)
+ignore/
+
 # captures/ READMEs (dated transcripts) are tracked institutional memory;
-# raw tenant payloads dumped next to them stay local
+# raw tenant payloads and run scripts dumped next to them stay local
+# (scripts embed tenant object IDs; generalized versions belong under skills/)
 captures/**/*.json
 captures/**/*.ndjson
 captures/**/*.har
 captures/**/*.csv
 captures/**/*.parquet
+captures/**/*.py
