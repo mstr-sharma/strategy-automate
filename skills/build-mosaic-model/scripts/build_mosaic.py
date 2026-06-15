@@ -205,7 +205,13 @@ def friendly_table(tname: str) -> str:
 # ── Session helpers ───────────────────────────────────────────────────────────
 class MSTR:
     def __init__(self, args):
-        self.base    = args.base.rstrip("/")
+        self.base    = (args.base or "").rstrip("/")
+        # A scheme-less / empty MSTR_BASE otherwise crashes deep in requests with a
+        # cryptic MissingSchema traceback, far from the cause. Fail clearly here.
+        if not self.base.startswith(("http://", "https://")):
+            die(f"MSTR_BASE must be an absolute URL with scheme and the Library path, "
+                f"e.g. https://<host>/MicroStrategyLibrary — got {args.base!r}. "
+                f"Fix MSTR_BASE (or --base).")
         self.project = args.project_id
         self.user    = args.user
         self.pw      = args.password
@@ -766,6 +772,22 @@ def load_dictionary(path: str) -> dict:
                 bucket[key] = {k:v for k,v in entry.items() if v}
     else:
         die(f"{path}: dictionary must be JSON, YAML, or CSV")
+    # Guardrail: a FLAT plan dictionary (TABLE.COLUMN -> {kind, metric_function, ...})
+    # is NOT this native shape. If passed here it yields empty overrides and the
+    # build silently falls back to column heuristics (every metric -> SUM,
+    # kind:skip dropped, business names lost). Refuse instead of failing silently —
+    # compile the plan dict to the native shape first (e.g. plan_to_native.py).
+    if isinstance(d, dict) and not ({"attributes","metrics","relationships","tables"} & set(d)):
+        flatish = [k for k, v in d.items()
+                   if isinstance(k, str) and "." in k and isinstance(v, dict)
+                   and ({"kind","metric_function","business_name"} & set(v))]
+        if flatish:
+            die(f"{path}: this looks like a FLAT plan dictionary (TABLE.COLUMN keys "
+                f"carrying 'kind'/'metric_function'/'business_name', e.g. {flatish[0]!r}), "
+                f"not the native load_dictionary shape ({{\"attributes\":{{...}}, "
+                f"\"metrics\":{{...}}}}). build-from-config would silently ignore it and "
+                f"default every metric to SUM. Compile it to the native shape first and "
+                f"pass that file (mosaic-migration-skills: scripts/lib/plan_to_native.py).")
     # Normalize
     d.setdefault("attributes",{}); d.setdefault("metrics",{})
     d.setdefault("relationships",[]); d.setdefault("tables",{})
@@ -1442,6 +1464,32 @@ def _apply_fk_map(dictionary: dict, path: str) -> None:
               file=sys.stderr)
 
 
+def resolve_dest_folder(m: "MSTR", dest: str) -> str:
+    """Return a usable destinationFolderId for create-model.
+
+    When none is supplied, fall back to the user's personal "My Objects"
+    (reference_mosaic_rest_gotchas.md). Some tenants' /api/folders/myPersonalObjects
+    returns the folder object (usable id); others return its contents — there we
+    can't derive the id, so fail fast with an actionable message rather than POST
+    an empty destinationFolderId (the cryptic 8004cc07 "folder '' invalid")."""
+    if dest:
+        return dest
+    try:
+        r = m.get("/api/folders/myPersonalObjects")
+        if r.ok:
+            body = r.json()
+            if isinstance(body, dict) and body.get("id"):
+                print(f"  no dest folder set — using My Objects ({body['id']})", file=sys.stderr)
+                return body["id"]
+    except Exception:
+        pass
+    die("No destination folder. Set MSTR_DEST_FOLDER_ID (or config destination_folder / "
+        "--dest-folder) to a writable folder id — find one with "
+        "`GET /api/folders/preDefined/7`. (Auto-fallback to My Objects unavailable here: "
+        "this tenant's /api/folders/myPersonalObjects returns folder contents, not the "
+        "folder id.)")
+
+
 def cmd_build(m: MSTR, args):
     m.login(identity=True)
     sources = [parse_source(s) for s in args.source]
@@ -1474,12 +1522,16 @@ def cmd_build(m: MSTR, args):
 
     attr_override  = {c.lower() for c in (args.attr_cols or [])}
     metric_override = {c.lower() for c in (args.metric_cols or [])}
+    # Columns to exclude from modeling entirely (the plan's kind:skip). Accepts
+    # either "TABLE.COLUMN" or bare "COLUMN" (case-insensitive). They stay physical
+    # on the table; they just don't become attributes or metrics.
+    skip_set = {c.lower() for c in (getattr(args, "skip_cols", None) or [])}
 
     # ── Create model ──
     print(f"→ Creating model '{args.name}'…", file=sys.stderr)
     cs = open_cs(m)
     r = m.post("/api/model/dataModels", json={
-        "information": {"name": args.name, "destinationFolderId": args.dest_folder},
+        "information": {"name": args.name, "destinationFolderId": resolve_dest_folder(m, args.dest_folder)},
         "dataServeMode": args.data_serve_mode,
     })
     if not r.ok: die(f"create model: {r.status_code} {r.text[:400]}")
@@ -1552,6 +1604,23 @@ def cmd_build(m: MSTR, args):
         table_id_map[key] = new_tid
         table_cols_map[key] = cols_raw
         print(f"  + table {h['table']} -> {new_tid}", file=sys.stderr)
+
+    # ── Exclude skip_cols from modeling (plan kind:skip). The columns were already
+    #    added to the physical table above; here we just drop them from the source
+    #    that drives attribute + metric creation, so they are never modeled. ──
+    if skip_set:
+        def _is_skipped(tname, cname):
+            cl = (cname or "").lower()
+            return cl in skip_set or f"{tname.lower()}.{cl}" in skip_set
+        for key in list(table_cols_map):
+            _, _, tname = key
+            kept = [c for c in table_cols_map[key]
+                    if not _is_skipped(tname, c.get("name") or c.get("columnName"))]
+            n_drop = len(table_cols_map[key]) - len(kept)
+            if n_drop:
+                print(f"  skip_cols: excluded {n_drop} column(s) from {tname} (not modeled)",
+                      file=sys.stderr)
+            table_cols_map[key] = kept
 
     # ── Per-column attribute + metric creation (entity-first pattern) ──
     # This matches how MSTR Mosaic UI builds models: one "entity" attribute per table
@@ -3087,7 +3156,7 @@ def cmd_build_from_schema_objects(m: MSTR, args):
     print(f"→ Creating model '{args.name}'…", file=sys.stderr)
     serve_mode = "in_memory" if args.publish else args.data_serve_mode
     r = m.post("/api/model/dataModels", json={
-        "information": {"name": args.name, "destinationFolderId": args.dest_folder},
+        "information": {"name": args.name, "destinationFolderId": resolve_dest_folder(m, args.dest_folder)},
         "dataServeMode": serve_mode,
     })
     if not r.ok:
@@ -4097,6 +4166,7 @@ def cmd_build_from_config(m: MSTR, args):
     ns.data_serve_mode = spec.get("data_serve_mode","connect_live")
     ns.attr_cols    = spec.get("attr_cols", [])
     ns.metric_cols  = spec.get("metric_cols", [])
+    ns.skip_cols    = spec.get("skip_cols", [])
     ns.skip_relationships = spec.get("skip_relationships", False)
     ns.dictionary   = spec.get("dictionary") or spec.get("data_dictionary")
     # Conformance / FK maps — equivalent to the `build` CLI's --conformance-map
@@ -4292,6 +4362,10 @@ def build_parser():
     sp.add_argument("--data-serve-mode", default="connect_live", choices=["connect_live","in_memory","hybrid"])
     sp.add_argument("--attr-cols",   nargs="*", default=[], help="column names to force as attributes")
     sp.add_argument("--metric-cols", nargs="*", default=[], help="column names to force as metrics")
+    sp.add_argument("--skip-cols",   nargs="*", default=[],
+                    help="TABLE.COLUMN or bare column names to exclude from the model "
+                         "entirely — not modeled as attribute or metric (e.g. free-text "
+                         "comment columns). They remain physical columns on the table.")
     sp.add_argument("--skip-relationships", action="store_true")
     sp.add_argument("--dictionary", help="JSON/YAML/CSV file of attribute+metric name/description overrides and relationships")
     sp.add_argument("--erd", action="append", default=[],
