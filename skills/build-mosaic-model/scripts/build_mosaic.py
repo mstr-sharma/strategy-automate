@@ -1666,10 +1666,13 @@ def cmd_build(m: MSTR, args):
         return {}
 
     # 1) Create entity attributes for each unique PK column, expressions on all occurrences
+    # Build a case-insensitive reverse map so Postgres (lowercase) col names match UPPERCASE entity_pks.
+    col_tables_upper = {c.upper(): c for c in col_tables}
     for pk_col in entity_pks:
-        if pk_col not in col_tables: continue
-        occs = col_tables[pk_col]
-        home = col_home[pk_col]
+        actual_col = col_tables_upper.get(pk_col)
+        if actual_col is None: continue
+        occs = col_tables[actual_col]
+        home = col_home[actual_col]
         # Pick a short-friendly name — e.g. "PRODUCT_ID" -> "Product"
         base_entity_name = friendly_col(pk_col).replace(" Id","").replace(" ID","").strip() or friendly_col(pk_col)
         # Override with dictionary (home-table key)
@@ -1677,7 +1680,7 @@ def cmd_build(m: MSTR, args):
         name = ov.get("name") or base_entity_name
         desc = ov.get("description") or f"Unique {friendly_col(pk_col)} identifier; key of the {friendly_table(home['table'])} entity."
         expressions = [
-            {"expression": {"tokens":[{"type":"column_reference","value": pk_col}]},
+            {"expression": {"tokens":[{"type":"column_reference","value": actual_col}]},
              "tables": [{"objectId": o["table_id"], "subType":"logical_table", "name": o["table"]}]}
             for o in occs
         ]
