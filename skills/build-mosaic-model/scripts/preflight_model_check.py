@@ -193,9 +193,17 @@ def check_relationships(columns_by_table: dict[str,list[ColumnInfo]], findings: 
     orphan_ids = [col for col, ts in col_to_tables.items() if len(ts) == 1]
     shared_ids = {col: sorted(ts) for col, ts in col_to_tables.items() if len(ts) >= 2}
     if not shared_ids:
-        findings.append(Finding("ERROR","NO_SHARED_KEYS",
-            "<all tables>","No shared ID column across any two tables — model will have no joins.",
-            "Provide ERD via --erd or ensure FK columns use consistent names."))
+        if len(columns_by_table) <= 1:
+            # A single-table model legitimately has no joins — not an error, so it
+            # must not trip `--fail-on ERROR`. (A worksheet/model over one table is
+            # a normal migration shape.)
+            findings.append(Finding("INFO","SINGLE_TABLE_NO_JOINS",
+                "<all tables>","Single-table model — no joins to infer (expected).",
+                "None — relationships only apply to multi-table models."))
+        else:
+            findings.append(Finding("ERROR","NO_SHARED_KEYS",
+                "<all tables>","No shared ID column across any two tables — model will have no joins.",
+                "Provide ERD via --erd or ensure FK columns use consistent names."))
     # Bridge table detection — all columns are *_ID
     for t, cols in columns_by_table.items():
         non_audit = [c for c in cols if not c.is_audit]
