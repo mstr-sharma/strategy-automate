@@ -24,6 +24,7 @@ Supported build keys:
 destination_folder: {MSTR_DEST_FOLDER_ID}
 attr_cols: [CUSTOMER_ID]
 metric_cols: [REVENUE, COST]
+skip_cols: [ORDERS.O_COMMENT]   # TABLE.COLUMN or bare column; excluded from the model (stays physical, not modeled)
 skip_relationships: false
 security_filters:
   - name: EMEA Only
