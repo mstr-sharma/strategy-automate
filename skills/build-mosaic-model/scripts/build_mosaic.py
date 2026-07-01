@@ -181,6 +181,20 @@ ID_COLUMN_SUFFIXES = ("_ID", "ID", "_KEY", "KEY", "_CD", "_CODE", "CODE",
                       "_SK", "SK")
 NATURAL_NUMERIC_DIMS = ("YEAR", "MONTH", "QUARTER", "QTR", "WEEK", "DAY", "FISCAL")
 
+# Bare (no-underscore) suffix matching in _looks_like_identifier_col is
+# inherently ambiguous: a column ending in the letters "ID"/"NO"/"KEY"/"SK"/etc.
+# might be a compact-style key (Ergast/Kaggle-style "driverid", "raceid") or
+# might just be an ordinary English word that happens to end the same way.
+# Both readings can't be right at once, and there's no way to tell from the
+# suffix alone -- fixing the false negative (compact keys) necessarily risks
+# reintroducing false positives on ordinary words. This is a denylist of
+# observed real column names that are NOT identifiers despite matching a bare
+# suffix; "grid" (F1 starting-grid position, an averageable metric) was
+# discovered by diffing a built model's metrics against its source schema.
+# Not exhaustive -- for anything else the heuristic gets wrong, override with
+# --attr-cols / --metric-cols (build) or the attributes/metrics dictionary.
+BARE_ID_SUFFIX_FALSE_POSITIVES = {"GRID", "PAID", "VOID", "AVOID"}
+
 import re as _re
 
 def friendly_col(col: str) -> str:
@@ -846,16 +860,28 @@ def _normalize_catalog_datatype(dt: dict | None) -> dict | None:
     store them as-is. Idempotent; safe to call on already-clean dataTypes.
 
     - scale == INT32_MIN  → 0 (universal safe default; integers and strings
-      both expect 0 from the engine's POV)
+      both expect 0 from the engine's POV) -- EXCEPT for `decimal`, see below.
     - precision == INT32_MIN → 0 (rare; only seen on unknown-precision probes)
     - type == 'date' and scale is missing or negative → 0 (the catalog reports
       scale=-1 for dates which some preview paths reject)
     Other fields pass through untouched.
+
+    `decimal` scale is deliberately NOT zeroed here. An INT32_MIN scale on a
+    decimal column usually means the warehouse genuinely could not report a
+    fixed scale (e.g. an unconstrained Postgres NUMERIC column, whose rows may
+    mix whole numbers and fractional ones -- an F1 "points" column with
+    half-point rows, like 4820.5, is a real observed case). Zeroing it here
+    would make it indistinguishable from a *confirmed* scale of 0, and
+    schema_object_translator.normalize_datatype() maps confirmed-scale-0
+    decimals to `int64`, which cannot hold a fractional value -- silently
+    discarding real data with no error. Leaving the sentinel in place lets
+    normalize_datatype() tell "confirmed whole-number decimal" apart from
+    "unknown scale" and pick a type that can safely hold either (`double`).
     """
     if not isinstance(dt, dict):
         return dt
     out = dict(dt)
-    if out.get("scale") == _DATATYPE_INT_MIN_SENTINEL:
+    if out.get("scale") == _DATATYPE_INT_MIN_SENTINEL and out.get("type") != "decimal":
         out["scale"] = 0
     if out.get("precision") == _DATATYPE_INT_MIN_SENTINEL:
         out["precision"] = 0
@@ -889,6 +915,8 @@ def _col_dtype(c: dict) -> str:
 
 def _looks_like_identifier_col(name: str) -> bool:
     upper = (name or "").upper()
+    if upper in BARE_ID_SUFFIX_FALSE_POSITIVES:
+        return False
     return any(upper.endswith(suffix) or upper == suffix.lstrip("_") for suffix in ID_COLUMN_SUFFIXES)
 
 
@@ -1490,6 +1518,58 @@ def resolve_dest_folder(m: "MSTR", dest: str) -> str:
         "folder id.)")
 
 
+# Identify each table's "entity key" column: the column whose prefix matches the
+# table's singular form (PRODUCTS -> PRODUCT_*, OPPORTUNITIES -> OPPORTUNITY_*).
+# Fallback: the first *_ID column. Hoisted to module level (out of cmd_build's
+# closure) so it's independently unit-testable -- see
+# tests/test_build_mosaic_classification.py.
+def _strip_prefix(tname: str) -> str:
+    return _re.sub(r"^[A-Z]+(?:_[A-Z]+)*_\d{6,}(?:_\d+)*_", "", tname)
+
+
+def _entity_prefix(tname: str) -> str:
+    # Uppercase before the plural-stripping checks below: they compare against
+    # literal uppercase suffixes ("IES", "S", ...), so a lowercase table name
+    # (the normal case for Postgres, e.g. "drivers") previously never matched
+    # any of them and was returned still-plural ("DRIVERS" instead of
+    # "DRIVER") after the final .upper() in _entity_candidates. That silently
+    # broke entity-key detection for every lowercase-named table, independent
+    # of the separate underscore-suffix gap fixed in _find_entity_key.
+    base = _strip_prefix(tname).split("_")[-1].upper()
+    if base.endswith("IES"): return base[:-3] + "Y"
+    if base.endswith("SES"): return base[:-2]
+    if base.endswith("S") and len(base) > 2: return base[:-1]
+    return base
+
+
+def _entity_candidates(tname: str) -> list[str]:
+    """Possible PK-column prefixes for a table: singular, acronym, full-compound-singular."""
+    stripped = _strip_prefix(tname)
+    words = stripped.split("_")
+    cands = [_entity_prefix(tname).upper()]
+    if len(words) >= 2:
+        # acronym: first letter of each word, e.g. PURCHASE_ORDERS -> PO
+        cands.append("".join(w[0] for w in words if w).upper())
+    return list(dict.fromkeys(cands))
+
+
+def _find_entity_key(tname: str, names: list[str]) -> str | None:
+    """Find the entity/primary-key column for `tname` among its column `names`
+    (already upper-cased). Tries underscored suffixes first (DRIVER_ID, the
+    more explicit convention), then the compact no-separator form (DRIVERID),
+    which is common in public/Kaggle-style datasets (e.g. the Ergast F1 schema:
+    driverid, raceid, constructorid). Before this fallback existed, compact
+    naming was never matched, silently disabling entity-key detection --
+    and therefore cross-table conformance -- for every table in such a schema.
+    """
+    for pref in _entity_candidates(tname):
+        for suf in ["_ID", "_NUMBER", "_KEY", "_NO", "ID", "NUMBER", "KEY", "NO"]:
+            target = f"{pref}{suf}"
+            if target in names:
+                return target
+    return None
+
+
 def cmd_build(m: MSTR, args):
     m.login(identity=True)
     sources = [parse_source(s) for s in args.source]
@@ -1638,41 +1718,11 @@ def cmd_build(m: MSTR, args):
                 dt = c.get("dataType") or {}
                 col_tables.setdefault(cn, []).append({"table": tname, "table_id": tid, "dtype": dt})
 
-    # Identify each table's "entity key" column: the column whose prefix matches the
-    # table's singular form (PRODUCTS -> PRODUCT_*, OPPORTUNITIES -> OPPORTUNITY_*).
-    # Fallback: the first *_ID column.
-    def _strip_prefix(tname: str) -> str:
-        return _re.sub(r"^[A-Z]+(?:_[A-Z]+)*_\d{6,}(?:_\d+)*_", "", tname)
-
-    def _entity_prefix(tname: str) -> str:
-        base = _strip_prefix(tname).split("_")[-1]
-        if base.endswith("IES"): return base[:-3] + "Y"
-        if base.endswith("SES"): return base[:-2]
-        if base.endswith("S") and len(base) > 2: return base[:-1]
-        return base
-
-    def _entity_candidates(tname: str) -> list[str]:
-        """Possible PK-column prefixes for a table: singular, acronym, full-compound-singular."""
-        stripped = _strip_prefix(tname)
-        words = stripped.split("_")
-        cands = [_entity_prefix(tname).upper()]
-        if len(words) >= 2:
-            # acronym: first letter of each word, e.g. PURCHASE_ORDERS -> PO
-            cands.append("".join(w[0] for w in words if w).upper())
-        return list(dict.fromkeys(cands))
-
     table_entity_col = {}
     for key in table_id_map:
         _, _, tname = key
-        cands = _entity_candidates(tname)
         names = [((c.get("name") or c.get("columnName") or "").upper()) for c in table_cols_map[key]]
-        pk = None
-        for pref in cands:
-            for suf in ["_ID", "_NUMBER", "_KEY", "_NO"]:
-                target = f"{pref}{suf}"
-                if target in names:
-                    pk = target; break
-            if pk: break
+        pk = _find_entity_key(tname, names)
         if not pk:
             # Fallback: any *_ID / *_NUMBER / *_KEY not on the NOISE list
             for n in names:
