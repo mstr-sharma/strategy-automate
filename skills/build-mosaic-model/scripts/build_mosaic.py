@@ -1570,6 +1570,29 @@ def _find_entity_key(tname: str, names: list[str]) -> str | None:
     return None
 
 
+def _add_table_expression_to_form(forms: list[dict], tid: str, tname: str, cname: str) -> bool:
+    """Add a (table, column) expression to the ID-category form in `forms`
+    (mutates the form's expressions list in place), unless `tname` is already
+    covered. Pure/no I/O -- separated out so the merge logic used by both the
+    conform-by-name path and the post-build merge-attributes command is
+    independently unit-testable without mocking the REST session.
+
+    Returns True if the form now covers `tname` (whether just added or
+    already present), False if `forms` has no usable ID-category form.
+    """
+    idform = next((f for f in forms if f.get("category") == "ID"), forms[0] if forms else None)
+    if idform is None:
+        return False
+    exprs = idform.setdefault("expressions", [])
+    if any(t.get("name") == tname for e in exprs for t in e.get("tables", [])):
+        return True
+    exprs.append({
+        "expression": {"tokens": [{"type": "column_reference", "value": cname}]},
+        "tables": [{"objectId": tid, "subType": "logical_table", "name": tname}],
+    })
+    return True
+
+
 def cmd_build(m: MSTR, args):
     m.login(identity=True)
     sources = [parse_source(s) for s in args.source]
@@ -1871,7 +1894,40 @@ def cmd_build(m: MSTR, args):
         total_attrs += 1
         print(f"  + conformed dim '{name}' spans {len(occs)} tables", file=sys.stderr)
 
-    # 2) Descriptor attributes: one per remaining column, single-table
+    # 2) Descriptor attributes: one per remaining column, single-table --
+    # UNLESS the dictionary gives this table.column the same `name` as an
+    # attribute already created earlier in this loop (from a different
+    # table, possibly a differently-named column), in which case the
+    # documented conformance-by-identical-name behavior applies: append an
+    # expression to the EXISTING attribute instead of POSTing a duplicate.
+    # (feedback_mosaic_relationship_wiring.md step 2 describes this as the
+    # mechanism for conforming semantically-same-but-differently-named FKs,
+    # e.g. "primary_customer_id" and "customer_id" both given name:
+    # "Customer" -- verified against a real build that this previously did
+    # NOT happen: the second occurrence 400'd as a duplicate attribute name
+    # and was silently dropped, not merged.)
+    attrs_by_resolved_name: dict[str, dict] = {}   # lower(resolved name) -> {"id","table_id"}
+
+    def _append_expression_to_attribute(aid: str, tid: str, tname: str, cname: str) -> bool:
+        """Add a (table, column) expression to an existing attribute's ID form.
+        Must fetch with showExpressionAs=tokens first -- without it, pre-existing
+        expressions come back as read-only `text` with no `tokens`/`tree`, and
+        PATCHing the form back as-is fails with 8004ccde "the tree or token is
+        required for expression"."""
+        rr = m.get(f"/api/model/dataModels/{model_id}/attributes/{aid}?showExpressionAs=tokens")
+        if not rr.ok:
+            print(f"    WARN conform-by-name GET {aid}: {rr.status_code} {rr.text[:200]}", file=sys.stderr)
+            return False
+        cur = rr.json()
+        forms = cur.get("forms", [])
+        if not _add_table_expression_to_form(forms, tid, tname, cname):
+            return False
+        rp = m.patch(f"/api/model/dataModels/{model_id}/attributes/{aid}", json={"forms": forms})
+        if not rp.ok:
+            print(f"    WARN conform-by-name PATCH {aid}: {rp.status_code} {rp.text[:200]}", file=sys.stderr)
+            return False
+        return True
+
     for key, tid in table_id_map.items():
         inst_id, schema, tname = key
         cols = table_cols_map[key]
@@ -1889,6 +1945,16 @@ def cmd_build(m: MSTR, args):
             ov = _dict_override(f"{tname}.{cname}")
             if ov.get("name"): name = ov["name"]
             if ov.get("description"): desc = ov["description"]
+
+            existing = attrs_by_resolved_name.get(name.lower())
+            if existing:
+                if _append_expression_to_attribute(existing["id"], tid, tname, cname):
+                    created_attrs.setdefault(cname.lower(), []).append(
+                        {"id": existing["id"], "table": tname, "table_id": tid,
+                         "name": name, "role": "conformed_by_name"})
+                    print(f"  + conformed-by-name '{name}' += {tname}.{cname}", file=sys.stderr)
+                continue
+
             attr_body = {
                 "information": {"name": name, "description": desc},
                 "forms": [{
@@ -1913,6 +1979,7 @@ def cmd_build(m: MSTR, args):
                 m.s.patch(f"{m.base}/api/model/dataModels/{model_id}/attributes/{aid}",
                           json={"displays": {"reportDisplays":[{"id":f} for f in fids],
                                               "browseDisplays":[{"id":f} for f in fids]}})
+            attrs_by_resolved_name[name.lower()] = {"id": aid, "table_id": tid}
             created_attrs.setdefault(cname.lower(), []).append(
                 {"id": aid, "table": tname, "table_id": tid, "name": name, "role":"descriptor"})
             total_attrs += 1
@@ -2713,6 +2780,51 @@ def _list_model_tables(m: MSTR, model_id: str) -> dict:
     return by_name
 
 
+def _plan_attribute_merges(
+    pairs: list[tuple[str, str]],
+    by_tcol: dict[tuple[str, str], dict],
+    table_ids: dict[str, str],
+) -> tuple[list[tuple[dict, dict | None, str, str, str]], list[tuple[str, str]]]:
+    """Pure pre-flight validation for merge-attributes: given the requested
+    (child_ref, parent_ref) pairs and the model's current (table, column) ->
+    attribute / table -> id lookups, decide what can be merged and what must
+    be skipped. Separated out from cmd_merge_attributes (which does the
+    actual REST I/O) so this decision logic is independently unit-testable.
+
+    Returns (plan, skips):
+      plan  -- list of (parent_attr, child_attr_or_None, child_table, child_col, label).
+               child_attr is None when the child column never got an attribute
+               created at all (e.g. entity-key detection failed for its table).
+               There's nothing to merge/delete in that case, but the parent
+               can still gain the expression -- see cmd_merge_attributes'
+               docstring for why this matters for compact-key schemas.
+      skips -- list of (label, reason) for pairs that can't proceed at all.
+    """
+    plan: list[tuple[dict, dict | None, str, str, str]] = []
+    skips: list[tuple[str, str]] = []
+    for child_ref, parent_ref in pairs:
+        try:
+            ct, cc = child_ref.split(".", 1)
+            pt, pc = parent_ref.split(".", 1)
+        except ValueError:
+            skips.append((f"{child_ref} → {parent_ref}", "malformed pair (expected TABLE.COL on both sides)"))
+            continue
+        label = f"{pt}.{pc} += {ct}.{cc}"
+        parent = by_tcol.get((pt, pc))
+        child  = by_tcol.get((ct, cc))
+        if not parent:
+            skips.append((label, f"parent attribute for {pt}.{pc} not found"))
+            continue
+        if parent is child:
+            skips.append((label, "already conformed (parent and child resolve to same attribute)"))
+            continue
+        if ct not in table_ids:
+            skips.append((label, f"child table {ct!r} not in model"))
+            continue
+        plan.append((parent, child, ct, cc, label))
+    return plan, skips
+
+
 def cmd_merge_attributes(m: MSTR, args):
     """Conform differently-named FK columns by merging child expressions into
     the parent attribute.
@@ -2730,6 +2842,17 @@ def cmd_merge_attributes(m: MSTR, args):
     the child's table, then DELETEs the now-redundant child attribute. The
     result is a true Kimball conformed dimension: one attribute whose forms
     span the dim and every fact that FKs to it.
+
+    The child attribute does not have to already exist. If entity-key
+    detection failed for the child's table entirely (e.g. a compact-key
+    naming convention the build's heuristics didn't recognize), the child
+    column may never have gotten an attribute created at all -- it fails
+    outright with a duplicate-name error during build and is silently
+    dropped, so there is nothing to "merge from". In that case this command
+    still succeeds: it adds the expression straight to the parent and skips
+    only the (now moot) child-deletion step. Pre-flight output distinguishes
+    "merge" (child existed) from "add" (child never existed) so you can tell
+    which happened.
 
     Role-playing edge case: when the same fact table has two FKs to the same
     dim (e.g. `cs_sold_date_sk` AND `cs_ship_date_sk` both pointing at
@@ -2771,38 +2894,15 @@ def cmd_merge_attributes(m: MSTR, args):
                     if tn and col:
                         by_tcol[(tn, col)] = a
 
-    plan = []     # list of (parent_attr, child_attr, child_table_name, child_col, label)
-    skips = []    # (label, reason)
-    for child_ref, parent_ref in pairs:
-        try:
-            ct, cc = child_ref.split(".", 1)
-            pt, pc = parent_ref.split(".", 1)
-        except ValueError:
-            skips.append((f"{child_ref} → {parent_ref}", "malformed pair (expected TABLE.COL on both sides)"))
-            continue
-        label = f"{pt}.{pc} += {ct}.{cc}"
-        parent = by_tcol.get((pt, pc))
-        child  = by_tcol.get((ct, cc))
-        if not parent:
-            skips.append((label, f"parent attribute for {pt}.{pc} not found"))
-            continue
-        if not child:
-            skips.append((label, f"child attribute for {ct}.{cc} not found"))
-            continue
-        if parent is child:
-            skips.append((label, "already conformed (parent and child resolve to same attribute)"))
-            continue
-        if ct not in table_ids:
-            skips.append((label, f"child table {ct!r} not in model"))
-            continue
-        plan.append((parent, child, ct, cc, label))
+    plan, skips = _plan_attribute_merges(pairs, by_tcol, table_ids)
 
     print(f"→ merge-attributes plan: {len(plan)} to merge, {len(skips)} skipped pre-flight", file=sys.stderr)
     for label, reason in skips:
         print(f"  ✗ SKIP {label}: {reason}", file=sys.stderr)
     if args.dry_run:
         for _p, _c, _t, _col, label in plan:
-            print(f"  ✓ would merge {label}", file=sys.stderr)
+            verb = "would merge" if _c is not None else "would add (child never created)"
+            print(f"  ✓ {verb} {label}", file=sys.stderr)
         print("→ dry-run; exiting without writes", file=sys.stderr)
         return
     if not plan:
@@ -2815,7 +2915,9 @@ def cmd_merge_attributes(m: MSTR, args):
     try:
         for parent_attr, child_attr, child_table, child_col, label in plan:
             pid = (parent_attr.get("information") or {}).get("objectId")
-            cid = (child_attr.get("information")  or {}).get("objectId")
+            # child_attr is None when the child column never got an attribute
+            # created at all (see docstring); nothing to delete in that case.
+            cid = (child_attr.get("information") or {}).get("objectId") if child_attr else None
             # Re-fetch parent each iteration: prior merges in this changeset
             # mutate it, and the PATCH must include the cumulative forms list.
             parent_full = _fetch_attribute(m, model_id, pid)
@@ -2859,10 +2961,11 @@ def cmd_merge_attributes(m: MSTR, args):
                     continue
                 write_skips.append((label, f"PATCH parent: {format_mstr_error(r)}"))
                 continue
-            print(f"  + {label}", file=sys.stderr)
+            print(f"  + {label}" + ("" if cid else " (child never existed, nothing to delete)"),
+                  file=sys.stderr)
             ok += 1
-            # Delete the now-redundant child attribute.
-            if not args.keep_children:
+            # Delete the now-redundant child attribute -- only if one existed.
+            if cid and not args.keep_children:
                 dr = m.delete(f"/api/model/dataModels/{model_id}/attributes/{cid}?changesetId={cs}")
                 if dr.status_code in (200, 204):
                     deleted += 1
