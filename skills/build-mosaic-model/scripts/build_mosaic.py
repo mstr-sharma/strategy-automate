@@ -181,6 +181,20 @@ ID_COLUMN_SUFFIXES = ("_ID", "ID", "_KEY", "KEY", "_CD", "_CODE", "CODE",
                       "_SK", "SK")
 NATURAL_NUMERIC_DIMS = ("YEAR", "MONTH", "QUARTER", "QTR", "WEEK", "DAY", "FISCAL")
 
+# Bare (no-underscore) suffix matching in _looks_like_identifier_col is
+# inherently ambiguous: a column ending in the letters "ID"/"NO"/"KEY"/"SK"/etc.
+# might be a compact-style key (Ergast/Kaggle-style "driverid", "raceid") or
+# might just be an ordinary English word that happens to end the same way.
+# Both readings can't be right at once, and there's no way to tell from the
+# suffix alone -- fixing the false negative (compact keys) necessarily risks
+# reintroducing false positives on ordinary words. This is a denylist of
+# observed real column names that are NOT identifiers despite matching a bare
+# suffix; "grid" (F1 starting-grid position, an averageable metric) was
+# discovered by diffing a built model's metrics against its source schema.
+# Not exhaustive -- for anything else the heuristic gets wrong, override with
+# --attr-cols / --metric-cols (build) or the attributes/metrics dictionary.
+BARE_ID_SUFFIX_FALSE_POSITIVES = {"GRID", "PAID", "VOID", "AVOID"}
+
 import re as _re
 
 def friendly_col(col: str) -> str:
@@ -846,16 +860,28 @@ def _normalize_catalog_datatype(dt: dict | None) -> dict | None:
     store them as-is. Idempotent; safe to call on already-clean dataTypes.
 
     - scale == INT32_MIN  → 0 (universal safe default; integers and strings
-      both expect 0 from the engine's POV)
+      both expect 0 from the engine's POV) -- EXCEPT for `decimal`, see below.
     - precision == INT32_MIN → 0 (rare; only seen on unknown-precision probes)
     - type == 'date' and scale is missing or negative → 0 (the catalog reports
       scale=-1 for dates which some preview paths reject)
     Other fields pass through untouched.
+
+    `decimal` scale is deliberately NOT zeroed here. An INT32_MIN scale on a
+    decimal column usually means the warehouse genuinely could not report a
+    fixed scale (e.g. an unconstrained Postgres NUMERIC column, whose rows may
+    mix whole numbers and fractional ones -- an F1 "points" column with
+    half-point rows, like 4820.5, is a real observed case). Zeroing it here
+    would make it indistinguishable from a *confirmed* scale of 0, and
+    schema_object_translator.normalize_datatype() maps confirmed-scale-0
+    decimals to `int64`, which cannot hold a fractional value -- silently
+    discarding real data with no error. Leaving the sentinel in place lets
+    normalize_datatype() tell "confirmed whole-number decimal" apart from
+    "unknown scale" and pick a type that can safely hold either (`double`).
     """
     if not isinstance(dt, dict):
         return dt
     out = dict(dt)
-    if out.get("scale") == _DATATYPE_INT_MIN_SENTINEL:
+    if out.get("scale") == _DATATYPE_INT_MIN_SENTINEL and out.get("type") != "decimal":
         out["scale"] = 0
     if out.get("precision") == _DATATYPE_INT_MIN_SENTINEL:
         out["precision"] = 0
@@ -889,6 +915,8 @@ def _col_dtype(c: dict) -> str:
 
 def _looks_like_identifier_col(name: str) -> bool:
     upper = (name or "").upper()
+    if upper in BARE_ID_SUFFIX_FALSE_POSITIVES:
+        return False
     return any(upper.endswith(suffix) or upper == suffix.lstrip("_") for suffix in ID_COLUMN_SUFFIXES)
 
 
@@ -1131,6 +1159,31 @@ def put_relationships_merged(
 
 # ── Post-build topology validation ───────────────────────────────────────────
 
+def _attribute_expression_table_names(a: dict) -> set[str]:
+    """Distinct table names referenced across all of an attribute's
+    forms[].expressions[].tables[] -- i.e. every table this attribute is
+    directly expressed on, conformed or not. A set with 2+ entries means this
+    attribute IS the join path between those tables (the Kimball conformed-
+    dimension pattern), independent of whether a formal relationships[] entry
+    also exists.
+    """
+    names: set[str] = set()
+    for form in a.get("forms") or []:
+        for expr in form.get("expressions") or []:
+            for t in expr.get("tables") or []:
+                nm = t.get("name")
+                if nm:
+                    names.add(nm)
+    return names
+
+
+def _attribute_is_isolated(relationships: list, expression_table_names: set[str]) -> bool:
+    """An attribute has a valid join path if it has a formal relationship OR
+    its expressions span 2+ tables (conformed dimension). Isolated only when
+    neither is true. Pure predicate, extracted for direct unit testing."""
+    return not relationships and len(expression_table_names) < 2
+
+
 def post_build_validate_topology(
     m: MSTR,
     model_id: str,
@@ -1140,12 +1193,33 @@ def post_build_validate_topology(
     """Return a structured report on model topology health.
 
     Detects:
-      - Isolated attributes (no incoming + no outgoing relationships, on a
-        fact-like or expected table).
+      - Isolated attributes: no formal relationships[] AND no multi-table
+        expression coverage. Either one alone is a valid join path in
+        Mosaic (see reference_mosaic_relationship_archetypes.md /
+        feedback_mosaic_relationship_wiring.md) -- a conformed attribute
+        whose expressions span 2+ tables joins those tables with no
+        relationship object needed. A plain single-table descriptor with
+        neither is still reported; whether that's meaningful depends on
+        whether the attribute's table is fact-like (this function does not
+        currently filter by that -- see NOTE below).
       - Tables present in the model but with zero relationships, or absent
         when `expected_tables` is provided.
       - Numeric attributes whose only expression is on a fact-like table
         (likely misclassified — should probably be metrics).
+
+    NOTE (pre-existing, separate from the fix above): a plain single-table
+    dimension descriptor (e.g. "Circuit Country" on just the circuits table)
+    is expected to have neither relationships nor multi-table expressions --
+    it's a normal, self-contained descriptor, not a broken join. This
+    function's own docstring has long said isolated attributes are only
+    meaningful "on a fact-like or expected table", but the check does not
+    actually scope by that -- every attribute is evaluated regardless of its
+    table. In practice this only under-reports noise on schemas where
+    _is_fact_like's name-pattern heuristic (FACT/LINEITEM/DETAIL/REL/
+    TRANSACTIONS/ACTIVITY/EVENTS) doesn't match the fact tables' actual
+    names (it doesn't match "results", "lap_times", "pit_stops", etc. in the
+    F1 schema this was tested against), so it wasn't fixed here to avoid
+    conflating two independent, differently-evidenced problems in one change.
 
     Output shape:
       {"model_id": "...",
@@ -1187,7 +1261,20 @@ def post_build_validate_topology(
         table_name = lookup_name_map.get(aid, "")
         if table_name:
             by_table_rels[table_name] = by_table_rels.get(table_name, 0) + len(rels)
-        if not rels:
+        # A conformed attribute (one attribute with forms[].expressions[]
+        # spanning multiple tables) is an equally-valid join path in Mosaic --
+        # reference_mosaic_relationship_archetypes.md and
+        # feedback_mosaic_relationship_wiring.md both document this as the
+        # PRIMARY conformance mechanism, with formal relationships[] as the
+        # alternative for cases conformance can't express. Checking only
+        # `relationships` here (as this used to) flags every correctly-
+        # conformed attribute as isolated: verified on a real build where a
+        # Driver attribute spanning 7 tables via expressions, with zero
+        # relationships[] entries, was reported isolated even though a live
+        # Trino rollup query through it returned correct per-driver totals
+        # matching the source database exactly.
+        expr_tables = _attribute_expression_table_names(a)
+        if _attribute_is_isolated(rels, expr_tables):
             isolated.append({"id": aid, "name": nm, "table": table_name})
 
         # Numeric-attribute heuristic: if the column-name looks numeric/metric-y
@@ -1490,6 +1577,100 @@ def resolve_dest_folder(m: "MSTR", dest: str) -> str:
         "folder id.)")
 
 
+# Identify each table's "entity key" column: the column whose prefix matches the
+# table's singular form (PRODUCTS -> PRODUCT_*, OPPORTUNITIES -> OPPORTUNITY_*).
+# Fallback: the first *_ID column. Hoisted to module level (out of cmd_build's
+# closure) so it's independently unit-testable -- see
+# tests/test_build_mosaic_classification.py.
+def _strip_prefix(tname: str) -> str:
+    return _re.sub(r"^[A-Z]+(?:_[A-Z]+)*_\d{6,}(?:_\d+)*_", "", tname)
+
+
+def _entity_prefix(tname: str) -> str:
+    # Uppercase before the plural-stripping checks below: they compare against
+    # literal uppercase suffixes ("IES", "S", ...), so a lowercase table name
+    # (the normal case for Postgres, e.g. "drivers") previously never matched
+    # any of them and was returned still-plural ("DRIVERS" instead of
+    # "DRIVER") after the final .upper() in _entity_candidates. That silently
+    # broke entity-key detection for every lowercase-named table, independent
+    # of the separate underscore-suffix gap fixed in _find_entity_key.
+    base = _strip_prefix(tname).split("_")[-1].upper()
+    if base.endswith("IES"): return base[:-3] + "Y"
+    if base.endswith("SES"): return base[:-2]
+    if base.endswith("S") and len(base) > 2: return base[:-1]
+    return base
+
+
+def _entity_candidates(tname: str) -> list[str]:
+    """Possible PK-column prefixes for a table: singular, acronym, full-compound-singular.
+
+    Also includes the table name UN-singularized. _entity_prefix's plural
+    stripping is a blunt "ends in S -> strip it" heuristic and gets English's
+    many already-singular-but-ends-in-s nouns wrong (status, bias, campus,
+    atlas, virus, corps, ...) -- e.g. "status" -> "STATU", so "STATUSID"
+    would never even be tried as a candidate. Rather than hand-maintain a
+    denylist of exceptions (as done for the *_ID suffix ambiguity in
+    _looks_like_identifier_col), just try both forms and let
+    _find_entity_key's suffix search be the arbiter of which one is real:
+    at most one candidate can match an actual column, so trying an extra
+    wrong guess costs nothing.
+    """
+    stripped = _strip_prefix(tname)
+    words = stripped.split("_")
+    cands = [_entity_prefix(tname).upper(), stripped.upper()]
+    if len(words) >= 2:
+        # acronym: first letter of each word, e.g. PURCHASE_ORDERS -> PO
+        cands.append("".join(w[0] for w in words if w).upper())
+        # all words smashed together with no separator at all, e.g.
+        # driver_standings -> DRIVERSTANDINGS (+ID -> DRIVERSTANDINGSID).
+        # Same compact-naming convention as the single-word case (Finding 2
+        # above), just for a multi-word table name -- the Ergast schema's
+        # driver_standings/constructor_standings/constructor_results tables
+        # all use this exact pattern for their own surrogate key.
+        cands.append("".join(words).upper())
+    return list(dict.fromkeys(cands))
+
+
+def _find_entity_key(tname: str, names: list[str]) -> str | None:
+    """Find the entity/primary-key column for `tname` among its column `names`
+    (already upper-cased). Tries underscored suffixes first (DRIVER_ID, the
+    more explicit convention), then the compact no-separator form (DRIVERID),
+    which is common in public/Kaggle-style datasets (e.g. the Ergast F1 schema:
+    driverid, raceid, constructorid). Before this fallback existed, compact
+    naming was never matched, silently disabling entity-key detection --
+    and therefore cross-table conformance -- for every table in such a schema.
+    """
+    for pref in _entity_candidates(tname):
+        for suf in ["_ID", "_NUMBER", "_KEY", "_NO", "ID", "NUMBER", "KEY", "NO"]:
+            target = f"{pref}{suf}"
+            if target in names:
+                return target
+    return None
+
+
+def _add_table_expression_to_form(forms: list[dict], tid: str, tname: str, cname: str) -> bool:
+    """Add a (table, column) expression to the ID-category form in `forms`
+    (mutates the form's expressions list in place), unless `tname` is already
+    covered. Pure/no I/O -- separated out so the merge logic used by both the
+    conform-by-name path and the post-build merge-attributes command is
+    independently unit-testable without mocking the REST session.
+
+    Returns True if the form now covers `tname` (whether just added or
+    already present), False if `forms` has no usable ID-category form.
+    """
+    idform = next((f for f in forms if f.get("category") == "ID"), forms[0] if forms else None)
+    if idform is None:
+        return False
+    exprs = idform.setdefault("expressions", [])
+    if any(t.get("name") == tname for e in exprs for t in e.get("tables", [])):
+        return True
+    exprs.append({
+        "expression": {"tokens": [{"type": "column_reference", "value": cname}]},
+        "tables": [{"objectId": tid, "subType": "logical_table", "name": tname}],
+    })
+    return True
+
+
 def cmd_build(m: MSTR, args):
     m.login(identity=True)
     sources = [parse_source(s) for s in args.source]
@@ -1638,41 +1819,11 @@ def cmd_build(m: MSTR, args):
                 dt = c.get("dataType") or {}
                 col_tables.setdefault(cn, []).append({"table": tname, "table_id": tid, "dtype": dt})
 
-    # Identify each table's "entity key" column: the column whose prefix matches the
-    # table's singular form (PRODUCTS -> PRODUCT_*, OPPORTUNITIES -> OPPORTUNITY_*).
-    # Fallback: the first *_ID column.
-    def _strip_prefix(tname: str) -> str:
-        return _re.sub(r"^[A-Z]+(?:_[A-Z]+)*_\d{6,}(?:_\d+)*_", "", tname)
-
-    def _entity_prefix(tname: str) -> str:
-        base = _strip_prefix(tname).split("_")[-1]
-        if base.endswith("IES"): return base[:-3] + "Y"
-        if base.endswith("SES"): return base[:-2]
-        if base.endswith("S") and len(base) > 2: return base[:-1]
-        return base
-
-    def _entity_candidates(tname: str) -> list[str]:
-        """Possible PK-column prefixes for a table: singular, acronym, full-compound-singular."""
-        stripped = _strip_prefix(tname)
-        words = stripped.split("_")
-        cands = [_entity_prefix(tname).upper()]
-        if len(words) >= 2:
-            # acronym: first letter of each word, e.g. PURCHASE_ORDERS -> PO
-            cands.append("".join(w[0] for w in words if w).upper())
-        return list(dict.fromkeys(cands))
-
     table_entity_col = {}
     for key in table_id_map:
         _, _, tname = key
-        cands = _entity_candidates(tname)
         names = [((c.get("name") or c.get("columnName") or "").upper()) for c in table_cols_map[key]]
-        pk = None
-        for pref in cands:
-            for suf in ["_ID", "_NUMBER", "_KEY", "_NO"]:
-                target = f"{pref}{suf}"
-                if target in names:
-                    pk = target; break
-            if pk: break
+        pk = _find_entity_key(tname, names)
         if not pk:
             # Fallback: any *_ID / *_NUMBER / *_KEY not on the NOISE list
             for n in names:
@@ -1821,7 +1972,40 @@ def cmd_build(m: MSTR, args):
         total_attrs += 1
         print(f"  + conformed dim '{name}' spans {len(occs)} tables", file=sys.stderr)
 
-    # 2) Descriptor attributes: one per remaining column, single-table
+    # 2) Descriptor attributes: one per remaining column, single-table --
+    # UNLESS the dictionary gives this table.column the same `name` as an
+    # attribute already created earlier in this loop (from a different
+    # table, possibly a differently-named column), in which case the
+    # documented conformance-by-identical-name behavior applies: append an
+    # expression to the EXISTING attribute instead of POSTing a duplicate.
+    # (feedback_mosaic_relationship_wiring.md step 2 describes this as the
+    # mechanism for conforming semantically-same-but-differently-named FKs,
+    # e.g. "primary_customer_id" and "customer_id" both given name:
+    # "Customer" -- verified against a real build that this previously did
+    # NOT happen: the second occurrence 400'd as a duplicate attribute name
+    # and was silently dropped, not merged.)
+    attrs_by_resolved_name: dict[str, dict] = {}   # lower(resolved name) -> {"id","table_id"}
+
+    def _append_expression_to_attribute(aid: str, tid: str, tname: str, cname: str) -> bool:
+        """Add a (table, column) expression to an existing attribute's ID form.
+        Must fetch with showExpressionAs=tokens first -- without it, pre-existing
+        expressions come back as read-only `text` with no `tokens`/`tree`, and
+        PATCHing the form back as-is fails with 8004ccde "the tree or token is
+        required for expression"."""
+        rr = m.get(f"/api/model/dataModels/{model_id}/attributes/{aid}?showExpressionAs=tokens")
+        if not rr.ok:
+            print(f"    WARN conform-by-name GET {aid}: {rr.status_code} {rr.text[:200]}", file=sys.stderr)
+            return False
+        cur = rr.json()
+        forms = cur.get("forms", [])
+        if not _add_table_expression_to_form(forms, tid, tname, cname):
+            return False
+        rp = m.patch(f"/api/model/dataModels/{model_id}/attributes/{aid}", json={"forms": forms})
+        if not rp.ok:
+            print(f"    WARN conform-by-name PATCH {aid}: {rp.status_code} {rp.text[:200]}", file=sys.stderr)
+            return False
+        return True
+
     for key, tid in table_id_map.items():
         inst_id, schema, tname = key
         cols = table_cols_map[key]
@@ -1839,6 +2023,16 @@ def cmd_build(m: MSTR, args):
             ov = _dict_override(f"{tname}.{cname}")
             if ov.get("name"): name = ov["name"]
             if ov.get("description"): desc = ov["description"]
+
+            existing = attrs_by_resolved_name.get(name.lower())
+            if existing:
+                if _append_expression_to_attribute(existing["id"], tid, tname, cname):
+                    created_attrs.setdefault(cname.lower(), []).append(
+                        {"id": existing["id"], "table": tname, "table_id": tid,
+                         "name": name, "role": "conformed_by_name"})
+                    print(f"  + conformed-by-name '{name}' += {tname}.{cname}", file=sys.stderr)
+                continue
+
             attr_body = {
                 "information": {"name": name, "description": desc},
                 "forms": [{
@@ -1863,6 +2057,7 @@ def cmd_build(m: MSTR, args):
                 m.s.patch(f"{m.base}/api/model/dataModels/{model_id}/attributes/{aid}",
                           json={"displays": {"reportDisplays":[{"id":f} for f in fids],
                                               "browseDisplays":[{"id":f} for f in fids]}})
+            attrs_by_resolved_name[name.lower()] = {"id": aid, "table_id": tid}
             created_attrs.setdefault(cname.lower(), []).append(
                 {"id": aid, "table": tname, "table_id": tid, "name": name, "role":"descriptor"})
             total_attrs += 1
@@ -2663,6 +2858,51 @@ def _list_model_tables(m: MSTR, model_id: str) -> dict:
     return by_name
 
 
+def _plan_attribute_merges(
+    pairs: list[tuple[str, str]],
+    by_tcol: dict[tuple[str, str], dict],
+    table_ids: dict[str, str],
+) -> tuple[list[tuple[dict, dict | None, str, str, str]], list[tuple[str, str]]]:
+    """Pure pre-flight validation for merge-attributes: given the requested
+    (child_ref, parent_ref) pairs and the model's current (table, column) ->
+    attribute / table -> id lookups, decide what can be merged and what must
+    be skipped. Separated out from cmd_merge_attributes (which does the
+    actual REST I/O) so this decision logic is independently unit-testable.
+
+    Returns (plan, skips):
+      plan  -- list of (parent_attr, child_attr_or_None, child_table, child_col, label).
+               child_attr is None when the child column never got an attribute
+               created at all (e.g. entity-key detection failed for its table).
+               There's nothing to merge/delete in that case, but the parent
+               can still gain the expression -- see cmd_merge_attributes'
+               docstring for why this matters for compact-key schemas.
+      skips -- list of (label, reason) for pairs that can't proceed at all.
+    """
+    plan: list[tuple[dict, dict | None, str, str, str]] = []
+    skips: list[tuple[str, str]] = []
+    for child_ref, parent_ref in pairs:
+        try:
+            ct, cc = child_ref.split(".", 1)
+            pt, pc = parent_ref.split(".", 1)
+        except ValueError:
+            skips.append((f"{child_ref} → {parent_ref}", "malformed pair (expected TABLE.COL on both sides)"))
+            continue
+        label = f"{pt}.{pc} += {ct}.{cc}"
+        parent = by_tcol.get((pt, pc))
+        child  = by_tcol.get((ct, cc))
+        if not parent:
+            skips.append((label, f"parent attribute for {pt}.{pc} not found"))
+            continue
+        if parent is child:
+            skips.append((label, "already conformed (parent and child resolve to same attribute)"))
+            continue
+        if ct not in table_ids:
+            skips.append((label, f"child table {ct!r} not in model"))
+            continue
+        plan.append((parent, child, ct, cc, label))
+    return plan, skips
+
+
 def cmd_merge_attributes(m: MSTR, args):
     """Conform differently-named FK columns by merging child expressions into
     the parent attribute.
@@ -2680,6 +2920,17 @@ def cmd_merge_attributes(m: MSTR, args):
     the child's table, then DELETEs the now-redundant child attribute. The
     result is a true Kimball conformed dimension: one attribute whose forms
     span the dim and every fact that FKs to it.
+
+    The child attribute does not have to already exist. If entity-key
+    detection failed for the child's table entirely (e.g. a compact-key
+    naming convention the build's heuristics didn't recognize), the child
+    column may never have gotten an attribute created at all -- it fails
+    outright with a duplicate-name error during build and is silently
+    dropped, so there is nothing to "merge from". In that case this command
+    still succeeds: it adds the expression straight to the parent and skips
+    only the (now moot) child-deletion step. Pre-flight output distinguishes
+    "merge" (child existed) from "add" (child never existed) so you can tell
+    which happened.
 
     Role-playing edge case: when the same fact table has two FKs to the same
     dim (e.g. `cs_sold_date_sk` AND `cs_ship_date_sk` both pointing at
@@ -2721,38 +2972,15 @@ def cmd_merge_attributes(m: MSTR, args):
                     if tn and col:
                         by_tcol[(tn, col)] = a
 
-    plan = []     # list of (parent_attr, child_attr, child_table_name, child_col, label)
-    skips = []    # (label, reason)
-    for child_ref, parent_ref in pairs:
-        try:
-            ct, cc = child_ref.split(".", 1)
-            pt, pc = parent_ref.split(".", 1)
-        except ValueError:
-            skips.append((f"{child_ref} → {parent_ref}", "malformed pair (expected TABLE.COL on both sides)"))
-            continue
-        label = f"{pt}.{pc} += {ct}.{cc}"
-        parent = by_tcol.get((pt, pc))
-        child  = by_tcol.get((ct, cc))
-        if not parent:
-            skips.append((label, f"parent attribute for {pt}.{pc} not found"))
-            continue
-        if not child:
-            skips.append((label, f"child attribute for {ct}.{cc} not found"))
-            continue
-        if parent is child:
-            skips.append((label, "already conformed (parent and child resolve to same attribute)"))
-            continue
-        if ct not in table_ids:
-            skips.append((label, f"child table {ct!r} not in model"))
-            continue
-        plan.append((parent, child, ct, cc, label))
+    plan, skips = _plan_attribute_merges(pairs, by_tcol, table_ids)
 
     print(f"→ merge-attributes plan: {len(plan)} to merge, {len(skips)} skipped pre-flight", file=sys.stderr)
     for label, reason in skips:
         print(f"  ✗ SKIP {label}: {reason}", file=sys.stderr)
     if args.dry_run:
         for _p, _c, _t, _col, label in plan:
-            print(f"  ✓ would merge {label}", file=sys.stderr)
+            verb = "would merge" if _c is not None else "would add (child never created)"
+            print(f"  ✓ {verb} {label}", file=sys.stderr)
         print("→ dry-run; exiting without writes", file=sys.stderr)
         return
     if not plan:
@@ -2765,7 +2993,9 @@ def cmd_merge_attributes(m: MSTR, args):
     try:
         for parent_attr, child_attr, child_table, child_col, label in plan:
             pid = (parent_attr.get("information") or {}).get("objectId")
-            cid = (child_attr.get("information")  or {}).get("objectId")
+            # child_attr is None when the child column never got an attribute
+            # created at all (see docstring); nothing to delete in that case.
+            cid = (child_attr.get("information") or {}).get("objectId") if child_attr else None
             # Re-fetch parent each iteration: prior merges in this changeset
             # mutate it, and the PATCH must include the cumulative forms list.
             parent_full = _fetch_attribute(m, model_id, pid)
@@ -2809,10 +3039,11 @@ def cmd_merge_attributes(m: MSTR, args):
                     continue
                 write_skips.append((label, f"PATCH parent: {format_mstr_error(r)}"))
                 continue
-            print(f"  + {label}", file=sys.stderr)
+            print(f"  + {label}" + ("" if cid else " (child never existed, nothing to delete)"),
+                  file=sys.stderr)
             ok += 1
-            # Delete the now-redundant child attribute.
-            if not args.keep_children:
+            # Delete the now-redundant child attribute -- only if one existed.
+            if cid and not args.keep_children:
                 dr = m.delete(f"/api/model/dataModels/{model_id}/attributes/{cid}?changesetId={cs}")
                 if dr.status_code in (200, 204):
                     deleted += 1

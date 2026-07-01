@@ -51,7 +51,19 @@ def normalize_datatype(dt: Any) -> dict:
         return {"type": "integer", "precision": 2, "scale": 0}
 
     if src_type == "decimal":
-        if scale in (0, None, _MIN_INT_SENTINEL):
+        if scale == _MIN_INT_SENTINEL:
+            # Scale is genuinely unknown -- the warehouse catalog probe could not
+            # report one (e.g. an unconstrained Postgres NUMERIC column, whose
+            # actual rows may be fractional despite no declared scale; a real F1
+            # "points" column holds values like 4820.5). Do NOT treat this the
+            # same as a *confirmed* scale of 0: int64 cannot hold a fractional
+            # value and would silently truncate it. `double` safely represents
+            # both whole and fractional values, so prefer it whenever the scale
+            # could not be determined.
+            return {"type": "double",
+                    "precision": precision if isinstance(precision, int) and precision > 0 else 38,
+                    "scale": 4}
+        if scale in (0, None):
             return {"type": "int64", "precision": 8, "scale": 0}
         # decimal(P,S>0) must become double(P,S) or the in-memory publish stalls
         # with iServerCode -2147212544 (reference_mosaic_publish_path.md).
