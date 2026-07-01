@@ -199,6 +199,31 @@ class BuildMosaicClassificationTests(unittest.TestCase):
         self.assertEqual([c["name"] for c in attrs], ["driverid", "raceid", "resultid"])
         self.assertEqual(metrics, [])
 
+    def test_add_table_expression_to_form_appends_new_table(self):
+        forms = [{
+            "id": "F1", "category": "ID",
+            "expressions": [{
+                "expression": {"tokens": [{"type": "column_reference", "value": "primary_customer_id"}]},
+                "tables": [{"objectId": "T1", "subType": "logical_table", "name": "orders"}],
+            }],
+        }]
+        added = bm._add_table_expression_to_form(forms, "T2", "invoices", "customer_id")
+        self.assertTrue(added)
+        exprs = forms[0]["expressions"]
+        self.assertEqual(len(exprs), 2)
+        self.assertEqual(exprs[1]["tables"][0]["name"], "invoices")
+        self.assertEqual(exprs[1]["expression"]["tokens"][0]["value"], "customer_id")
+
+    def test_add_table_expression_to_form_is_idempotent(self):
+        # Calling it twice for the same table must not add a duplicate expression.
+        forms = [{"id": "F1", "category": "ID", "expressions": []}]
+        bm._add_table_expression_to_form(forms, "T1", "orders", "customer_id")
+        bm._add_table_expression_to_form(forms, "T1", "orders", "customer_id")
+        self.assertEqual(len(forms[0]["expressions"]), 1)
+
+    def test_add_table_expression_to_form_returns_false_with_no_forms(self):
+        self.assertFalse(bm._add_table_expression_to_form([], "T1", "orders", "customer_id"))
+
 
 if __name__ == "__main__":
     unittest.main()
