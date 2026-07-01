@@ -46,9 +46,22 @@ class TestNormalizeDatatype(unittest.TestCase):
         out = sot.normalize_datatype({"type": "decimal", "precision": 12, "scale": 2})
         self.assertEqual(out, {"type": "double", "precision": 12, "scale": 2})
 
-    def test_decimal_sentinel_scale_becomes_int64(self):
+    def test_decimal_sentinel_scale_becomes_double_not_int64(self):
+        # Regression test: an F1 dataset's `points` column (Postgres unconstrained
+        # NUMERIC, real values include half-points like 4820.5) reports scale as
+        # the warehouse-catalog INT32_MIN sentinel because there is no single fixed
+        # scale to report. Collapsing that straight to int64 (as this used to do)
+        # silently discards every fractional value with no error anywhere in the
+        # pipeline -- confirmed by diffing a built model's totals against the
+        # source database (4820 in Mosaic vs 4820.5 in Postgres). A confirmed
+        # scale of 0 (see test_decimal_scale_zero) is a different, unambiguous
+        # case and correctly stays int64; only the *unknown*-scale case changes.
         out = sot.normalize_datatype({"type": "decimal", "precision": 38, "scale": MIN_INT})
-        self.assertEqual(out, {"type": "int64", "precision": 8, "scale": 0})
+        self.assertEqual(out, {"type": "double", "precision": 38, "scale": 4})
+
+    def test_decimal_sentinel_scale_with_bad_precision_defaults_precision_too(self):
+        out = sot.normalize_datatype({"type": "decimal", "precision": 0, "scale": MIN_INT})
+        self.assertEqual(out, {"type": "double", "precision": 38, "scale": 4})
 
     def test_decimal_bad_precision_defaults_to_38(self):
         out = sot.normalize_datatype({"type": "decimal", "precision": -1, "scale": 4})
