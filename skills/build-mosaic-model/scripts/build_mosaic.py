@@ -1159,6 +1159,31 @@ def put_relationships_merged(
 
 # ── Post-build topology validation ───────────────────────────────────────────
 
+def _attribute_expression_table_names(a: dict) -> set[str]:
+    """Distinct table names referenced across all of an attribute's
+    forms[].expressions[].tables[] -- i.e. every table this attribute is
+    directly expressed on, conformed or not. A set with 2+ entries means this
+    attribute IS the join path between those tables (the Kimball conformed-
+    dimension pattern), independent of whether a formal relationships[] entry
+    also exists.
+    """
+    names: set[str] = set()
+    for form in a.get("forms") or []:
+        for expr in form.get("expressions") or []:
+            for t in expr.get("tables") or []:
+                nm = t.get("name")
+                if nm:
+                    names.add(nm)
+    return names
+
+
+def _attribute_is_isolated(relationships: list, expression_table_names: set[str]) -> bool:
+    """An attribute has a valid join path if it has a formal relationship OR
+    its expressions span 2+ tables (conformed dimension). Isolated only when
+    neither is true. Pure predicate, extracted for direct unit testing."""
+    return not relationships and len(expression_table_names) < 2
+
+
 def post_build_validate_topology(
     m: MSTR,
     model_id: str,
@@ -1168,12 +1193,33 @@ def post_build_validate_topology(
     """Return a structured report on model topology health.
 
     Detects:
-      - Isolated attributes (no incoming + no outgoing relationships, on a
-        fact-like or expected table).
+      - Isolated attributes: no formal relationships[] AND no multi-table
+        expression coverage. Either one alone is a valid join path in
+        Mosaic (see reference_mosaic_relationship_archetypes.md /
+        feedback_mosaic_relationship_wiring.md) -- a conformed attribute
+        whose expressions span 2+ tables joins those tables with no
+        relationship object needed. A plain single-table descriptor with
+        neither is still reported; whether that's meaningful depends on
+        whether the attribute's table is fact-like (this function does not
+        currently filter by that -- see NOTE below).
       - Tables present in the model but with zero relationships, or absent
         when `expected_tables` is provided.
       - Numeric attributes whose only expression is on a fact-like table
         (likely misclassified — should probably be metrics).
+
+    NOTE (pre-existing, separate from the fix above): a plain single-table
+    dimension descriptor (e.g. "Circuit Country" on just the circuits table)
+    is expected to have neither relationships nor multi-table expressions --
+    it's a normal, self-contained descriptor, not a broken join. This
+    function's own docstring has long said isolated attributes are only
+    meaningful "on a fact-like or expected table", but the check does not
+    actually scope by that -- every attribute is evaluated regardless of its
+    table. In practice this only under-reports noise on schemas where
+    _is_fact_like's name-pattern heuristic (FACT/LINEITEM/DETAIL/REL/
+    TRANSACTIONS/ACTIVITY/EVENTS) doesn't match the fact tables' actual
+    names (it doesn't match "results", "lap_times", "pit_stops", etc. in the
+    F1 schema this was tested against), so it wasn't fixed here to avoid
+    conflating two independent, differently-evidenced problems in one change.
 
     Output shape:
       {"model_id": "...",
@@ -1215,7 +1261,20 @@ def post_build_validate_topology(
         table_name = lookup_name_map.get(aid, "")
         if table_name:
             by_table_rels[table_name] = by_table_rels.get(table_name, 0) + len(rels)
-        if not rels:
+        # A conformed attribute (one attribute with forms[].expressions[]
+        # spanning multiple tables) is an equally-valid join path in Mosaic --
+        # reference_mosaic_relationship_archetypes.md and
+        # feedback_mosaic_relationship_wiring.md both document this as the
+        # PRIMARY conformance mechanism, with formal relationships[] as the
+        # alternative for cases conformance can't express. Checking only
+        # `relationships` here (as this used to) flags every correctly-
+        # conformed attribute as isolated: verified on a real build where a
+        # Driver attribute spanning 7 tables via expressions, with zero
+        # relationships[] entries, was reported isolated even though a live
+        # Trino rollup query through it returned correct per-driver totals
+        # matching the source database exactly.
+        expr_tables = _attribute_expression_table_names(a)
+        if _attribute_is_isolated(rels, expr_tables):
             isolated.append({"id": aid, "name": nm, "table": table_name})
 
         # Numeric-attribute heuristic: if the column-name looks numeric/metric-y

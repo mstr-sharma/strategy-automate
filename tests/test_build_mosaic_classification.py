@@ -224,6 +224,54 @@ class BuildMosaicClassificationTests(unittest.TestCase):
     def test_add_table_expression_to_form_returns_false_with_no_forms(self):
         self.assertFalse(bm._add_table_expression_to_form([], "T1", "orders", "customer_id"))
 
+    def test_attribute_expression_table_names_single_table(self):
+        attr = {
+            "forms": [{
+                "category": "ID",
+                "expressions": [{
+                    "expression": {"tokens": [{"type": "column_reference", "value": "forename"}]},
+                    "tables": [{"objectId": "T1", "name": "drivers"}],
+                }],
+            }]
+        }
+        self.assertEqual(bm._attribute_expression_table_names(attr), {"drivers"})
+
+    def test_attribute_expression_table_names_multi_table_conformed(self):
+        # This is the shape of a correctly-conformed cross-table entity
+        # attribute (e.g. "Driver" spanning drivers + every fact table with
+        # a driverid column) -- no relationships[] entry, purely expressed
+        # via multiple table expressions on one attribute.
+        attr = {
+            "forms": [{
+                "category": "ID",
+                "expressions": [
+                    {"expression": {"tokens": []}, "tables": [{"name": "drivers"}]},
+                    {"expression": {"tokens": []}, "tables": [{"name": "results"}]},
+                    {"expression": {"tokens": []}, "tables": [{"name": "sprint_results"}]},
+                ],
+            }]
+        }
+        self.assertEqual(
+            bm._attribute_expression_table_names(attr),
+            {"drivers", "results", "sprint_results"},
+        )
+
+    def test_attribute_expression_table_names_handles_missing_forms(self):
+        self.assertEqual(bm._attribute_expression_table_names({}), set())
+        self.assertEqual(bm._attribute_expression_table_names({"forms": []}), set())
+
+    def test_attribute_is_isolated_true_with_neither_signal(self):
+        self.assertTrue(bm._attribute_is_isolated([], set()))
+        self.assertTrue(bm._attribute_is_isolated([], {"drivers"}))  # single table
+
+    def test_attribute_is_isolated_false_with_formal_relationship(self):
+        self.assertFalse(bm._attribute_is_isolated([{"parent": "x"}], set()))
+
+    def test_attribute_is_isolated_false_with_conformed_expressions(self):
+        # The regression case: no formal relationships, but the attribute's
+        # own expressions already span multiple tables -- this IS the join.
+        self.assertFalse(bm._attribute_is_isolated([], {"drivers", "results"}))
+
 
 if __name__ == "__main__":
     unittest.main()
