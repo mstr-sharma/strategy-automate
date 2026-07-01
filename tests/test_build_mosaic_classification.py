@@ -143,6 +143,31 @@ class BuildMosaicClassificationTests(unittest.TestCase):
             "CONSTRUCTORID",
         )
 
+    def test_find_entity_key_already_singular_word_ending_in_s(self):
+        # "status" is already singular but ends in "s"; the blunt "ends in
+        # S -> strip it" pluralization heuristic used to mangle it to "STATU",
+        # so "STATUSID" was never even tried as a candidate. Found while
+        # writing the combined Ergast fixture test -- not caught by any
+        # single-function unit test on its own, since drivers/constructors
+        # don't happen to hit this particular English irregularity.
+        self.assertEqual(bm._find_entity_key("status", ["STATUSID", "STATUS"]), "STATUSID")
+
+    def test_find_entity_key_multiword_table_compact_key(self):
+        # driver_standings' own surrogate key smashes ALL words together
+        # with no separator (driverstandingsid) -- not just the last word
+        # compact (which the single-word fix alone would try), and not
+        # preserving the table's own underscore (driver_standingsid would
+        # also not match). Real Ergast schema convention: same pattern for
+        # constructor_standings/constructor_results.
+        self.assertEqual(
+            bm._find_entity_key("driver_standings", ["DRIVERSTANDINGSID", "DRIVERID", "POINTS"]),
+            "DRIVERSTANDINGSID",
+        )
+        self.assertEqual(
+            bm._find_entity_key("constructor_results", ["CONSTRUCTORRESULTSID", "POINTS"]),
+            "CONSTRUCTORRESULTSID",
+        )
+
     def test_find_entity_key_lowercase_table_name(self):
         # Postgres table names come back lowercase. _entity_prefix's
         # plural-stripping used to compare against literal uppercase suffixes

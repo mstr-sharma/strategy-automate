@@ -1602,13 +1602,32 @@ def _entity_prefix(tname: str) -> str:
 
 
 def _entity_candidates(tname: str) -> list[str]:
-    """Possible PK-column prefixes for a table: singular, acronym, full-compound-singular."""
+    """Possible PK-column prefixes for a table: singular, acronym, full-compound-singular.
+
+    Also includes the table name UN-singularized. _entity_prefix's plural
+    stripping is a blunt "ends in S -> strip it" heuristic and gets English's
+    many already-singular-but-ends-in-s nouns wrong (status, bias, campus,
+    atlas, virus, corps, ...) -- e.g. "status" -> "STATU", so "STATUSID"
+    would never even be tried as a candidate. Rather than hand-maintain a
+    denylist of exceptions (as done for the *_ID suffix ambiguity in
+    _looks_like_identifier_col), just try both forms and let
+    _find_entity_key's suffix search be the arbiter of which one is real:
+    at most one candidate can match an actual column, so trying an extra
+    wrong guess costs nothing.
+    """
     stripped = _strip_prefix(tname)
     words = stripped.split("_")
-    cands = [_entity_prefix(tname).upper()]
+    cands = [_entity_prefix(tname).upper(), stripped.upper()]
     if len(words) >= 2:
         # acronym: first letter of each word, e.g. PURCHASE_ORDERS -> PO
         cands.append("".join(w[0] for w in words if w).upper())
+        # all words smashed together with no separator at all, e.g.
+        # driver_standings -> DRIVERSTANDINGS (+ID -> DRIVERSTANDINGSID).
+        # Same compact-naming convention as the single-word case (Finding 2
+        # above), just for a multi-word table name -- the Ergast schema's
+        # driver_standings/constructor_standings/constructor_results tables
+        # all use this exact pattern for their own surrogate key.
+        cands.append("".join(words).upper())
     return list(dict.fromkeys(cands))
 
 
