@@ -3548,7 +3548,7 @@ def cmd_search_objects(m: MSTR, args):
 
 
 MODEL_OBJECT_KINDS = {
-    "data_model": {"path": "/api/model/dataModels/{model_id}", "needs_model": True, "changeset": False},
+    "data_model": {"path": "/api/model/dataModels/{model_id}", "needs_model": True, "changeset": True},
     "attribute": {"path": "/api/model/dataModels/{model_id}/attributes/{object_id}", "needs_model": True, "changeset": True},
     "fact_metric": {"path": "/api/model/dataModels/{model_id}/factMetrics/{object_id}", "needs_model": True, "changeset": True},
     "metric": {"alias": "fact_metric"},
