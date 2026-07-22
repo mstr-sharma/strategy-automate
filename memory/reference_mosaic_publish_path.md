@@ -48,6 +48,7 @@ Top-level statuses observed:
 - `1` — job queued/running. Tables list may be empty for the first tens of seconds.
 - `5` — reserved.
 - `6` — schema comparison completed.
+- `-2147418587` — terminal failure after partial table completion. Observed with several tables reporting `completed`, followed by a cube execute probe returning `-2147072488` (not published). Treat as a failed materialization, not a still-running publish. Capture the full per-table status before the instance expires, then inspect clean dataTypes, large fact-table feasibility, warehouse availability/resume, and CubeServer health.
 - `-2147212544` — CubeServer parallel-mode stall. With REF-clean dataTypes this is rare; with warehouse-catalog types it is the default outcome on the observed Strategy ONE Cloud tenant family (see "DataType preconditions" below).
 
 Per-table statuses: `reserved` → `schema_comparison_completed` → `loaded` (happy), or terminate at `error`.
@@ -76,7 +77,7 @@ A `202` from `/api/cubes` or `204` from `/publish` proves only that the job was 
 ### Snowflake warehouse auto-resume makes publish look stalled
 
 Same observation set: publishes triggered against a COLD (auto-suspended) Snowflake warehouse showed nothing queryable for 10+ minutes (execute probe → `-2147072488` 12 minutes after a 202). After a connect_live query forced the warehouse to resume (~2-min first-query latency), a fresh trigger had the cube queryable within ~5 minutes. Publish jobs appear far more sensitive to warehouse-resume latency than interactive queries — they may sit invisible (`status=1, tables:[]`, no error) for the entire resume + queue window. Operational rules:
-1. Budget 10–15 minutes of execute-probe polling before declaring a publish dead on auto-suspend warehouses — or pre-warm the warehouse with any small live/catalog query right before triggering.
+1. Budget 10–15 minutes of execute-probe polling before declaring a publish dead on auto-suspend warehouses — or pre-warm the warehouse with any small live/catalog query right before triggering. **Pre-warm CAUTION (2026-06-17):** a `connect_live` execute (`POST /api/v2/cubes/{id}/instances`) is *synchronous* — iServer holds the HTTP connection while the warehouse resumes, so an un-timed-out client call HANGS on the very resume it is meant to trigger (observed: 10+ min, zero output, looked like a crash). If you pre-warm this way, give the call a finite `(connect, read)` timeout (e.g. `(15, 300)`), treat it as best-effort, and keep it OFF the critical path. Simplest robust path: skip the separate pre-warm and just trigger publish + execute-probe with the 10–15 min budget — the publish job resumes the warehouse on its own. See [[feedback_rest_timeout_and_warehouse_resume_hang]].
 2. Do NOT fire repeat triggers every few minutes "because nothing is happening" — queued jobs serialize on the cube lock and you can't tell which one landed.
 3. The differential ladder below still applies when the execute probe stays negative past that budget.
 
