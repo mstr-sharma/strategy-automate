@@ -73,7 +73,7 @@
 - [Subscriptions & schedules (STUB)](reference_strategy_subscriptions_and_schedules.md) — delivery surface (email/file/cache/mobile) + schedules; endpoint families sketched; verified payloads land here as transmitters are exercised.
 - [Package & migration lifecycle (STUB)](reference_strategy_package_migration.md) — migrations/packages between projects and tenants; endpoints sketched; no verified write path yet.
 - [Monitoring / jobs / caches (STUB)](reference_strategy_monitoring_jobs_alerts.md) — job monitor, cache ops, alerts; Mosaic refresh vs classic cache refresh differ; stub captures families, no wrapped helper yet.
-- [AI agents](reference_strategy_ai_agents.md) — Auto Agent (`/api/questions`, `/api/v2/bots`) vs deprecated Bot APIs; chat/question flow, agent config, nuggets/learnings endpoints, AI indexing.
+- [AI agents](reference_strategy_ai_agents.md) — Auto Agent (`/api/questions`, `/api/v2/bots`) vs deprecated Bot APIs; chat/question flow, agent config, nuggets/learnings endpoints, AI indexing; unstructured-data uploads now wrapped by `skills/create-unstructured-data/`.
 
 ## Validation
 - [Strategy model + data validation](reference_strategy_data_validation.md) — 10-check design suite + runnable 5-query paired-query suite; pluggable reference sources (Mosaic, legacy report, flat file, warehouse SQL, REST fixture); tolerance rules; failure triage.

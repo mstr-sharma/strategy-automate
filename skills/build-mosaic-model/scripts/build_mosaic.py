@@ -696,7 +696,25 @@ def cmd_api_call(m: MSTR, args):
     request = getattr(m.s, method.lower(), None)
     if request is None:
         die(f"unsupported method {method}")
-    r = request(f"{m.base}{path}", params=params or None, headers=headers or None, json=body)
+    files = {}
+    for spec in args.file or []:
+        field, _, fpath = spec.partition("=")
+        if not (field and fpath):
+            die(f"bad --file '{spec}'. expected FIELD=PATH")
+        if not os.path.isfile(fpath):
+            die(f"--file {field}: no such file: {fpath}")
+        files[field] = (os.path.basename(fpath), open(fpath, "rb"))
+    form = _parse_kv(args.form)
+    if files or form:
+        if body is not None:
+            die("--json/--json-file cannot be combined with --file/--form (multipart body)")
+        # The session default Content-Type: application/json must not override
+        # the multipart boundary; a None value tells requests to drop the header.
+        headers["Content-Type"] = None
+        r = request(f"{m.base}{path}", params=params or None, headers=headers,
+                    data=form or None, files=files or None)
+    else:
+        r = request(f"{m.base}{path}", params=params or None, headers=headers or None, json=body)
     out = {
         "ok": r.ok,
         "status": r.status_code,
@@ -4288,6 +4306,10 @@ def build_parser():
     sp.add_argument("--header", action="append", default=[], help="extra header key=value; repeatable")
     sp.add_argument("--json", help="JSON request body string")
     sp.add_argument("--json-file", help="JSON request body file")
+    sp.add_argument("--file", action="append", default=[],
+                    help="multipart file part FIELD=PATH; repeatable. Switches the request to multipart/form-data")
+    sp.add_argument("--form", action="append", default=[],
+                    help="multipart text field key=value; repeatable. Use with --file for upload endpoints")
     sp.add_argument("--out", help="save response body to file")
     sp.add_argument("--text-limit", type=int, default=8000)
     sp.add_argument("--no-auth", action="store_true", help="do not login first; useful for public OpenAPI paths")

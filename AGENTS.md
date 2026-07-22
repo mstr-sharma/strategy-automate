@@ -80,6 +80,7 @@ For Mosaic work, distinguish the entry path:
 - `skills/strategy-data-modeling/SKILL.md` — modeling-planning layer for grain, dimensions, metrics, relationships, hierarchies, and validation design.
 - `skills/strategy-automation/SKILL.md` — NLQ router.
 - `skills/strategy-validation/SKILL.md` — data-correctness validator.
+- `skills/create-unstructured-data/` — unstructured-data (nugget) creation for AI grounding: PPTX→Markdown extractor + multipart upload/status scripts.
 - `tests/` — hermetic unit tests (`python3 -m unittest discover -s tests`); run in CI.
 - `captures/` — dated tenant-specific transcripts (raw payload files stay local per `.gitignore`).
 - `.env.example` — env-var template (copy to `.env`); `pyproject.toml` — dependency declaration + lint config.

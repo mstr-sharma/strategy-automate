@@ -64,7 +64,7 @@ Use only when needed for backward compatibility. Document that the workflow used
 
 AI-adjacent surfaces:
 
-- Nuggets: `/api/nuggets`, `/api/nuggets/{id}`, `/api/nuggets/{id}/categories`, `/api/nuggets/{id}/file`, `/api/nuggets/status/query`.
+- Nuggets: `/api/nuggets`, `/api/nuggets/{id}`, `/api/nuggets/{id}/categories`, `/api/nuggets/{id}/file`, `/api/nuggets/status/query`. Most are `visibility: internal` — only visible in `openapi.yaml?visibility=all`. **Wrapped workflow (verified 2026-07-22):** `skills/create-unstructured-data/` creates unstructured-data nuggets end-to-end (PPTX→Markdown conversion + multipart `POST /api/nuggets?type=unstructuredData` + status poll); see its SKILL.md gotchas for the 200-vs-202, string `status` (`indexing`→`ready`), Accept-header, and delete-path (`DELETE /api/objects/{id}?type=90`, nugget = type 90/subtype 23042) findings. Generic multipart uploads: `build_mosaic.py api-call --file FIELD=PATH --form k=v`.
 - Learnings: `/api/learnings`, `/api/learnings/delete`, `/api/telemetry/bots/{id}/learnings`.
 - Dashboard auto narratives: `/api/dashboards/{dashboardId}/instances/{instanceId}/chapters/{chapterKey}/autoNarratives/{visualizationKey}`.
 - Dataset AI indexing: `/api/dashboards/{dashboardId}/instances/{instanceId}/datasets/{datasetId}/instances/{datasetInstanceId}/index`.
