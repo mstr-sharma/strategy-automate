@@ -16,6 +16,35 @@ GET    /api/model/dataModels/{mid}/metrics/{metricId}?showExpressionAs=tokens&sh
 
 `showAdvancedProperties=true` returns the full `advancedProperties` block (VLDB overrides, dimty, conditionality) — our helpers should always pass this.
 
+## 0. Tree format — RECOMMENDED for scripted writes (verified 2026-07-21)
+
+For programmatic creation, build **`expression.tree`** (a nested node object), NOT `expression.text` and NOT hand-rolled `tokens`. **`text` is `readOnly` — the service ignores it on input** (POSTing only `text` → `8004d717 "metric expression is empty"`). The tree is far simpler than tokens: no `{~+}` markers, no operator objectIds, no `<UseLookupForAttributes>` wrapper tokens.
+
+Node shapes (discriminator = `type`):
+- **Operator**: `{"type":"operator","function":"<EnumFunction>","children":[<node>,...]}` — functions are by NAME: arithmetic = `plus`/`minus`/`times`/`divide`/`unary_minus`; aggregates = `sum`/`avg`/`count`/`min`/`max`.
+- **Object reference** (inlines another metric WITH its own aggregation): `{"type":"object_reference","target":{"objectId":"<metricId>","subType":"fact_metric","name":"..."}}`.
+- **Constant**: `{"type":"constant","variant":{"type":"int64","value":"100000000"}}` (EnumVariantType: int32/int64/date/time/boolean).
+
+Rules that bit us:
+- **`dimty` must be `null`** for a compound expression (anything not a bare aggMetric object-reference) → else `8004d711 "...dimty should be null"`. Bare fact/aggMetrics DO take the `report_base_level` dimty.
+- Changeset goes in the **`X-MSTR-MS-Changeset` header**, not `?changesetId=` (→ `8004cc03`).
+- No top-level `function` on a compound metric. identity-token OFF on studio ([[feedback_mosaic_identity_token_privilege_downgrade]]).
+
+Worked example — cross-source ratio `MktCap / ((OutputSat/1e8) * Close)`:
+```json
+{"information":{"name":"NVT Ratio","subType":"metric"},
+ "expression":{"tree":{"type":"operator","function":"divide","children":[
+   {"type":"object_reference","target":{"objectId":"<mktcap>","subType":"fact_metric","name":"Market Capitalization USD"}},
+   {"type":"operator","function":"times","children":[
+     {"type":"operator","function":"divide","children":[
+       {"type":"object_reference","target":{"objectId":"<outsat>","subType":"fact_metric","name":"Output Value Satoshis"}},
+       {"type":"constant","variant":{"type":"int64","value":"100000000"}}]},
+     {"type":"object_reference","target":{"objectId":"<close>","subType":"fact_metric","name":"Closing Price USD"}}]}]}},
+ "dimty": null,
+ "format": {"header":[],"values":[{"type":"number_category","value":"0"},{"type":"number_format","value":"#,##0.0"},{"type":"number_decimal_places","value":"1"}]}}
+```
+On GET, the service round-trips `expression.text`, e.g. `{Market Capitalization USD} / (({Output Value Satoshis} / 100000000) * {Closing Price USD})`. The CLI `create-compound-metric` (superseded `{type:operator/metric_reference}` guess, forces identity-on) does NOT produce this shape — POST the tree directly instead.
+
 ## 1. Compound metric — ratio of two metrics
 
 User example: `Avg({Competitor Lowest Price USD}) / Avg({Market Average Price USD})`.
