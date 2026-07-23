@@ -144,5 +144,92 @@ class LockConflictParsingTests(unittest.TestCase):
         self.assertFalse(bm._lock_owned_by_self(body, None))
 
 
+class PlanAttributeMergesTests(unittest.TestCase):
+    """merge-attributes previously required the CHILD column to already have
+    its own attribute to merge from. When entity-key detection fails for the
+    child's table (e.g. a compact-key naming convention like Ergast's
+    driverid/raceid), the column never gets an attribute created at all --
+    it 400s as a duplicate name during build and is dropped. There is
+    nothing to "merge" in that case, but the parent should still be able to
+    gain the expression directly. These tests cover that both the original
+    (child exists) and new (child never existed) cases plan correctly."""
+
+    def _attr(self, name):
+        return {"information": {"name": name, "objectId": f"id-{name}"}}
+
+    def test_merge_when_child_exists(self):
+        parent = self._attr("Item")
+        child = self._attr("StoreSalesItem")
+        by_tcol = {
+            ("item", "i_item_sk"): parent,
+            ("store_sales", "ss_item_sk"): child,
+        }
+        table_ids = {"item": "T1", "store_sales": "T2"}
+        plan, skips = bm._plan_attribute_merges(
+            [("store_sales.ss_item_sk", "item.i_item_sk")], by_tcol, table_ids
+        )
+        self.assertEqual(skips, [])
+        self.assertEqual(len(plan), 1)
+        p, c, ct, cc, label = plan[0]
+        self.assertIs(p, parent)
+        self.assertIs(c, child)
+        self.assertEqual((ct, cc), ("store_sales", "ss_item_sk"))
+
+    def test_add_when_child_never_existed(self):
+        # Regression test for the compact-key gap: child column has no entry
+        # in by_tcol at all (no attribute was ever created for it), but the
+        # child TABLE is still in the model. This must plan an "add", not a
+        # pre-flight skip.
+        parent = self._attr("Driver")
+        by_tcol = {("drivers", "driverid"): parent}
+        table_ids = {"drivers": "T1", "sprint_results": "T2"}
+        plan, skips = bm._plan_attribute_merges(
+            [("sprint_results.driverid", "drivers.driverid")], by_tcol, table_ids
+        )
+        self.assertEqual(skips, [])
+        self.assertEqual(len(plan), 1)
+        p, c, ct, cc, label = plan[0]
+        self.assertIs(p, parent)
+        self.assertIsNone(c)
+        self.assertEqual((ct, cc), ("sprint_results", "driverid"))
+
+    def test_skip_when_parent_missing(self):
+        plan, skips = bm._plan_attribute_merges(
+            [("child_t.c", "parent_t.p")], {}, {"child_t": "T1"}
+        )
+        self.assertEqual(plan, [])
+        self.assertEqual(len(skips), 1)
+        self.assertIn("parent attribute", skips[0][1])
+
+    def test_skip_when_child_table_not_in_model(self):
+        parent = self._attr("Item")
+        by_tcol = {("item", "i_item_sk"): parent}
+        plan, skips = bm._plan_attribute_merges(
+            [("nonexistent_table.x", "item.i_item_sk")], by_tcol, {"item": "T1"}
+        )
+        self.assertEqual(plan, [])
+        self.assertEqual(len(skips), 1)
+        self.assertIn("not in model", skips[0][1])
+
+    def test_skip_when_already_conformed(self):
+        same = self._attr("Item")
+        by_tcol = {
+            ("item", "i_item_sk"): same,
+            ("store_sales", "i_item_sk"): same,
+        }
+        plan, skips = bm._plan_attribute_merges(
+            [("store_sales.i_item_sk", "item.i_item_sk")], by_tcol, {"store_sales": "T2"}
+        )
+        self.assertEqual(plan, [])
+        self.assertEqual(len(skips), 1)
+        self.assertIn("already conformed", skips[0][1])
+
+    def test_skip_malformed_pair(self):
+        plan, skips = bm._plan_attribute_merges([("no_dot_here", "also_no_dot")], {}, {})
+        self.assertEqual(plan, [])
+        self.assertEqual(len(skips), 1)
+        self.assertIn("malformed pair", skips[0][1])
+
+
 if __name__ == "__main__":
     unittest.main()
