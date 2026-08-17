@@ -45,6 +45,12 @@ Worked example — cross-source ratio `MktCap / ((OutputSat/1e8) * Close)`:
 ```
 On GET, the service round-trips `expression.text`, e.g. `{Market Capitalization USD} / (({Output Value Satoshis} / 100000000) * {Closing Price USD})`. The CLI `create-compound-metric` (superseded `{type:operator/metric_reference}` guess, forces identity-on) does NOT produce this shape — POST the tree directly instead.
 
+**Updating a compound metric (verified 2026-07-21):** `PATCH /metrics/{id}` is NOT a registered route (404 8004cc04), and the helper's `patch-model-object --kind metric` wrongly routes to `/factMetrics/{id}` (500 8004d706 subtype mismatch). Use **PUT `/api/model/dataModels/{id}/metrics/{mid}`** with a FULL body `{information, expression:{tree}, dimty: null, format}` in a changeset. GET returns the expression as read-only `text` only — you must supply the `tree` again on PUT (rebuild it; stripping text and sending an empty expression → 400 8004d718 "expression could not be set to empty").
+
+**Format rendering gotcha (verified in dashboard KPI grid):** the `number_currency_symbol` field does NOT render in dashboard grids — only the `number_format` PATTERN does (percent `%` in the pattern renders fine). Put the literal `$` in the pattern (`$#,##0.00`), keep category/symbol fields set for semantics.
+
+**Compound metrics at total grain:** with no attribute on a template, compounds evaluate as ratio-of-total-aggregates — NVT collapses to ~0.07, turnover inflates to ~960%, and SUM×AVG cross-terms shift products (year on-chain USD $23.90T at total vs $23.65T summed daily). Expected engine behavior, not a defect: put Date on the template or filter to a single day; for total-level KPI cards define separate day-level-scoped average variants.
+
 ## 1. Compound metric — ratio of two metrics
 
 User example: `Avg({Competitor Lowest Price USD}) / Avg({Market Average Price USD})`.
