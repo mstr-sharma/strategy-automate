@@ -51,6 +51,50 @@ On GET, the service round-trips `expression.text`, e.g. `{Market Capitalization 
 
 **Compound metrics at total grain:** with no attribute on a template, compounds evaluate as ratio-of-total-aggregates — NVT collapses to ~0.07, turnover inflates to ~960%, and SUM×AVG cross-terms shift products (year on-chain USD $23.90T at total vs $23.65T summed daily). Expected engine behavior, not a defect: put Date on the template or filter to a single day; for total-level KPI cards define separate day-level-scoped average variants.
 
+## 0b. LEVEL metrics — verified WRITE path (2026-08-19, cross-store level-ratio build)
+
+Section 3 below is a UI *capture*; writing level metrics programmatically hit five
+gotchas before a fully validated recipe emerged (65/65 + 111/111 anchor values tied to
+source; runnable end-to-end in `captures/20260819-devops-costs-impact/create_level_metrics.py`
++ `validate_level_metrics.py`):
+
+1. **Tokens only — the tree format cannot express levels.** A tree whose root is a bare
+   `object_reference` + non-null `dimty` → `8004d711` (the service does not classify a
+   tree bare-reference as an "aggMetric reference"). Any operator root also requires
+   `dimty: null`. So: compounds → tree; level metrics → tokens.
+2. **EVERY token needs a `value` key — `end_of_text` included** (`{"type":"end_of_text",
+   "value":""}`). Omitting it → `8004cb04` "Missing attribute v in element tkn" (gateway
+   XML layer), a bodyless-looking 500 unless you print the errors array.
+3. **Level pinning that actually pins: attribute-ONLY dimty + `{[Attr]+}` cluster.**
+   The UI-captured shape (dimty `[report_base_level, attribute]`, cluster `{~+, [Attr]+}`)
+   POSTs fine but evaluates at REPORT grain whenever the report is finer than the pin —
+   values vary per child row (verified on a Team×Application grid). Dropping
+   `report_base_level` from dimty AND the `~ +` from the cluster gives the true
+   fixed-level benchmark (constant across child rows).
+4. **`Sum()` over a count-function fact metric evaluates to NULL silently** (2xx create,
+   null at query time). Re-aggregate counts as **`Count({attribute})`** instead — element
+   count of the grain-anchor attribute == row count when it is the table PK. A bare
+   metric-ref + level cluster without a function wrapper is rejected (`8004cd15` Invalid
+   Expression), so the function wrapper is mandatory.
+5. **Fact metrics cannot carry level dimty**: an `attribute` dimtyUnit on `/factMetrics`
+   accepts only semi-additive aggregations (`DssAggregationFirstInFact/LastInFact/
+   FirstInRelationship/LastInRelationship`) → `8004d716` for `normal`. Level pinning is a
+   derived-metric (`/metrics`) concept only.
+
+Composition that works: level intermediates via tokens (attr-only dimty), then a final
+**tree `divide` of the two derived intermediates** (`object_reference` with
+`subType:"metric"`, `dimty:null`) — derived-over-derived nesting evaluates fine, and the
+finals are pure query-time formulas (no republish; only new FACT metrics need one).
+
+Engine behavior worth knowing: a level metric is NULL for parent elements with no rows at
+its source (correct sparse semantics — no fabricated zeros), and its presence on a v2
+cube-instance grid drops those parents' rows entirely (inner-ish metric join), including
+co-requested fact metrics — validate counts on a clean grid.
+
+**`Count` function objectId: `8107C31CDD9911D3B98100C04F2233EA`** (platform constant;
+discovered via Quick Search `/api/searches/results?name=Count&type=11`, fits the
+`8107C31x` family below).
+
 ## 1. Compound metric — ratio of two metrics
 
 User example: `Avg({Competitor Lowest Price USD}) / Avg({Market Average Price USD})`.
@@ -118,6 +162,7 @@ Full body (abbreviated):
 | Function | objectId (verified) |
 |---|---|
 | Sum | `8107C31BDD9911D3B98100C04F2233EA` |
+| Count | `8107C31CDD9911D3B98100C04F2233EA` |
 | Avg | `8107C31DDD9911D3B98100C04F2233EA` |
 | `/` | `8107C313DD9911D3B98100C04F2233EA` |
 | Concat | `6F7DF5FF449111D5BEA300B0D01A55EF` |
