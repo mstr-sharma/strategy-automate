@@ -54,6 +54,33 @@ save prompted filters).
 Prompt list is progressive (round N lists N prompts, one open) — nested prompts
 render as sequential steps in Web/Library.
 
+## Second chain (same day): Year → Quarter → Month on the operator's own filter
+
+Built on request, reusing the operator's Workstation-created **"Year Filter
+Prompted"** (`2479E6FC…`, embedded prompt "Elements of Year") as level 1 —
+completing their exact original attempt and proving **embedded-prompt filters
+cascade the same as standalone ones**:
+
+| Object | Name | ID |
+|---|---|---|
+| Filter L1 (existing, untouched) | Year Filter Prompted | `2479E6FC856040168842913F112E6293` |
+| Prompt L2 | Elements of Quarter (cascading) — restricted by Year Filter Prompted | `F08C1B10CC79458AA94E8D9DE58285D1` |
+| Filter L2 | Quarter Filter Prompted | `FCC08EA4B3444354A06A3C0AF1EBEBA7` |
+| Prompt L3 | Elements of Month (cascading) — restricted by F2 | `6D3A680831194C74B96F33BAC3F33478` |
+| Filter L3 | Month Filter Prompted — the report filter | `9EC06A0A227F437F97ACC7D5148FA185` |
+| Report | Cascading Prompts Demo (Year - Quarter - Month) | `52F8FB50AB4C3A2E7937598E9D5B39F6` |
+
+Runtime evidence: Year offered 2020–2023 → answered 2021 → Quarter offered
+**2021 Q1–Q4 only** → answered 2021 Q2 → Month offered **Apr/May/Jun 2021 only**
+→ report ran (1 row). Schema time attributes: Year `8D679D5111D3E4981000E787EC6DE8A4`,
+Quarter `8D679D4A11D3E4981000E787EC6DE8A4`, Month `8D679D4411D3E4981000E787EC6DE8A4`
+(and Month of Year `8D679D45…` is the generic Jan–Dec one — not for this chain).
+
+Caveat noted: the operator's embedded "Elements of Year" prompt has
+`required: false` (Workstation default) — a user can skip Year and get all
+quarters. Fix in Workstation by editing the filter's embedded prompt settings
+(no filtered-elements preview involved, so no error).
+
 ## Gotchas hit and fixed this run
 
 1. `POST /api/model/reports` rejected the OpenAPI-documented
@@ -64,6 +91,15 @@ render as sequential steps in Web/Library.
    prompt's `question.filter` survives (= the pure-Workstation authoring trick).
 3. Report create is instance-based (no changeset): grab the `X-MSTR-MS-Instance`
    response header, persist via `instances/saveAs`.
+4. **Managed-attribute search trap** (time chain): `/api/searches/results?type=12`
+   returned managed/template attributes named "Quarter"/"Month" with EMPTY
+   ancestors; prompts created against them committed fine, but report create
+   failed `8004da0c` "Managed object cannot be added to normal report template."
+   Resolve real schema attributes via `GET /api/model/systemHierarchy` or an
+   existing report's `dataTemplate.units`. Repaired in place: `PUT
+   /api/model/prompts/{id}` (full-replace: echo information/title/instruction/
+   question/restriction, swap `question.attribute`) — object IDs survive, so the
+   wrapping filters needed no touch.
 
 ## Files (local-only per .gitignore)
 
