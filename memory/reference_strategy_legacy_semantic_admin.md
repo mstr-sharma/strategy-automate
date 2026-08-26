@@ -115,6 +115,40 @@ If a tenant rejects hand-authored predicate trees, use mstrio-py or clone/remap 
 
 For classic/project workflows, do not automatically add `X-MSTR-IdentityToken`. On `a verified Strategy Cloud tenant`, adding identity token after login caused classic Modeling Service metric reads to fail with a false "Wrong projectId" error. Use `X-MSTR-AuthToken` plus `X-MSTR-ProjectID` unless a specific tenant endpoint proves it needs identity token.
 
+## Classic attribute + fact creation (verified write path)
+
+Verified 2026-08-25 on a Strategy Cloud tenant (17 objects, one bulk changeset):
+
+- Changeset: `POST /api/model/changesets?schemaEdit=true` → create objects with `X-MSTR-MS-Changeset` + `X-MSTR-ProjectID` (no identity token) → `POST /api/model/changesets/{id}/commit` with body `{}` (201).
+- Attribute: `POST /api/model/attributes` with `information` (`subType:"attribute"`, `destinationFolderId`), `forms[]`, `attributeLookupTable`, `keyForm:{"name":"ID"}` (name refs OK at create), `displays:{reportDisplays:[{name}],browseDisplays:[{name}]}`.
+- Form shape: `{name, category ("ID"/"DESC", omit for extra forms), type, displayFormat, dataType, expressions[], lookupTable}`. **Form `type` enum: `"system"` works, `"normal"` is rejected (`8004c908`)** — use `"system"` for every form incl. extra ones.
+- Fact: `POST /api/model/facts` with `information` (`subType:"fact"`), `dataType`, `expressions[]`.
+- Expression grammar (attribute forms + facts): `{"expression":{"tokens":[{level:"resolved",state:"initial",value:"<COL>",type:"column_reference",target:{objectId:<columnId>,subType:"column",name:"<COL>"}},{...type:"end_of_text",value:""}]},"tables":[{objectId,subType:"logical_table",name}]}` — clone-shape from any `GET ...?showExpressionAs=tokens`.
+- Column objectIds come from `GET /api/model/tables/{logicalTableId}`; same-named columns share ONE column object across tables (that shared id is what makes a multi-table form expression legal).
+- **Post-commit schema lock lingers:** after committing a `schemaEdit=true` changeset and logging out, the schema stays locked (`GET /api/model/schema/lock` shows LOCKID = your committed changeset; delete of that changeset from a new session 500s with `8004cb15` "does not belong to the user"). Fix: `DELETE /api/model/schema/lock` (200 when the lock owner is your account), then `POST /api/model/schema/reload` with body `{"updateTypes": []}` (the field is mandatory — `8004c901` without it; `table_logical_size` is not a valid value).
+
+## Classic metric creation + dynamic aggregation + cube publish (verified write path)
+
+Verified 2026-08-25 on a Strategy Cloud tenant (19-metric library + intelligent cube over a 64.8K-row Postgres star, validated to 4 decimals against warehouse SQL).
+
+**Metric creation — always go through the formula parser:**
+- `POST /api/model/metrics` with `expression: {"tokens": [{"value": "Avg([Float Value])"}]}` — ONE raw-text token; the parser builds the embedded `agg_metric` + `dimty` layer the SQL engine requires. Tree-built `{"operator","function":"avg",children:[fact ref]}` bodies are ACCEPTED by Modeling but the engine cannot load them (`-2147212797`); repair in place by PUTting a raw-token expression (object id survives).
+- Parser-verified grammar: `Avg/StDev/Min/Max/Count(fact)`, arithmetic compounds by `[name]` reference, `IF(a<b,x,y)`, `IsNull([m])` (tree function name is `is_null`; token text is `IsNull`), `Sqrt`, `[m]*[m]`.
+- Compounds cannot reference same-changeset metrics (`8004cb04`) — commit bases, then compounds.
+- Ratio/formula compounds need `smartTotal: "decomposable_true"` to recompute from components at view level.
+- When PUTting a compound expression over an echoed GET body, pop `dimty` AND `conditionality` (`8004d711`).
+
+**Dynamic aggregation (what makes cube datasets roll up in dossiers):** encoded as a `metricSubtotals` entry — `{"definition": {Aggregation system subtotal F225147A4CA0BB97368A5689D9675E73}, "implementation": {<function's system subtotal>}}`; set `Total`'s implementation to the same function for grand totals. Prereq: `aggregateFromBase` and `subtotalFromBase` must both be `false` (`8004d713`/`8004d714`). System subtotal ids (product-wide): Total `96C487AF4D12472A910C1ACACFB56EFB`, Count `078C50834B484EE29948FA9DD5300ADF`, Average `B328C60462634223B2387D4ADABEEB53`, Minimum `00B7BFFF967F42C4B71A4B53D90FB095`, Maximum `B1F4AA7DE683441BA559AA6453C5113E`, Standard Deviation `7FBA414995194BBAB2CF1BB599209824`, Aggregation `F225147A4CA0BB97368A5689D9675E73`. Without this, Avg/StDev metrics show `--` above cube grain (default dynamic aggregation is none).
+- **Sigma on a unit-grain cube can never dynamically aggregate** (stddev cells are NULL at n=1): use the sum-of-squares pattern — base metric `Avg([x]*[x])` (Aggregation=Average) + smart compound `Sqrt((n/(n-1))*(E[X2]-Mean*Mean))`. Exact at every level.
+
+**Intelligent cube build/publish:**
+- Create: `POST /api/v2/cubes` `{name, folderId, definition:{availableObjects:{attributes:[{id,name,type}], metrics:[...]}}}` (what mstrio `OlapCube.create` wraps). Update definition: `PUT /api/v2/cubes/{id}` (204).
+- Publish: `POST /api/v2/cubes/{id}` → `{jobId, instanceId}`. **Jobs are session-bound — logging out cancels a running publish.** Keep the triggering session alive until done.
+- Status: `HEAD /api/cubes/{id}` → `X-MSTR-CubeStatus` (0 = no cache). Meaningful only for a FIRST publish; on republish it reports the old cache — the only truth is an execute probe. Real publish errors: `GET /api/v2/cubes/{id}/instances/{instanceId}` (blocks while running — use a short read timeout; timeout = still running).
+- Project governors default 32000 and kill larger cube publishes silently (`-2147205488`): raise `maxCubeResultRowCount`/`maxReportResultRowCount`/`maxInternalResultRowCount` via `PATCH /api/v2/projects/{id}/settings` `{name:{value:N}}`.
+- Multi-pass temp-table SQL on pooled/small Postgres = un-analyzed temp tables + nested-loop plans (minutes for tiny data). Fix: VLDB **Intermediate Table Type = Derived table** via `PUT /api/objects/{cubeId}/vldb/propertySets/{setName}?type=3` body `[{"name":"Intermediate Table Type","value":1}]` — value must be an int, not a string; the collection endpoint is GET-only (405); db_role objects (type 29) are not supported by this endpoint.
+- Sparse cross-table objects (an overrides/write-back table with rows for only some keys) inner-join into cube SQL and silently trim the key list — model a LEFT-JOIN view (one row per key, NULLs where absent) and bind the facts there instead.
+
 ## User duplication and assignment
 
 Duplicate a user with the REST User Management API:
