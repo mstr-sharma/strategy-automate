@@ -149,6 +149,31 @@ Verified 2026-08-25 on a Strategy Cloud tenant (19-metric library + intelligent 
 - Multi-pass temp-table SQL on pooled/small Postgres = un-analyzed temp tables + nested-loop plans (minutes for tiny data). Fix: VLDB **Intermediate Table Type = Derived table** via `PUT /api/objects/{cubeId}/vldb/propertySets/{setName}?type=3` body `[{"name":"Intermediate Table Type","value":1}]` — value must be an int, not a string; the collection endpoint is GET-only (405); db_role objects (type 29) are not supported by this endpoint.
 - Sparse cross-table objects (an overrides/write-back table with rows for only some keys) inner-join into cube SQL and silently trim the key list — model a LEFT-JOIN view (one row per key, NULLs where absent) and bind the facts there instead.
 
+## Classic prompts, N-level nested (cascading) prompts, and report creation (verified write path)
+
+Verified 2026-08-26 on a Strategy Cloud tenant (3-level Category→Subcategory→Item chain in the Tutorial project, executed end-to-end over REST). This is the KB10434 pattern (prompt → filter-wrapping-prompt → next prompt element-restricted by that filter), fully authorable without Developer.
+
+**Prompt objects (`POST /api/model/prompts`, changeset-scoped like other Modeling writes):**
+- Element prompt body: `information` (`subType:"prompt_elements"`, `destinationFolderId`), `title`, `instruction`, `question: {attribute: {objectId, subType:"attribute"}, listAllElements: true}`, `restriction: {required: bool, allowPersonalAnswers: "none"}`.
+- **The cascade hook is `question.filter`** — set `{objectId: <filterId>, subType: "filter"}` (+ `listAllElements: false`) to restrict the element list by a filter. The restricting filter MAY itself contain a prompt; Modeling accepts it and the engine resolves it at run time.
+- Prompted filter shape: `qualification.tree = {type: "predicate_element_list", predicateTree: {elementsPrompt: {objectId, subType: "prompt_elements"}}}` (Workstation-authored ones may show `isEmbedded: true`; standalone references work the same).
+- Commit each object before the next references it (same rule as compound metrics / `8004cb04`): P1 → F1(wraps P1) → P2(restricted by F1) → F2 → … Only the DEEPEST filter goes on the report; the engine discovers the chain and asks prompts in dependency order. Make every level `required`, or AND all level filters onto the report — optional lower prompts left unanswered mean no filtering at all (KB37738).
+
+**Workstation editor limitation (not an engine one):** the prompt editor's "Filtered elements" pick immediately element-browses with the chosen filter for a preview; a prompted filter can't be browsed at design time, so the editor refuses with *"The filter … contains prompts. Filtered element browsing is not supported with a filter that contains prompts."* Workaround verified server-side: point the prompt at a static placeholder filter (preview works, saves), then PUT the placeholder filter's qualification to the prompted element list afterwards — the prompt's `question.filter` reference survives the swap. `PUT /api/model/filters/{id}` is full-replace: echo the GET `information` block alongside the new `qualification` or it 400s (`8004c901` missing-field).
+
+**Classic report creation (`POST /api/model/reports`) — instance-based, NOT changeset-based:**
+- POST body: `information` (`subType:"report_grid"`), `sourceType:"normal"`, `dataSource: {dataTemplate: {units: [attribute refs + {type:"metrics", elements:[metric refs]}]}, filter: …}`, `grid: {viewTemplate: {rows/columns/pageBy}}` (clone shape from any `GET /api/model/reports/{id}`).
+- The POST returns the new objectId in the body and an **`X-MSTR-MS-Instance` response header**; persist with `POST /api/model/reports/{id}/instances/saveAs` (that header + `{name, destinationFolderId}`). Default promptOptions keep filter/template prompted.
+- **Report-filter-by-reference: the OpenAPI-documented `{"standaloneFilter": {…}}` shape is REJECTED** (`8004c90a` "Unrecognized field") on the observed build — use the shape real reports carry: `filter: {tree: {type: "predicate_filter_qualification", predicateTree: {filter: {objectId, subType:"filter"}, isIndependent: 0}}}`.
+
+**Runtime prompt answering (how to verify a cascade without a browser):**
+- `POST /api/v2/reports/{id}/instances` `{}` → `status: 2` (prompted); v1 prompt endpoints work with the v2 instance id.
+- `GET /api/reports/{id}/instances/{iid}/prompts` is **progressive**: round 1 lists only the level-1 prompt; each answered level makes the next appear (this is why Web/Library render nested prompts as sequential steps). Prompt `key` looks like `<promptId>@0@10`.
+- Element browse: `GET …/prompts/{key}/elements?limit=200` — returns exactly the restricted list (verified counts: 4 categories → 6 subcategories of the chosen category → 15 items of the chosen subcategory). Element ids come back as `h<N>;<attributeId>` — feed them back verbatim.
+- Answer: `PUT …/prompts/answers` `{"prompts": [{"key", "type": "ELEMENTS", "answers": [{"id", "name"}]}]}` (204), loop until the prompt list is empty, then `GET /api/v2/reports/{id}/instances/{iid}` for data.
+
+**When the ask is cascading choices on a DASHBOARD, don't build prompt chains** — dashboard filter-panel attribute filters natively target other filters (filter's More menu → Select Targets, optional "Update targets automatically"); element lists come from the dataset, so an in-memory cube makes every cascade update memory-speed, while live-connect fires SQL per interaction. Prompt chains are for prompted reports/subscriptions and SQL-level slicing of big dimensions; a dashboard on a prompted report asks prompts at dataset add/re-prompt time, not per viewer.
+
 ## User duplication and assignment
 
 Duplicate a user with the REST User Management API:

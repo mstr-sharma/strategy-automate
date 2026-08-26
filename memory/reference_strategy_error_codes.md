@@ -54,6 +54,8 @@ When a Strategy REST call returns 4xx or 5xx, you'll see a `code` field (e.g., `
 | `-2147212797` | Cube publish/report load: "Dimensional Metric … Loading is interrupted by invalid data" | Metric was created as a flat function tree; classic simple metrics need the parser-built embedded agg_metric — write the expression as a raw-text token instead | `reference_strategy_legacy_semantic_admin.md` |
 | `-2147205488` | Cube publish: "Maximum number of results rows per report exceeded … 32000" | Project governors `maxCubeResultRowCount` / `maxReportResultRowCount` / `maxInternalResultRowCount`; raise via `PATCH /api/v2/projects/{id}/settings` (PUT demands the full settings map) | `reference_strategy_legacy_semantic_admin.md` |
 | `-2147072488` | Cube "not published" on execute despite publish 202 | Publish job died silently (governors) or was CANCELED — publish jobs are session-bound and logout kills them; read the real error via `GET /api/v2/cubes/{id}/instances/{instanceId}` | `reference_strategy_legacy_semantic_admin.md` |
+| `8004c90a` | "Unrecognized field: standaloneFilter" on `POST /api/model/reports` | The OpenAPI-documented standalone-filter shape is not accepted by the observed build — reference a filter object via `predicate_filter_qualification` (`predicateTree.filter` + `isIndependent: 0`) instead | `reference_strategy_legacy_semantic_admin.md` |
+| `8004c901` (variant) | "Json input missing the following field: information" on `PUT /api/model/filters/{id}` | Modeling PUTs are full-replace — echo the GET body's `information` block alongside the new `qualification` | `reference_strategy_legacy_semantic_admin.md` |
 | `ERR001` (generic) | Generic platform error wrapper | Inspect `iServerCode` to classify. Not actionable on its own. | — |
 
 ## Symptom index (when you don't know the code)
@@ -74,6 +76,7 @@ When a Strategy REST call returns 4xx or 5xx, you'll see a `code` field (e.g., `
 | Classic cube REpublish reports success in seconds but data stays stale/wrong | — (status header reflects the OLD cache; only an execute probe tells the truth) | `reference_strategy_legacy_semantic_admin.md` |
 | Dossier/grid on a classic cube shows `--` for Avg/StDev metrics above cube grain | — (dynamic aggregation defaults to none; set the Aggregation-subtotal implementation) | `reference_strategy_legacy_semantic_admin.md` |
 | Multi-pass temp-table cube SQL runs 10+ min on pooled Postgres (rows are tiny) | — (un-analyzed temp tables → nested-loop plans; set VLDB Intermediate Table Type = Derived table) | `reference_strategy_legacy_semantic_admin.md` |
+| Workstation prompt editor: "The filter … contains prompts. Filtered element browsing is not supported with a filter that contains prompts." | — (editor-preview limitation only — nested/cascading prompts still run fine; author via placeholder-filter swap or REST) | `reference_strategy_legacy_semantic_admin.md` |
 
 ## Housekeeping
 
