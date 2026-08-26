@@ -45,6 +45,15 @@ When a Strategy REST call returns 4xx or 5xx, you'll see a `code` field (e.g., `
 | Code | Symptom | Root cause | Fix file |
 | --- | --- | --- | --- |
 | `8004c738` | "User does not have Control access" on `GET /api/model/dataModels/{id}/securityFilters` | Session user is not the owner. Only the SF owner can list per-model SFs. Expected response when sweeping across a tenant — filter these out of inventory. | `reference_strategy_mosaic_field_study.md` |
+| `8004c908` | "Invalid value for field 'type': 'normal'" creating an attribute form | Form `type` enum only accepts `"system"` for inline forms | `reference_strategy_legacy_semantic_admin.md` |
+| `8004cb04` | Compound metric create: referenced metric "does not exist in the object context" | Classic compounds cannot reference metrics created in the SAME uncommitted changeset — commit bases first, reference in a new changeset | `reference_strategy_legacy_semantic_admin.md` |
+| `8004cc41` | "Schema editing is in use by another user" opening a schemaEdit changeset | A committed schema changeset's lock lingers past logout; `DELETE /api/model/schema/lock` (works when the lock owner is your account) | `reference_strategy_legacy_semantic_admin.md` |
+| `8004cb15` | "The changeset/instance does not belong to the user" on changeset DELETE | Changesets are session-scoped; from a new session release the schema lock instead of deleting the old changeset | `reference_strategy_legacy_semantic_admin.md` |
+| `8004d711` | "dimty should be null" / "conditionality should be null" on metric PUT | Only aggMetric-reference metrics may carry `dimty`/`conditionality` — pop BOTH from the echoed GET body before writing a compound expression | `reference_strategy_legacy_semantic_admin.md` |
+| `8004d713` / `8004d714` | "should not add Aggregation into metricSubtotals" / "implementation of Total could only be Total" | `aggregateFromBase`/`subtotalFromBase: true` conflict with subtotal implementations — set both false in the same PUT | `reference_strategy_legacy_semantic_admin.md` |
+| `-2147212797` | Cube publish/report load: "Dimensional Metric … Loading is interrupted by invalid data" | Metric was created as a flat function tree; classic simple metrics need the parser-built embedded agg_metric — write the expression as a raw-text token instead | `reference_strategy_legacy_semantic_admin.md` |
+| `-2147205488` | Cube publish: "Maximum number of results rows per report exceeded … 32000" | Project governors `maxCubeResultRowCount` / `maxReportResultRowCount` / `maxInternalResultRowCount`; raise via `PATCH /api/v2/projects/{id}/settings` (PUT demands the full settings map) | `reference_strategy_legacy_semantic_admin.md` |
+| `-2147072488` | Cube "not published" on execute despite publish 202 | Publish job died silently (governors) or was CANCELED — publish jobs are session-bound and logout kills them; read the real error via `GET /api/v2/cubes/{id}/instances/{instanceId}` | `reference_strategy_legacy_semantic_admin.md` |
 | `ERR001` (generic) | Generic platform error wrapper | Inspect `iServerCode` to classify. Not actionable on its own. | — |
 
 ## Symptom index (when you don't know the code)
@@ -61,6 +70,10 @@ When a Strategy REST call returns 4xx or 5xx, you'll see a `code` field (e.g., `
 | Changeset commit fails with no clear reason after many calls | `8004cb0a` | `feedback_build_mosaic_session_leak.md` |
 | Conformed dim duplicated across tables (`Customer`, `Customer (Orders)`, `Customer (Shipments)`) | `8004e409` OR silent conformance skip | `feedback_mosaic_relationship_wiring.md` |
 | Form name shows as "R Regionkey ID" or "None" in UI | — (quality issue) | `feedback_mosaic_ship_bar.md` |
+| Classic cube publish 202 but `HEAD /api/cubes/{id}` X-MSTR-CubeStatus stays 0, no error anywhere | — (job died: see `-2147205488`, or session logout canceled it) | `reference_strategy_legacy_semantic_admin.md` |
+| Classic cube REpublish reports success in seconds but data stays stale/wrong | — (status header reflects the OLD cache; only an execute probe tells the truth) | `reference_strategy_legacy_semantic_admin.md` |
+| Dossier/grid on a classic cube shows `--` for Avg/StDev metrics above cube grain | — (dynamic aggregation defaults to none; set the Aggregation-subtotal implementation) | `reference_strategy_legacy_semantic_admin.md` |
+| Multi-pass temp-table cube SQL runs 10+ min on pooled Postgres (rows are tiny) | — (un-analyzed temp tables → nested-loop plans; set VLDB Intermediate Table Type = Derived table) | `reference_strategy_legacy_semantic_admin.md` |
 
 ## Housekeeping
 

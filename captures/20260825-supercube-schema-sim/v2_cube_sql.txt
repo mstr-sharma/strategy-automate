@@ -1,0 +1,154 @@
+CREATE TEMP TABLE ZZSP00(
+	"WAFER_ID"	TEXT, 
+	"TESTER_ID"	TEXT, 
+	"TEST_STAGE"	TEXT, 
+	"TEST_DATE"	DATE, 
+	"TEST_NUM"	INTEGER, 
+	"SITE_NUM"	SMALLINT, 
+	"DEVICE_ID"	TEXT, 
+	"WJXBFS1"	DOUBLE PRECISION, 
+	"WJXBFS2"	DECIMAL(14, 6), 
+	"WJXBFS3"	DECIMAL(14, 6), 
+	"WJXBFS4"	DECIMAL(14, 6), 
+	"WJXBFS5"	DOUBLE PRECISION, 
+	"WJXBFS6"	INTEGER)
+
+insert into ZZSP00 
+select	"a11"."WAFER_ID" AS "WAFER_ID",
+	"a11"."TESTER_ID" AS "TESTER_ID",
+	"a11"."TEST_STAGE" AS "TEST_STAGE",
+	"a11"."TEST_DATE" AS "TEST_DATE",
+	"a11"."TEST_NUM" AS "TEST_NUM",
+	"a11"."SITE_NUM" AS "SITE_NUM",
+	"a11"."DEVICE_ID" AS "DEVICE_ID",
+	avg("a11"."FLOAT_VALUE") AS "WJXBFS1",
+	stddev_samp("a11"."FLOAT_VALUE") AS "WJXBFS2",
+	min("a11"."FLOAT_VALUE") AS "WJXBFS3",
+	max("a11"."FLOAT_VALUE") AS "WJXBFS4",
+	avg("a11"."IS_PASS") AS "WJXBFS5",
+	count("a11"."FLOAT_VALUE") AS "WJXBFS6"
+from	"public"."SEMI_PARAMETRIC_MEASUREMENTS"	"a11"
+group by	"a11"."WAFER_ID",
+	"a11"."TESTER_ID",
+	"a11"."TEST_STAGE",
+	"a11"."TEST_DATE",
+	"a11"."TEST_NUM",
+	"a11"."SITE_NUM",
+	"a11"."DEVICE_ID"
+
+CREATE TEMP TABLE ZZSP01(
+	"WAFER_ID"	TEXT, 
+	"TESTER_ID"	TEXT, 
+	"TEST_STAGE"	TEXT, 
+	"TEST_DATE"	DATE, 
+	"TEST_NUM"	INTEGER, 
+	"SITE_NUM"	SMALLINT, 
+	"DEVICE_ID"	TEXT, 
+	"WJXBFS1"	DECIMAL(14, 6), 
+	"WJXBFS2"	DECIMAL(14, 6), 
+	"WJXBFS3"	DECIMAL(14, 6))
+
+insert into ZZSP01 
+select	"a12"."WAFER_ID" AS "WAFER_ID",
+	"a12"."TESTER_ID" AS "TESTER_ID",
+	"a12"."TEST_STAGE" AS "TEST_STAGE",
+	"a12"."TEST_DATE" AS "TEST_DATE",
+	"a11"."TEST_NUM" AS "TEST_NUM",
+	"a12"."SITE_NUM" AS "SITE_NUM",
+	"a12"."DEVICE_ID" AS "DEVICE_ID",
+	"a11"."USL" AS "WJXBFS1",
+	"a11"."LSL" AS "WJXBFS2",
+	"a11"."TARGET_VALUE" AS "WJXBFS3"
+from	"public"."SEMI_TEST_CATALOG"	"a11"
+	join	"public"."SEMI_PARAMETRIC_MEASUREMENTS"	"a12"
+	  on 	("a11"."TEST_NUM" = "a12"."TEST_NUM")
+
+CREATE TEMP TABLE ZZSP02(
+	"WAFER_ID"	TEXT, 
+	"TESTER_ID"	TEXT, 
+	"TEST_STAGE"	TEXT, 
+	"TEST_DATE"	DATE, 
+	"TEST_NUM"	INTEGER, 
+	"SITE_NUM"	SMALLINT, 
+	"DEVICE_ID"	TEXT, 
+	"WJXBFS1"	DECIMAL(14, 6), 
+	"WJXBFS2"	DECIMAL(14, 6))
+
+insert into ZZSP02 
+select	"a12"."WAFER_ID" AS "WAFER_ID",
+	"a12"."TESTER_ID" AS "TESTER_ID",
+	"a12"."TEST_STAGE" AS "TEST_STAGE",
+	"a12"."TEST_DATE" AS "TEST_DATE",
+	"a11"."TEST_NUM" AS "TEST_NUM",
+	"a12"."SITE_NUM" AS "SITE_NUM",
+	"a12"."DEVICE_ID" AS "DEVICE_ID",
+	max("a11"."MANUAL_USL") AS "WJXBFS1",
+	max("a11"."MANUAL_LSL") AS "WJXBFS2"
+from	"public"."SEMI_ACTIVE_LIMITS"	"a11"
+	join	"public"."SEMI_PARAMETRIC_MEASUREMENTS"	"a12"
+	  on 	("a11"."TEST_NUM" = "a12"."TEST_NUM")
+group by	"a12"."WAFER_ID",
+	"a12"."TESTER_ID",
+	"a12"."TEST_STAGE",
+	"a12"."TEST_DATE",
+	"a11"."TEST_NUM",
+	"a12"."SITE_NUM",
+	"a12"."DEVICE_ID"
+
+select	"pa11"."TEST_NUM" AS "TEST_NUM",
+	"a14"."TEST_NAME" AS "TEST_NAME",
+	"a15"."TEST_CATEGORY" AS "TEST_CATEGORY",
+	"a14"."LOT_ID" AS "LOT_ID",
+	"pa11"."WAFER_ID" AS "WAFER_ID",
+	"pa11"."DEVICE_ID" AS "DEVICE_ID",
+	"pa11"."SITE_NUM" AS "SITE_NUM",
+	"pa11"."TESTER_ID" AS "TESTER_ID",
+	"pa11"."TEST_STAGE" AS "TEST_STAGE",
+	"pa11"."TEST_DATE" AS "TEST_DATE",
+	"pa11"."WJXBFS1" AS "WJXBFS1",
+	"pa11"."WJXBFS2" AS "WJXBFS2",
+	"pa11"."WJXBFS3" AS "WJXBFS3",
+	"pa11"."WJXBFS4" AS "WJXBFS4",
+	"pa11"."WJXBFS5" AS "WJXBFS5",
+	"pa12"."WJXBFS1" AS "WJXBFS6",
+	"pa12"."WJXBFS2" AS "WJXBFS7",
+	"pa12"."WJXBFS3" AS "WJXBFS8",
+	"pa13"."WJXBFS1" AS "WJXBFS9",
+	"pa13"."WJXBFS2" AS "WJXBFSa",
+	"pa11"."WJXBFS6" AS "WJXBFSb"
+from	ZZSP00	"pa11"
+	join	ZZSP01	"pa12"
+	  on 	("pa11"."DEVICE_ID" = "pa12"."DEVICE_ID" and 
+	"pa11"."SITE_NUM" = "pa12"."SITE_NUM" and 
+	"pa11"."TESTER_ID" = "pa12"."TESTER_ID" and 
+	"pa11"."TEST_DATE" = "pa12"."TEST_DATE" and 
+	"pa11"."TEST_NUM" = "pa12"."TEST_NUM" and 
+	"pa11"."TEST_STAGE" = "pa12"."TEST_STAGE" and 
+	"pa11"."WAFER_ID" = "pa12"."WAFER_ID")
+	join	ZZSP02	"pa13"
+	  on 	("pa11"."DEVICE_ID" = "pa13"."DEVICE_ID" and 
+	"pa11"."SITE_NUM" = "pa13"."SITE_NUM" and 
+	"pa11"."TESTER_ID" = "pa13"."TESTER_ID" and 
+	"pa11"."TEST_DATE" = "pa13"."TEST_DATE" and 
+	"pa11"."TEST_NUM" = "pa13"."TEST_NUM" and 
+	"pa11"."TEST_STAGE" = "pa13"."TEST_STAGE" and 
+	"pa11"."WAFER_ID" = "pa13"."WAFER_ID")
+	join	"public"."SEMI_PARAMETRIC_MEASUREMENTS"	"a14"
+	  on 	("pa11"."DEVICE_ID" = "a14"."DEVICE_ID" and 
+	"pa11"."SITE_NUM" = "a14"."SITE_NUM" and 
+	"pa11"."TESTER_ID" = "a14"."TESTER_ID" and 
+	"pa11"."TEST_DATE" = "a14"."TEST_DATE" and 
+	"pa11"."TEST_NUM" = "a14"."TEST_NUM" and 
+	"pa11"."TEST_STAGE" = "a14"."TEST_STAGE" and 
+	"pa11"."WAFER_ID" = "a14"."WAFER_ID")
+	join	"public"."SEMI_TEST_CATALOG"	"a15"
+	  on 	("pa11"."TEST_NUM" = "a15"."TEST_NUM")
+
+drop table ZZSP00
+
+drop table ZZSP01
+
+drop table ZZSP02
+
+[Analytical engine calculation steps:
+]
