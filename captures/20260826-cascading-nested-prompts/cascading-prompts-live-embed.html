@@ -1,0 +1,817 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cascading Prompts, Three Ways</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --orange: #FA660F;
+    --bg: #FFFFFF; --surface: #F7F7F6; --surface-2: #F2F2F2;
+    --border: #E4E4E4; --border-strong: #D2D2D2;
+    --text: #111111; --muted: #717171; --muted-strong: #484747;
+    --tint: #FFF3EC; --code-bg: #14100D; --code-text: #F2EDE9;
+    --shadow: 0 1px 2px rgba(0,0,0,.05), 0 4px 16px rgba(0,0,0,.06);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { background: var(--bg); color: var(--text); font-family: 'Inter', Arial, 'Helvetica Neue', sans-serif; font-size: 16.5px; line-height: 1.62; margin: 0; }
+  .shell { max-width: 1160px; margin: 0 auto; padding: 0 24px 96px; }
+  .prose { max-width: 76ch; }
+  header.masthead { padding: 52px 0 8px; }
+  .eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--orange); }
+  .eyebrow::before { content: ""; width: 22px; height: 3px; background: var(--orange); border-radius: 2px; }
+  h1 { font-size: clamp(30px, 5vw, 44px); font-weight: 700; line-height: 1.12; letter-spacing: -0.02em; margin: 14px 0 14px; }
+  .lede { font-size: 18px; color: var(--muted-strong); max-width: 70ch; margin: 0 0 18px; }
+  .lede strong { color: var(--text); }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
+  .chip { font-size: 12.5px; font-weight: 600; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border-strong); color: var(--muted-strong); background: var(--surface); }
+  .chip.verify { border-color: var(--orange); color: var(--orange); background: var(--tint); }
+  #auth-pill .pill-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--muted); margin-right:7px; vertical-align:1px; transition:background .2s; }
+  #auth-pill.ok { border-color:#1a7f37; color:#1a7f37; background:#e9f6ec; }
+  #auth-pill.ok .pill-dot { background:#1a7f37; }
+  #auth-pill.warn { border-color:var(--orange); color:var(--orange); background:var(--tint); }
+  #auth-pill.warn .pill-dot { background:var(--orange); }
+
+  /* contents / table of contents */
+  .toc { border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 22px 24px; margin-top: 34px; box-shadow: var(--shadow); }
+  .toc-head { font-size: 12.5px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); margin-bottom: 16px; }
+  .toc-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 22px; }
+  @media (max-width: 860px) { .toc-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 520px) { .toc-grid { grid-template-columns: 1fr; } }
+  .toc-group { display: flex; flex-direction: column; gap: 9px; }
+  .toc-label { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text); margin-bottom: 1px; }
+  .toc-group a { font-size: 14px; font-weight: 500; color: var(--muted-strong); text-decoration: none; line-height: 1.3; }
+  .toc-group a:hover { color: var(--orange); }
+  .toc-group a .n { color: var(--orange); font-weight: 700; font-variant-numeric: tabular-nums; margin-right: 5px; }
+  .toc-group a .t { display: block; font-size: 11.5px; color: var(--muted); font-weight: 400; }
+
+  section { margin-top: 60px; scroll-margin-top: 20px; }
+  h3[id], figure[id], .subhead[id] { scroll-margin-top: 20px; }
+  .kicker { font-size: 12.5px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); margin: 0 0 6px; }
+  h2 { font-size: clamp(24px, 3.2vw, 31px); font-weight: 700; letter-spacing: -0.015em; line-height: 1.18; margin: 0 0 14px; }
+  h2 .num { color: var(--orange); font-variant-numeric: tabular-nums; margin-right: 10px; }
+  h3 { font-size: 19px; font-weight: 600; margin: 34px 0 10px; }
+  p { margin: 0 0 14px; }
+  a { color: var(--orange); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  ul, ol { margin: 0 0 16px; padding-left: 24px; }
+  li { margin-bottom: 8px; }
+  li::marker { color: var(--orange); font-weight: 600; }
+  .small { font-size: 13.5px; color: var(--muted); }
+  code { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: .87em; background: var(--surface-2); border: 1px solid var(--border); padding: 1px 5px; border-radius: 5px; }
+  .callout { border-left: 4px solid var(--orange); background: var(--tint); border-radius: 0 8px 8px 0; padding: 14px 18px; margin: 18px 0; max-width: 82ch; }
+  .callout p:last-child, .callout ol:last-child { margin-bottom: 0; }
+  .callout .callout-title { font-weight: 600; display: block; margin-bottom: 4px; }
+
+  .error-card { border: 1px solid var(--border-strong); border-radius: 10px; overflow: hidden; margin: 18px 0; box-shadow: var(--shadow); max-width: 640px; background: var(--surface); }
+  .error-card .bar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 14px; }
+  .error-card .bar .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--orange); flex: none; }
+  .error-card .body { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; padding: 14px 16px; color: var(--muted-strong); line-height: 1.6; }
+
+  .demo { border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 22px; margin: 24px 0; box-shadow: var(--shadow); }
+  .demo-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  .demo-title { font-weight: 700; font-size: 17px; }
+  .demo-sub { font-size: 13.5px; color: var(--muted); }
+  .btn { font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; border-radius: 8px; padding: 8px 16px; border: 1px solid var(--border-strong); background: var(--bg); color: var(--text); text-decoration: none; display: inline-block; }
+  .btn:hover { border-color: var(--muted); }
+  .btn.primary { background: var(--orange); border-color: var(--orange); color: #fff; }
+  .btn[disabled] { opacity: .45; cursor: not-allowed; }
+  .btn:focus-visible, .opt:focus-visible, a:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  @media (max-width: 820px) { .steps { grid-template-columns: 1fr; } }
+  .step { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 10px; min-height: 200px; }
+  .step.locked { opacity: .55; }
+  .step.done { border-color: var(--orange); }
+  .step-head { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 13.5px; flex-wrap: wrap; }
+  .step-no { width: 22px; height: 22px; border-radius: 50%; flex: none; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; background: var(--surface-2); color: var(--muted-strong); border: 1px solid var(--border-strong); }
+  .step.open .step-no, .step.done .step-no { background: var(--orange); border-color: var(--orange); color: #fff; }
+  .step-state { margin-left: auto; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+  .step.done .step-state { color: var(--orange); }
+  .step-tag { width: 100%; font-size: 11.5px; color: var(--muted); font-weight: 500; }
+  .opts { display: flex; flex-wrap: wrap; gap: 7px; align-content: flex-start; }
+  .opt { font: inherit; font-size: 13.5px; font-weight: 500; cursor: pointer; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--bg); color: var(--text); }
+  .opt:hover { border-color: var(--orange); }
+  .opt.on { background: var(--orange); border-color: var(--orange); color: #fff; }
+  .opt-group-label { width: 100%; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin-top: 4px; }
+  .step-foot { margin-top: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .step-note { font-size: 12.5px; color: var(--muted); }
+  .engine { margin-top: 16px; background: var(--code-bg); color: var(--code-text); border-radius: 10px; padding: 14px 16px; overflow-x: auto; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 12.75px; line-height: 1.75; }
+  .engine-cap { font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 18px 0 6px; }
+  .engine .lbl { color: #A8A8A8; }
+  .engine .hot { color: #FFA164; font-weight: 600; }
+  .engine div { white-space: pre-wrap; }
+  .result-strip { margin-top: 14px; display: none; }
+  .result-strip.show { display: block; }
+
+  .table-wrap { overflow-x: auto; margin: 18px 0; border: 1px solid var(--border); border-radius: 10px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+  th { text-align: left; background: var(--orange); color: #fff; font-weight: 600; padding: 10px 14px; font-size: 13.5px; white-space: nowrap; }
+  td { padding: 10px 14px; border-top: 1px solid var(--border); vertical-align: top; }
+  tbody tr:nth-child(even) { background: var(--surface-2); }
+  td .win { color: var(--orange); font-weight: 600; }
+  .num-cell { font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
+
+  figure { margin: 24px 0; }
+  .fig-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); padding: 18px; }
+  figure svg { display: block; min-width: 760px; max-width: 100%; height: auto; margin: 0 auto; }
+  figcaption { font-size: 13.5px; color: var(--muted); margin-top: 10px; max-width: 76ch; }
+
+  .frame-card { border: 1px solid var(--border); border-radius: 14px; overflow: hidden; background: var(--surface); box-shadow: var(--shadow); margin: 20px 0; }
+  .frame-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 18px; border-bottom: 1px solid var(--border); }
+  .frame-title { font-weight: 700; font-size: 15px; }
+  .frame-title .live { display: inline-block; margin-left: 8px; font-size: 10.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--orange); border: 1px solid var(--orange); border-radius: 999px; padding: 1px 8px; vertical-align: 2px; }
+  .frame-card iframe { display: block; width: 100%; height: 730px; border: 0; background: #fff; }
+
+  pre.code { background: var(--code-bg); color: var(--code-text); border-radius: 10px; padding: 16px 18px; overflow-x: auto; margin: 14px 0; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 12.75px; line-height: 1.7; }
+  pre.code .c { color: #A8A8A8; }
+  pre.code .k { color: #FFA164; }
+  details { border: 1px solid var(--border); border-radius: 10px; margin: 16px 0; background: var(--surface); max-width: 86ch; }
+  details summary { cursor: pointer; font-weight: 600; padding: 13px 17px; font-size: 14.5px; }
+  details[open] summary { border-bottom: 1px solid var(--border); }
+  details .d-body { padding: 12px 17px 14px; }
+
+  .build-step { display: flex; gap: 16px; margin: 0 0 22px; max-width: 86ch; }
+  .build-no { flex: none; width: 34px; height: 34px; border-radius: 50%; background: var(--orange); color: #fff; font-weight: 700; font-size: 15px; display: inline-flex; align-items: center; justify-content: center; margin-top: 2px; }
+  .build-body h4 { margin: 4px 0 6px; font-size: 16.5px; font-weight: 600; }
+  .build-body p { margin-bottom: 8px; }
+  .build-body .path { font-size: 13px; color: var(--muted-strong); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; display: inline-block; margin: 2px 0 8px; }
+
+  footer { margin-top: 80px; border-top: 1px solid var(--border); padding-top: 28px; font-size: 13.5px; color: var(--muted); }
+  footer h4 { margin-top: 0; color: var(--text); font-size: 16px; }
+  .foot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+  @media (max-width: 720px) { .foot-grid { grid-template-columns: 1fr; } }
+  .copyright { margin-top: 30px; text-align: center; font-size: 12px; color: var(--muted); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
+
+  .proscons { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 20px 0; max-width: 86ch; }
+  @media (max-width: 640px) { .proscons { grid-template-columns: 1fr; } }
+  .pc { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; background: var(--surface); }
+  .pc h4 { margin: 0 0 9px; font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; display: flex; align-items: center; gap: 7px; }
+  .pc h4 .ic { width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; color: #fff; flex: none; }
+  .pc.pro h4 { color: #1a7f37; } .pc.pro h4 .ic { background: #1a7f37; }
+  .pc.con h4 { color: var(--orange); } .pc.con h4 .ic { background: var(--orange); }
+  .pc ul { margin: 0; padding-left: 18px; }
+  .pc li { margin-bottom: 6px; font-size: 14px; line-height: 1.5; }
+  .pc.pro li::marker { color: #1a7f37; } .pc.con li::marker { color: var(--orange); }
+</style>
+</head>
+<body>
+<div class="shell">
+
+<header class="masthead">
+  <span class="eyebrow">Strategy BI · classic prompts &amp; filters</span>
+  <h1>Cascading prompts, three ways</h1>
+  <p class="lede">Users start broad and narrow in: pick a <strong>Year</strong>, see only that year's quarters, pick a <strong>Quarter</strong>, see only its months &mdash; each choice decides what you can pick next. This guide covers <strong>four ways</strong> to build that in classic Strategy BI, each with a live example from the MicroStrategy Tutorial demo project and its own trade-offs. The page signs in to the demo automatically, so every embed is live the moment it loads.</p>
+  <div class="meta-row">
+    <span class="chip" id="auth-pill"><span class="pill-dot"></span>Connecting to the live demo…</span>
+    <span class="chip verify">&#10003; Live demo objects &mdash; verified August 2026</span>
+    <span class="chip">MicroStrategy Tutorial demo project</span>
+    <span class="chip">Best viewed in Chrome or Edge</span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="On this page">
+  <div class="toc-head">On this page</div>
+  <div class="toc-grid">
+    <div class="toc-group">
+      <div class="toc-label">The four approaches</div>
+      <a href="#nested"><span class="n">1</span>Nested prompts<span class="t">prompt-in-prompt · + flow diagram</span></a>
+      <a href="#filter-panel"><span class="n">2</span>Targeted filter panel<span class="t">on a dashboard · live narrowing</span></a>
+      <a href="#hierarchy"><span class="n">3</span>Hierarchy prompt<span class="t">one object · tree picker</span></a>
+      <a href="#rest"><span class="n">4</span>REST API<span class="t">automate · see the calls</span></a>
+    </div>
+    <div class="toc-group">
+      <div class="toc-label">Build it</div>
+      <a href="#workstation">In Workstation<span class="t">step by step, incl. the fix</span></a>
+      <a href="#developer">Still using Developer?<span class="t">the original recipe</span></a>
+    </div>
+    <div class="toc-group">
+      <div class="toc-label">Reference</div>
+      <a href="#decision">Compare at a glance</a>
+      <a href="#gotchas">Gotchas</a>
+      <a href="#reference">Embedding &amp; documentation</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ============ APPROACH 1 · NESTED PROMPTS ============ -->
+<section id="nested">
+  <p class="kicker">Approach 1 &middot; the prompt-in-prompt pattern</p>
+  <h2><span class="num">1</span>Nested prompts</h2>
+  <p class="prose">The classic prompt-in-prompt pattern (<a href="https://community.strategy.com/article/KB10434-How-to-create-N-Level-deep-nested-prompts-in">KB10434</a>): each level is an element-list <strong>prompt</strong> plus a <strong>filter</strong> that wraps it, and the next prompt's element list is restricted by the previous filter. It filters the SQL itself, so only the chosen slice ever leaves the warehouse. Here it is live &mdash; answer Year and click next, and the Quarter list arrives already narrowed:</p>
+
+  <div class="frame-card">
+    <div class="frame-bar">
+      <span class="frame-title">Cascading Prompts Demo (Year - Quarter - Month)<span class="live">live</span></span>
+      <a class="btn" href="/MicroStrategyLibrary/app/B7CA92F04B9FAE8D941C3E9B7E0CD754/52F8FB50AB4C3A2E7937598E9D5B39F6" target="_blank" rel="noopener">Open full screen ↗</a>
+    </div>
+    <iframe src="about:blank" data-src="/MicroStrategyLibrary/app/B7CA92F04B9FAE8D941C3E9B7E0CD754/52F8FB50AB4C3A2E7937598E9D5B39F6" title="Cascading Prompts Demo (Year - Quarter - Month) — live prompted report" loading="lazy" allowfullscreen></iframe>
+  </div>
+  <p class="prose small">Embedded live from Strategy Library &mdash; you've already been signed in to the demo, so it runs with no login prompt. Frame not loading? See <a href="#reference">embedding &amp; documentation</a>.</p>
+
+  <h3 id="diagram">Flow diagram: how the objects connect</h3>
+  <p class="prose">Each level is a pair of objects; only the deepest filter goes on the report, and the engine discovers the rest of the chain from there. No depth limit.</p>
+  <figure>
+    <div class="fig-scroll">
+    <svg viewBox="0 0 980 330" role="img" aria-label="Object graph of the three-level chain: Elements of Year is embedded in Year Filter Prompted, which restricts Elements of Quarter, wrapped by Quarter Filter Prompted, which restricts Elements of Month, wrapped by Month Filter Prompted, which is the report filter. Prompts resolve left to right at run time.">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        <marker id="arrO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#FA660F"/></marker>
+      </defs>
+      <g fill="none" stroke="currentColor" stroke-width="1.4">
+        <rect x="30" y="40" width="200" height="64" rx="9"/><rect x="350" y="40" width="200" height="64" rx="9"/><rect x="670" y="40" width="200" height="64" rx="9"/>
+        <rect x="30" y="180" width="200" height="64" rx="9"/><rect x="350" y="180" width="200" height="64" rx="9"/><rect x="670" y="180" width="200" height="64" rx="9" stroke="#FA660F" stroke-width="2"/>
+        <rect x="770" y="272" width="180" height="46" rx="9" stroke="#FA660F" stroke-width="2"/>
+        <line x1="130" y1="104" x2="130" y2="176" marker-end="url(#arr)"/><line x1="450" y1="104" x2="450" y2="176" marker-end="url(#arr)"/><line x1="770" y1="104" x2="770" y2="176" marker-end="url(#arr)"/>
+        <path d="M230 202 C 300 202, 300 72, 346 72" stroke="#FA660F" stroke-width="2" marker-end="url(#arrO)"/>
+        <path d="M550 202 C 620 202, 620 72, 666 72" stroke="#FA660F" stroke-width="2" marker-end="url(#arrO)"/>
+        <line x1="860" y1="244" x2="860" y2="268" stroke="#FA660F" stroke-width="2" marker-end="url(#arrO)"/>
+      </g>
+      <g fill="currentColor" font-family="Inter, Arial, sans-serif">
+        <g font-size="13" font-weight="600" text-anchor="middle">
+          <text x="130" y="66">Elements of Year</text><text x="450" y="66">Elements of Quarter</text><text x="770" y="66">Elements of Month</text>
+          <text x="130" y="206">Year Filter Prompted</text><text x="450" y="206">Quarter Filter Prompted</text><text x="770" y="206" fill="#FA660F">Month Filter Prompted</text>
+          <text x="860" y="299" fill="#FA660F">Report</text>
+        </g>
+        <g font-size="11.5" text-anchor="middle" opacity=".75">
+          <text x="130" y="86">prompt</text><text x="450" y="86">prompt (cascading)</text><text x="770" y="86">prompt (cascading)</text>
+          <text x="130" y="226">Year = ?prompt</text><text x="450" y="226">Quarter = ?prompt</text><text x="770" y="226">Month = ?prompt</text>
+        </g>
+        <g font-size="11.5" opacity=".8"><text x="140" y="144">embedded in</text><text x="460" y="144">wrapped by</text><text x="780" y="144">wrapped by</text><text x="866" y="260" fill="#FA660F">report filter</text></g>
+        <g font-size="11.5" font-weight="600" fill="#FA660F" text-anchor="middle">
+          <text x="288" y="46">restricts</text><text x="288" y="60">element list</text><text x="608" y="46">restricts</text><text x="608" y="60">element list</text>
+        </g>
+        <g font-size="11.5" opacity=".65"><text x="30" y="26">answered 1st</text><text x="350" y="26">answered 2nd</text><text x="670" y="26">answered 3rd</text></g>
+      </g>
+    </svg>
+    </div>
+    <figcaption>Two edge types make the cascade: each filter <em>wraps</em> a prompt (vertical arrows), and each filter <em>restricts the element list</em> of the next prompt (orange arrows). The engine walks the references backwards from the report filter and asks the questions forwards.</figcaption>
+  </figure>
+
+  <div class="proscons">
+    <div class="pc pro">
+      <h4><span class="ic">+</span>Pros</h4>
+      <ul>
+        <li>Filters the SQL itself &mdash; only the chosen slice is retrieved, so it scales to very large dimensions.</li>
+        <li>Works on reports, and flows into subscriptions and bursting.</li>
+        <li>Guided, one-question-at-a-time experience for the user.</li>
+        <li>No depth limit &mdash; stack as many levels as the business needs.</li>
+      </ul>
+    </div>
+    <div class="pc con">
+      <h4><span class="ic">&minus;</span>Cons</h4>
+      <ul>
+        <li>Two objects to build per level, and the Workstation editor gap needs the placeholder-swap workaround.</li>
+        <li>Lives on reports &mdash; on a dashboard it prompts once per dataset, not per viewer interaction.</li>
+        <li>Every level should be Required, or nothing filters (see gotchas).</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Also: nested prompts on a dashboard</h3>
+  <p class="prose">Drop a prompted report into a dashboard and the whole cascade fires <strong>when the dashboard opens</strong> (or is re-prompted), then the dataset holds exactly the retrieved slice. Here's the product-chain twin (Category &rarr; Subcategory &rarr; Item) wrapped in a dashboard:</p>
+  <div class="frame-card">
+    <div class="frame-bar">
+      <span class="frame-title">Cascading Prompt - Category, Subcategory, Item<span class="live">live</span></span>
+      <a class="btn" href="/MicroStrategyLibrary/app/B7CA92F04B9FAE8D941C3E9B7E0CD754/942701A89C429C0996DF17BEA7AB1ECD" target="_blank" rel="noopener">Open full screen ↗</a>
+    </div>
+    <iframe src="about:blank" data-src="/MicroStrategyLibrary/app/B7CA92F04B9FAE8D941C3E9B7E0CD754/942701A89C429C0996DF17BEA7AB1ECD" title="Cascading Prompt - Category, Subcategory, Item — live dashboard on a prompted report" loading="lazy" allowfullscreen></iframe>
+  </div>
+  <div class="callout">
+    <span class="callout-title">The distinction that leads to approach 2</span>
+    <p>Prompts are decided <strong>per dataset</strong> (once, up front); the filter panel narrows <strong>per viewer</strong> (always on). If you want viewers to keep re-slicing inside the dashboard without a re-prompt, that's targeted filters &mdash; next.</p>
+  </div>
+</section>
+
+<!-- ============ APPROACH 2 · TARGETED FILTER PANEL ============ -->
+<section id="filter-panel">
+  <p class="kicker">Approach 2 &middot; the dashboard-native route</p>
+  <h2><span class="num">2</span>Targeted filter panel</h2>
+  <p class="prose">On a dashboard, cascading is a built-in feature of the filter panel: an attribute filter can <strong>target</strong> other attribute filters, so a selection in Category instantly narrows what the Subcategory filter offers. No prompt objects, no wizard. Here it is live &mdash; pick a Category in the panel and watch Subcategory and Item narrow:</p>
+
+  <div class="frame-card">
+    <div class="frame-bar">
+      <span class="frame-title">Cascading Filter Panel - Category, Subcategory, Item<span class="live">live</span></span>
+      <a class="btn" href="/MicroStrategyLibrary/app/B7CA92F04B9FAE8D941C3E9B7E0CD754/C9E0D4793C43EC86A9C1D9940D7F5955" target="_blank" rel="noopener">Open full screen ↗</a>
+    </div>
+    <iframe src="about:blank" data-src="/MicroStrategyLibrary/app/B7CA92F04B9FAE8D941C3E9B7E0CD754/C9E0D4793C43EC86A9C1D9940D7F5955" title="Cascading Filter Panel - Category, Subcategory, Item — live dashboard with targeted filters" loading="lazy" allowfullscreen></iframe>
+  </div>
+  <p class="prose small">The three filters &mdash; Category, Subcategory, Item &mdash; target each other down the chain, and the grid updates as you go. If the filter panel is collapsed, open it from the dashboard toolbar.</p>
+
+  <div class="proscons">
+    <div class="pc pro">
+      <h4><span class="ic">+</span>Pros</h4>
+      <ul>
+        <li>Native dashboard feature &mdash; no custom objects, just <em>Select Targets</em>.</li>
+        <li>Instant on an in-memory cube: every narrow is answered from memory, no re-query.</li>
+        <li>Per-viewer and always on &mdash; the interaction Library users already expect.</li>
+      </ul>
+    </div>
+    <div class="pc con">
+      <h4><span class="ic">&minus;</span>Cons</h4>
+      <ul>
+        <li>Only filters data already in the dataset &mdash; the dataset must hold the full domain.</li>
+        <li>On a live-connect dataset each interaction fires SQL (fine for small lookups, heavier for big ones).</li>
+        <li>Dashboard-only &mdash; not available for scheduled reports or bursting.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ APPROACH 3 · HIERARCHY PROMPT ============ -->
+<section id="hierarchy">
+  <p class="kicker">Approach 3 &middot; the one-object shortcut</p>
+  <h2><span class="num">3</span>Hierarchy prompt</h2>
+  <p class="prose">One prompt instead of a chain: a <strong>hierarchy qualification prompt</strong> on the Products drill hierarchy gives users a tree picker &mdash; expand Electronics, see its subcategories, qualify at any level. The cascade comes free from the hierarchy definition. This dashboard runs on exactly that:</p>
+  <div class="frame-card">
+    <div class="frame-bar">
+      <span class="frame-title">Cascading Prompt - Product Hierarchy Prompt<span class="live">live</span></span>
+      <a class="btn" href="/MicroStrategyLibrary/app/B7CA92F04B9FAE8D941C3E9B7E0CD754/B24CEE0BF04483AF3098548E682A2E18" target="_blank" rel="noopener">Open full screen ↗</a>
+    </div>
+    <iframe src="about:blank" data-src="/MicroStrategyLibrary/app/B7CA92F04B9FAE8D941C3E9B7E0CD754/B24CEE0BF04483AF3098548E682A2E18" title="Cascading Prompt - Product Hierarchy Prompt — live dashboard" loading="lazy" allowfullscreen></iframe>
+  </div>
+
+  <div class="proscons">
+    <div class="pc pro">
+      <h4><span class="ic">+</span>Pros</h4>
+      <ul>
+        <li>One object &mdash; fastest to build, no filter chain, and no Workstation gap.</li>
+        <li>Users can qualify at any level: a whole category, or individual items.</li>
+        <li>Filters the SQL like nested prompts, so it scales the same way.</li>
+      </ul>
+    </div>
+    <div class="pc con">
+      <h4><span class="ic">&minus;</span>Cons</h4>
+      <ul>
+        <li>A tree picker, not a guided step-by-step wizard.</li>
+        <li>Needs a clean drill hierarchy to already exist in the schema.</li>
+        <li>"Qualify anywhere" can confuse less-technical users; the optional-prompt trap still applies (this demo's prompt is optional, so skipping it returns all products).</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ APPROACH 4 · REST API ============ -->
+<section id="rest">
+  <p class="kicker">Approach 4 &middot; automation</p>
+  <h2><span class="num">4</span>REST API</h2>
+  <p class="prose">The same cascade, driven by the public REST API instead of the UI &mdash; ideal for <strong>provisioning many cascades at once</strong> or scripting a migration, and there's no editor gap because there's no preview step. Two parts: at <strong>run time</strong> the API answers the prompts one level at a time (below), and at <strong>build time</strong> the API creates the object chain (the recipe). Step through the same Year &rarr; Quarter &rarr; Month example and watch the exact call at each step:</p>
+
+  <div class="demo" id="sim">
+    <div class="demo-head">
+      <div>
+        <div class="demo-title">Runtime, step by step &middot; Year &rarr; Quarter &rarr; Month</div>
+        <div class="demo-sub">Real captured data &middot; each pick shows the REST call the server handles</div>
+      </div>
+      <button class="btn" id="sim-reset" type="button">Reset</button>
+    </div>
+    <div class="steps" id="sim-steps"></div>
+    <div class="engine-cap">The REST calls behind each step</div>
+    <div class="engine" id="sim-engine" aria-live="polite" aria-label="The REST calls behind each step"></div>
+    <div class="result-strip" id="sim-result"></div>
+  </div>
+
+  <details>
+    <summary>Show the full recipe &mdash; creating the object chain over REST</summary>
+    <div class="d-body">
+      <p class="prose">Public Modeling API, one changeset per object, committed in order because each object must exist before the next references it:</p>
+      <pre class="code"><span class="c"># per level: prompt, then the filter that wraps it</span>
+POST /api/model/changesets?schemaEdit=false        <span class="c">→ X-MSTR-MS-Changeset header</span>
+
+POST /api/model/prompts
+{ "information": { "subType": "prompt_elements", "name": "Elements of Quarter (cascading)", "destinationFolderId": "…" },
+  "question": { "attribute": { "objectId": "&lt;Quarter&gt;", "subType": "attribute" },
+                "listAllElements": false,
+                <span class="k">"filter"</span>: { "objectId": "&lt;Year Filter Prompted&gt;", "subType": "filter" } },   <span class="c">← the cascade; no preview, no error</span>
+  "restriction": { "required": true, "allowPersonalAnswers": "none" } }
+
+POST /api/model/filters
+{ "information": { "subType": "filter", "name": "Quarter Filter Prompted", "destinationFolderId": "…" },
+  "qualification": { "tree": { "type": "predicate_element_list",
+    "predicateTree": { <span class="k">"elementsPrompt"</span>: { "objectId": "&lt;quarter prompt&gt;", "subType": "prompt_elements" } } } } }
+
+POST /api/model/changesets/{id}/commit   {}
+
+<span class="c"># the report — reference the deepest filter (the spec's "standaloneFilter" shape is rejected; use this)</span>
+POST /api/model/reports
+{ "sourceType": "normal",
+  "dataSource": { "dataTemplate": { "units": [ Year, Quarter, Month, {metrics: [Revenue]} ] },
+    "filter": { "tree": { "type": "predicate_filter_qualification",
+      "predicateTree": { "filter": { "objectId": "&lt;Month Filter Prompted&gt;", "subType": "filter" }, "isIndependent": 0 } } } },
+  "grid": { "viewTemplate": { … } } }
+POST /api/model/reports/{id}/instances/saveAs      <span class="c">→ X-MSTR-MS-Instance header from the create</span></pre>
+      <p class="prose small">Two traps found while building this live: resolve attributes from the <strong>system hierarchy</strong>, not name search (search returns managed "Quarter"/"Month" twins that prompts accept silently and reports reject with <code>8004da0c</code>); and test the cascade headlessly by looping the runtime calls shown in the stepper above.</p>
+    </div>
+  </details>
+
+  <div class="proscons">
+    <div class="pc pro">
+      <h4><span class="ic">+</span>Pros</h4>
+      <ul>
+        <li>Fully scriptable &mdash; provision many cascades or migrate in bulk; no Workstation editor gap.</li>
+        <li>Reproducible and version-controllable.</li>
+        <li>Identical runtime result to a Workstation-built chain.</li>
+      </ul>
+    </div>
+    <div class="pc con">
+      <h4><span class="ic">&minus;</span>Cons</h4>
+      <ul>
+        <li>Developer effort &mdash; not a point-and-click path.</li>
+        <li>A couple of API traps to know (managed-attribute twins; the report filter shape).</li>
+        <li>You still design the same object chain &mdash; REST only creates it.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ BUILD IT IN WORKSTATION ============ -->
+<section id="workstation">
+  <p class="kicker">Build it</p>
+  <h2>How to build it in Workstation</h2>
+  <p class="prose">The point-and-click path for all three UI approaches. Nested prompts hit a well-known editor snag at step 3 &mdash; here's the full path, including the fix. The filter panel and hierarchy prompt are much simpler and follow after.</p>
+
+  <h3>Nested prompts &mdash; the one with a catch</h3>
+  <div class="build-step">
+    <span class="build-no">1</span>
+    <div class="build-body">
+      <h4>Create the level-1 prompt</h4>
+      <span class="path">Folder &rarr; New &rarr; Prompt &rarr; Elements of an attribute</span>
+      <p>Attribute: <strong>Year</strong>. Leave <em>Filtered elements</em> empty (level 1 shows everything). Set the title and instruction the user will read, tick <strong>Required</strong>, save as <em>Elements of Year</em>.</p>
+    </div>
+  </div>
+  <div class="build-step">
+    <span class="build-no">2</span>
+    <div class="build-body">
+      <h4>Wrap it in a filter</h4>
+      <span class="path">New &rarr; Filter &rarr; add qualification on Year &rarr; use a prompt</span>
+      <p>The filter's only condition is the prompt itself &mdash; qualification reads <code>{Elements of Year}</code>. Save as <em>Year Filter Prompted</em>. (You can also create the prompt inline here &mdash; Workstation then embeds it inside the filter; embedded and standalone prompts cascade identically.)</p>
+    </div>
+  </div>
+  <div class="build-step">
+    <span class="build-no">3</span>
+    <div class="build-body">
+      <h4>Create the level-2 prompt &mdash; and meet the gap</h4>
+      <span class="path">New &rarr; Prompt &rarr; Elements of an attribute &rarr; Quarter &rarr; Filtered elements</span>
+      <p>The natural move is to point <em>Filtered elements</em> at <em>Year Filter Prompted</em>. Workstation refuses:</p>
+      <div class="error-card" role="img" aria-label="Workstation error: the filter contains prompts; filtered element browsing is not supported with a filter that contains prompts.">
+        <div class="bar"><span class="dot"></span>Error &mdash; New Untitled Prompt</div>
+        <div class="body">The filter 'Year Filter Prompted' contains prompts. Filtered element browsing is not supported with a filter that contains prompts.</div>
+      </div>
+      <p><strong>Why:</strong> the moment you pick a filter, the editor element-browses with it to show a preview. A prompted filter has no answer at design time, so the preview is impossible &mdash; and the editor rejects the pick instead of skipping the preview. <strong>This is an editor-preview limitation only.</strong> The engine resolves the restriction perfectly at run time (the live report in approach 1 is the proof), and the prompt <em>object</em> is allowed to reference a prompted filter.</p>
+    </div>
+  </div>
+  <div class="build-step">
+    <span class="build-no">4</span>
+    <div class="build-body">
+      <h4>The workaround: restrict by a placeholder, then swap</h4>
+      <span class="path">Filtered elements &rarr; pick a temporary static filter</span>
+      <p>Give the editor what it can preview: a throwaway static filter (say <code>Year = 2022</code>). The preview works, the Quarter prompt saves. Then <strong>edit that placeholder filter</strong> and replace its qualification with the Year prompt &mdash; exactly what you did in step 2. The prompt's stored restriction points at the filter <em>object</em>, so it now cascades. Server-verified: the swap commits and the reference survives.</p>
+      <p class="small">Afterwards, don't reopen this prompt's <em>Filtered elements</em> picker &mdash; the preview shows the same harmless error; Cancel leaves the object intact. Quick sanity check instead: run the report; if the Quarter list narrows to the chosen year, the link is live.</p>
+    </div>
+  </div>
+  <div class="build-step">
+    <span class="build-no">5</span>
+    <div class="build-body">
+      <h4>Wrap level 2, repeat for level 3</h4>
+      <span class="path">New &rarr; Filter &rarr; qualification = the Quarter prompt</span>
+      <p>Save <em>Quarter Filter Prompted</em>. Then repeat steps 3&ndash;5 for <strong>Month</strong> (placeholder &rarr; save prompt &rarr; swap placeholder to the Quarter prompt &rarr; wrap in <em>Month Filter Prompted</em>). Stack as many levels as the business needs.</p>
+    </div>
+  </div>
+  <div class="build-step">
+    <span class="build-no">6</span>
+    <div class="build-body">
+      <h4>Put only the deepest filter on the report</h4>
+      <span class="path">Report editor &rarr; Filter panel &rarr; add existing filter &rarr; Month Filter Prompted</span>
+      <p>Template: Year, Quarter, Month + Revenue. The engine discovers the whole chain from that one filter and asks the prompts in order &mdash; the sequential wizard you tried in approach 1.</p>
+    </div>
+  </div>
+
+  <h3>Targeted filter panel</h3>
+  <ol class="prose">
+    <li>Open a dashboard in edit mode and drag <strong>Category, Subcategory, Item</strong> from the dataset into the chapter's <strong>Filter panel</strong>.</li>
+    <li>On the Category filter: <strong>More (&hellip;) &rarr; Select Targets</strong> &rarr; check <em>Subcategory</em> (and <em>Item</em>) &rarr; <strong>Apply</strong>. Repeat on Subcategory, targeting Item. (<a href="https://www2.strategy.com/producthelp/current/library/en-us/Content/Filtering_the_attribute_values_displayed_in_a_filt.htm">docs</a>)</li>
+    <li>Optionally check <strong>Update targets automatically</strong> so a downstream selection clears when its parent changes.</li>
+  </ol>
+
+  <h3>Hierarchy prompt</h3>
+  <ol class="prose">
+    <li><strong>New &rarr; Prompt &rarr; Hierarchy qualification</strong> ("qualify on a hierarchy"): pick the <strong>Products</strong> hierarchy, write the instruction, decide Required, save. No preview error here, because there's no filtered element browse involved.</li>
+    <li><strong>Add it to the report filter</strong> as a qualification. That's the whole chain &mdash; then optionally wrap the report in a dashboard.</li>
+  </ol>
+
+  <h3 id="gotchas">Gotchas that matter</h3>
+  <ul class="prose">
+    <li><strong>Make every level required.</strong> An optional lower prompt that goes unanswered means the report filter carries no qualification &mdash; nothing filters (<a href="https://community.strategy.com/article/KB37738-How-to-answer-N-Level-deep-nested-prompts-when-the">KB37738</a>). If you need optional levels, AND all the filters onto the report instead. (The approach-1 demo's Year prompt is intentionally optional &mdash; skip it and level 2 offers all 16 quarters, a quick way to feel why Required matters.)</li>
+    <li><strong>Keep cascade attributes related in the schema.</strong> Year &rarr; Quarter &rarr; Month are parent&ndash;child in the Time hierarchy, so each restricted browse is a small lookup query. Unrelated attributes force fact-table joins per level &mdash; that's where nested prompts get slow.</li>
+    <li><strong>Prompts are the "parameters."</strong> In classic Strategy BI there is no separate parameter object &mdash; a prompt <em>is</em> the reusable question, and its answer parameterizes the SQL.</li>
+  </ul>
+</section>
+
+<!-- ============ DEVELOPER ============ -->
+<section id="developer">
+  <p class="kicker">Build it &middot; legacy tool</p>
+  <h2>Still using Developer (desktop)?</h2>
+  <p class="prose">Developer's prompt editor has no preview restriction, so <a href="https://community.strategy.com/article/KB10434-How-to-create-N-Level-deep-nested-prompts-in">KB10434</a> works verbatim &mdash; no placeholder-swap needed:</p>
+  <ol class="prose">
+    <li>Prompt on Year's element list; save.</li>
+    <li>Filter containing that prompt; save.</li>
+    <li>Quarter prompt: <em>Use a filter to reduce the list of elements</em> &rarr; pick the Year filter. Repeat for Month.</li>
+    <li>Put the deepest filter on the report.</li>
+  </ol>
+  <p class="prose small">Same objects, same runtime as the Workstation or REST builds &mdash; don't reinstall Developer just for this; the placeholder swap or REST produce the identical graph.</p>
+</section>
+
+<!-- ============ REFERENCE ============ -->
+<section id="reference">
+  <p class="kicker">Reference</p>
+  <h2>Compare, embed, and read more</h2>
+
+  <h3 id="decision">Compare at a glance</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th></th><th>1 &middot; Nested prompts</th><th>2 &middot; Targeted filters</th><th>3 &middot; Hierarchy prompt</th><th>4 &middot; REST API</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Lives on</strong></td><td>Reports (+ subscriptions)</td><td>Dashboards</td><td>Reports</td><td>Any (it builds the objects)</td></tr>
+        <tr><td><strong>User experience</strong></td><td>Guided wizard</td><td>Live panel, instant</td><td>Single tree picker</td><td>N/A &mdash; automation</td></tr>
+        <tr><td><strong>Filters</strong></td><td>The SQL itself</td><td>Data in the dataset</td><td>The SQL itself</td><td>Same as what it builds</td></tr>
+        <tr><td><strong>Setup</strong></td><td>2 objects/level + workaround</td><td>Clicks in the panel</td><td>1 prompt</td><td>Script (developer)</td></tr>
+        <tr><td><strong>Performance</strong></td><td>Small lookup per level</td><td><span class="win">Instant on a cube</span></td><td>One browse per expand</td><td>Same as target</td></tr>
+        <tr><td><strong>Best for</strong></td><td>Big dimensions, bursting</td><td>Interactive dashboards</td><td>Quick setup, analysts</td><td>Bulk / repeatable builds</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout">
+    <span class="callout-title">Recommendation</span>
+    <p>Dashboard destination &rarr; approach 2 on an in-memory cube. Prompted reports, bursting, or dimensions too large to cube &rarr; approach 1. A clean drill hierarchy and an analyst audience &rarr; approach 3. Provisioning many cascades or migrating &rarr; approach 4.</p>
+  </div>
+
+  <h3>Embedding Library in your own pages</h3>
+  <p class="prose">Everything on this page is a plain <code>&lt;iframe&gt;</code> of Strategy Library &mdash; the same technique works in any intranet portal or web app. Four requirements make it reliable:</p>
+  <ul class="prose">
+    <li><strong>Allow embedding on the Library server.</strong> Library Admin &rarr; Library Server &rarr; Security Settings: allow embedding (list your portal's origins, or All for a demo environment) and set the cookies' <strong>SameSite attribute to None</strong> (Library then adds <code>Secure</code>). This demo environment is already configured.</li>
+    <li><strong>Serve the hosting page from an http(s) origin.</strong> A page opened from disk (<code>file://</code>) has an opaque origin and browsers refuse to attach the session inside its frames.</li>
+    <li><strong>Prefer same-domain hosting.</strong> On the same Tomcat/domain as Library the session cookie stays first-party &mdash; every browser works, including Safari. Cross-origin hosting works in Chrome and Edge with the SameSite setting above; Safari and third-party-cookie-blocked browsers need same-domain hosting or the Embedding SDK (<code>embeddinglib.js</code>).</li>
+    <li><strong>Handle authentication.</strong> Viewers can sign in once inside any frame, or the page can pre-authenticate. <em>This showcase</em> auto-signs-in to a shared demo account for convenience &mdash; for production, prefer SSO/OIDC or the Embedding SDK over stored credentials.</li>
+  </ul>
+
+  <h3>Documentation &amp; sources</h3>
+  <ul class="prose">
+    <li><a href="https://community.strategy.com/article/KB10434-How-to-create-N-Level-deep-nested-prompts-in">KB10434 &mdash; How to create N-level deep nested prompts</a> (the source pattern for approach 1)</li>
+    <li><a href="https://community.strategy.com/article/KB37738-How-to-answer-N-Level-deep-nested-prompts-when-the">KB37738 &mdash; Answering nested prompts when a lower prompt is unanswered</a> (the required-prompt trap)</li>
+    <li><a href="https://www2.strategy.com/producthelp/current/library/en-us/Content/Filtering_the_attribute_values_displayed_in_a_filt.htm">Use attribute filters to target other attribute filters</a> (approach 2)</li>
+    <li><a href="https://www2.strategy.com/producthelp/Current/Library/en-us/Content/create_chapter_filter.htm">Create dashboard and chapter filters</a></li>
+  </ul>
+</section>
+
+<footer>
+  <div class="foot-grid">
+    <div>
+      <h4>Demo objects (MicroStrategy Tutorial project)</h4>
+      <ul>
+        <li><strong>Approach 1 &mdash; reports:</strong> Cascading Prompts Demo (Year - Quarter - Month) &middot; (Category - Subcategory - Item)</li>
+        <li><strong>Approach 1 &mdash; dashboards:</strong> Cascading Prompt - Year, Quarter, Month &middot; - Category, Subcategory, Item</li>
+        <li><strong>Approach 2 &mdash; dashboard:</strong> Cascading Filter Panel - Category, Subcategory, Item</li>
+        <li><strong>Approach 3:</strong> Product Hierarchy Prompt &rarr; Product Hierarchy Prompted Report &rarr; dashboard</li>
+        <li><strong>Approach 4:</strong> the whole time chain, built over REST (Year / Quarter / Month prompts + filters)</li>
+      </ul>
+    </div>
+    <div>
+      <h4>About this page</h4>
+      <ul>
+        <li>Element lists, revenue, and behavior verified live over the Strategy REST API, August 2026.</li>
+        <li>Served same-origin with Strategy Library; auto-signs-in to a shared demo account so embeds render with no login prompt.</li>
+        <li>Best viewed in Chrome or Edge (Safari blocks third-party cookies).</li>
+      </ul>
+    </div>
+  </div>
+  <p class="copyright">Copyright &copy; 2026 Strategy Inc. All Rights Reserved.</p>
+</footer>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- real captured data ---------- */
+  var YEARS = ["2020", "2021", "2022", "2023"];
+  var MONS = { "Q1": ["Jan", "Feb", "Mar"], "Q2": ["Apr", "May", "Jun"], "Q3": ["Jul", "Aug", "Sep"], "Q4": ["Oct", "Nov", "Dec"] };
+  var REV = [{"y":"2020","q":"2020 Q1","m":"Jan 2020","rev":502224.0},{"y":"2020","q":"2020 Q1","m":"Feb 2020","rev":610056.0},{"y":"2020","q":"2020 Q1","m":"Mar 2020","rev":570376.0},{"y":"2020","q":"2020 Q2","m":"Apr 2020","rev":599718.4},{"y":"2020","q":"2020 Q2","m":"May 2020","rev":667888.1},{"y":"2020","q":"2020 Q2","m":"Jun 2020","rev":718181.0},{"y":"2020","q":"2020 Q3","m":"Jul 2020","rev":694056.8},{"y":"2020","q":"2020 Q3","m":"Aug 2020","rev":748848.0},{"y":"2020","q":"2020 Q3","m":"Sep 2020","rev":871389.7},{"y":"2020","q":"2020 Q4","m":"Oct 2020","rev":800501.0},{"y":"2020","q":"2020 Q4","m":"Nov 2020","rev":855617.85},{"y":"2020","q":"2020 Q4","m":"Dec 2020","rev":1008381.25},{"y":"2021","q":"2021 Q1","m":"Jan 2021","rev":749779.0},{"y":"2021","q":"2021 Q1","m":"Feb 2021","rev":851921.0},{"y":"2021","q":"2021 Q1","m":"Mar 2021","rev":897056.0},{"y":"2021","q":"2021 Q2","m":"Apr 2021","rev":827244.3},{"y":"2021","q":"2021 Q2","m":"May 2021","rev":892637.3},{"y":"2021","q":"2021 Q2","m":"Jun 2021","rev":964882.0},{"y":"2021","q":"2021 Q3","m":"Jul 2021","rev":995380.8},{"y":"2021","q":"2021 Q3","m":"Aug 2021","rev":1007634.2},{"y":"2021","q":"2021 Q3","m":"Sep 2021","rev":1064004.0},{"y":"2021","q":"2021 Q4","m":"Oct 2021","rev":1083047.0},{"y":"2021","q":"2021 Q4","m":"Nov 2021","rev":1096323.85},{"y":"2021","q":"2021 Q4","m":"Dec 2021","rev":1087696.55},{"y":"2022","q":"2022 Q1","m":"Jan 2022","rev":985107.0},{"y":"2022","q":"2022 Q1","m":"Feb 2022","rev":1014628.0},{"y":"2022","q":"2022 Q1","m":"Mar 2022","rev":1112254.0},{"y":"2022","q":"2022 Q2","m":"Apr 2022","rev":1124254.6},{"y":"2022","q":"2022 Q2","m":"May 2022","rev":1215105.5},{"y":"2022","q":"2022 Q2","m":"Jun 2022","rev":1165119.0},{"y":"2022","q":"2022 Q3","m":"Jul 2022","rev":1205939.4},{"y":"2022","q":"2022 Q3","m":"Aug 2022","rev":1235297.7},{"y":"2022","q":"2022 Q3","m":"Sep 2022","rev":1288219.2},{"y":"2022","q":"2022 Q4","m":"Oct 2022","rev":1457122.0},{"y":"2022","q":"2022 Q4","m":"Nov 2022","rev":1508206.1},{"y":"2022","q":"2022 Q4","m":"Dec 2022","rev":1547611.55}];
+  var REVMAP = {};
+  REV.forEach(function (r) { REVMAP[r.m] = r; });
+  function quartersOf(y) { return ["Q1", "Q2", "Q3", "Q4"].map(function (q) { return y + " " + q; }); }
+  function monthsOf(q) { var parts = q.split(" "); return MONS[parts[1]].map(function (m) { return m + " " + parts[0]; }); }
+  function fmt(n) { return "$" + Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+  var ALL_QUARTERS = YEARS.reduce(function (a, y) { return a.concat(quartersOf(y)); }, []);
+  var ALL_MONTHS = ALL_QUARTERS.reduce(function (a, q) { return a.concat(monthsOf(q)); }, []);
+
+  /* ---------- interactive walkthrough ---------- */
+  var LEVELS = [
+    { name: "Elements of Year", tag: "embedded in Year Filter Prompted", attr: "Year" },
+    { name: "Elements of Quarter (cascading)", tag: "restricted by Year Filter Prompted", attr: "Quarter" },
+    { name: "Elements of Month (cascading)", tag: "restricted by Quarter Filter Prompted", attr: "Month" }
+  ];
+  var sim = { step: 0, picks: [new Set(), new Set(), new Set()], confirmed: [false, false, false], log: [] };
+  var stepsEl = document.getElementById("sim-steps");
+  var engineEl = document.getElementById("sim-engine");
+  var resultEl = document.getElementById("sim-result");
+
+  function optionsFor(level) {
+    if (level === 0) return YEARS.slice();
+    if (level === 1) return Array.from(sim.picks[0]).sort().reduce(function (a, y) { return a.concat(quartersOf(y)); }, []);
+    return Array.from(sim.picks[1]).sort().reduce(function (a, q) { return a.concat(monthsOf(q)); }, []);
+  }
+  function countAll(level) { return level === 0 ? YEARS.length : (level === 1 ? ALL_QUARTERS.length : ALL_MONTHS.length); }
+  function quarterOfMonth(m) {
+    var parts = m.split(" ");
+    for (var q in MONS) { if (MONS[q].indexOf(parts[0]) >= 0) return parts[1] + " " + q; }
+    return "";
+  }
+  function logLine(html) {
+    sim.log.push(html);
+    engineEl.innerHTML = sim.log.map(function (l) { return "<div>" + l + "</div>"; }).join("");
+  }
+
+  function renderSim() {
+    stepsEl.innerHTML = "";
+    LEVELS.forEach(function (lv, i) {
+      var st = document.createElement("div");
+      var open = (i === sim.step && !sim.confirmed[i]);
+      var done = sim.confirmed[i];
+      var locked = i > sim.step;
+      st.className = "step" + (open ? " open" : "") + (done ? " done" : "") + (locked ? " locked" : "");
+
+      var head = document.createElement("div");
+      head.className = "step-head";
+      head.innerHTML = '<span class="step-no">' + (i + 1) + "</span><span>" + lv.name + "</span>" +
+        '<span class="step-state">' + (done ? "answered" : (open ? "open" : "locked")) + "</span>" +
+        '<span class="step-tag">' + lv.tag + "</span>";
+      st.appendChild(head);
+
+      var opts = document.createElement("div");
+      opts.className = "opts";
+      if (locked) {
+        var n = document.createElement("span");
+        n.className = "step-note";
+        n.textContent = "Waiting on prompt " + i + " — the server can't compute this list yet.";
+        opts.appendChild(n);
+      } else {
+        var groups = {};
+        optionsFor(i).forEach(function (item) {
+          var g = null;
+          if (i === 1) g = item.split(" ")[0];
+          if (i === 2) g = quarterOfMonth(item);
+          (groups[g] = groups[g] || []).push(item);
+        });
+        Object.keys(groups).forEach(function (g) {
+          if (g !== "null" && i > 0 && Object.keys(groups).length > 1) {
+            var gl = document.createElement("span");
+            gl.className = "opt-group-label";
+            gl.textContent = g;
+            opts.appendChild(gl);
+          }
+          groups[g].forEach(function (item) {
+            var b = document.createElement("button");
+            b.type = "button";
+            b.className = "opt" + (sim.picks[i].has(item) ? " on" : "");
+            b.textContent = item;
+            b.setAttribute("aria-pressed", sim.picks[i].has(item) ? "true" : "false");
+            if (done) b.disabled = true;
+            b.addEventListener("click", function () {
+              if (sim.picks[i].has(item)) sim.picks[i].delete(item); else sim.picks[i].add(item);
+              renderSim();
+            });
+            opts.appendChild(b);
+          });
+        });
+      }
+      st.appendChild(opts);
+
+      var foot = document.createElement("div");
+      foot.className = "step-foot";
+      if (open) {
+        var c = document.createElement("button");
+        c.type = "button";
+        c.className = "btn primary";
+        c.textContent = i < 2 ? "Confirm ▸" : "Run report";
+        c.disabled = sim.picks[i].size === 0;
+        c.addEventListener("click", function () { confirmStep(i); });
+        foot.appendChild(c);
+        var note = document.createElement("span");
+        note.className = "step-note";
+        note.textContent = sim.picks[i].size === 0 ? "Required — pick at least one." : sim.picks[i].size + " selected";
+        foot.appendChild(note);
+      } else if (done) {
+        var e = document.createElement("button");
+        e.type = "button";
+        e.className = "btn";
+        e.textContent = "Edit";
+        e.addEventListener("click", function () { reopen(i); });
+        foot.appendChild(e);
+        var picked = document.createElement("span");
+        picked.className = "step-note";
+        picked.textContent = Array.from(sim.picks[i]).sort().join(", ");
+        foot.appendChild(picked);
+      }
+      st.appendChild(foot);
+      stepsEl.appendChild(st);
+    });
+  }
+
+  function confirmStep(i) {
+    sim.confirmed[i] = true;
+    var names = Array.from(sim.picks[i]).sort();
+    logLine('<span class="lbl">PUT </span> …/prompts/answers  ' + LEVELS[i].attr + ' = {' + names.join(", ") + '}  →  204');
+    if (i < 2) {
+      sim.step = i + 1;
+      var offered = optionsFor(sim.step).length;
+      logLine('<span class="lbl">GET </span> …/prompts/{key}/elements  ' + LEVELS[sim.step].attr + ' <span class="hot">restricted by ' + (i === 0 ? "Year Filter Prompted" : "Quarter Filter Prompted") + '</span>  →  <span class="hot">' + offered + ' of ' + countAll(sim.step) + '</span> offered');
+    } else {
+      var months = Array.from(sim.picks[2]);
+      var withData = months.filter(function (m) { return REVMAP[m]; });
+      logLine('<span class="lbl">GET </span> …/reports/{id}/instances/{iid}  →  ' + withData.length + ' row' + (withData.length === 1 ? "" : "s") + ' returned' + (withData.length < months.length ? ' <span class="lbl">(' + (months.length - withData.length) + ' had no sales)</span>' : ''));
+      showResult(months);
+    }
+    renderSim();
+  }
+
+  function reopen(i) {
+    for (var k = i; k < 3; k++) { sim.confirmed[k] = false; if (k > i) sim.picks[k] = new Set(); }
+    sim.step = i;
+    resultEl.classList.remove("show");
+    logLine('<span class="lbl">POST</span> …/instances/{iid}/rePrompt  →  step reopened, later answers cleared');
+    renderSim();
+  }
+
+  function showResult(months) {
+    var rows = months.sort(function (a, b) { return ALL_MONTHS.indexOf(a) - ALL_MONTHS.indexOf(b); }).map(function (m) {
+      var r = REVMAP[m];
+      if (!r) return "";
+      return "<tr><td>" + r.m + "</td><td>" + r.q + "</td><td>" + r.y + "</td><td class='num-cell'>" + fmt(r.rev) + "</td></tr>";
+    }).join("");
+    if (!rows) rows = "<tr><td colspan='4' class='small'>No data returned — the chosen months have calendar elements but no sales in Tutorial (real behavior: 2023 exists in the lookup, not in the fact table).</td></tr>";
+    resultEl.innerHTML = '<div class="table-wrap"><table><thead><tr><th>Month</th><th>Quarter</th><th>Year</th><th style="text-align:right">Revenue</th></tr></thead><tbody>' + rows + "</tbody></table></div>";
+    resultEl.classList.add("show");
+  }
+
+  function resetSim() {
+    sim = { step: 0, picks: [new Set(), new Set(), new Set()], confirmed: [false, false, false], log: [] };
+    engineEl.innerHTML = "";
+    resultEl.classList.remove("show");
+    resultEl.innerHTML = "";
+    logLine('<span class="lbl">POST</span> /api/v2/reports/{id}/instances  →  200, status: prompted');
+    logLine('<span class="lbl">GET </span> …/prompts/{key}/elements  Year  →  <span class="hot">4</span> elements (no restriction)');
+    renderSim();
+  }
+  document.getElementById("sim-reset").addEventListener("click", resetSim);
+  resetSim();
+})();
+</script>
+<script>
+/* Demo auto-authentication.
+   Hardcoded credentials for a SHARED DEMO environment only, so the embedded
+   Library reports/dashboards render with no login prompt. The page is served
+   same-origin with Library, so this login sets a first-party session that
+   every iframe (and same-origin API call) then uses. Do not reuse this pattern
+   with real credentials in production — use SSO/OIDC or the Embedding SDK. */
+(function () {
+  "use strict";
+  var DEMO = { username: "<operator>", password: "<demo-password>", loginMode: 1 };
+  var LIB = "/MicroStrategyLibrary";
+  function pill(state, text) {
+    var el = document.getElementById("auth-pill");
+    if (!el) return;
+    el.className = "chip" + (state ? " " + state : "");
+    el.innerHTML = '<span class="pill-dot"></span>' + text;
+  }
+  function loadFrames() {
+    var frames = document.querySelectorAll("iframe[data-src]");
+    for (var i = 0; i < frames.length; i++) frames[i].src = frames[i].getAttribute("data-src");
+  }
+  function auth() {
+    pill("", "Connecting to the live demo…");
+    fetch(LIB + "/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(DEMO)
+    }).then(function (r) {
+      if (r.status === 204) {
+        window.__MSTR_TOKEN = r.headers.get("X-MSTR-AuthToken");  // available for live API calls
+        pill("ok", "Connected as demo user");
+      } else {
+        pill("warn", "Auto sign-in unavailable — sign in inside a frame");
+      }
+    }).catch(function () {
+      pill("warn", "Auto sign-in unavailable — sign in inside a frame");
+    }).then(loadFrames);
+  }
+  if (document.readyState !== "loading") auth();
+  else document.addEventListener("DOMContentLoaded", auth);
+})();
+</script>
+</body>
+</html>
