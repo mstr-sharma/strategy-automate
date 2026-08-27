@@ -113,6 +113,29 @@ Session verified + captured against them:
   a candidate in-memory→persist authoring path if programmatic dashboard
   creation is ever needed.
 
+Later on day 2 the operator added a third dashboard: **"Cascading Prompt -
+Product Hierarchy Prompt"** `B24CEE0BF04483AF3098548E682A2E18` on **"Product
+Hierarchy Prompted Report"** `C6F2BADA634DB0FE36882E880C33D8DD`, whose filter is
+a `predicate_prompt_qualification` wrapping **"Product Hierarchy Prompt"**
+`E692DE28B8A245EBB5B8DC72AD65D146` (`prompt_expression`, `expressionType:
+hierarchy`, question.predefinedObjects = Products user hierarchy `B793B568…`,
+optional). Verified answers + facts:
+
+- Runtime prompt type is `EXPRESSION`; the **answer body uses the runtime
+  `{operator, operands}` expression grammar**, NOT the Modeling predicate tree:
+  `{"prompts":[{"key":k,"type":"EXPRESSION","answers":{"expression":{"operator":"In","operands":[{"type":"attribute","id":<Category>},{"type":"elements","elements":[{"id":"h2;<Category>","name":"Electronics"}]}]}}}]}`
+  → 204. (Modeling-style `predicate_element_list` under `answers.expression` →
+  ERR006.) Sending the key with NO answers closes an optional prompt (204) and
+  renders unfiltered (21-page grid vs 6 pages qualified to Electronics).
+- **Local-iframe blocker diagnosed**: `/api/auth/login` Set-Cookie for
+  `iSession`/`JSESSIONID` carries **no SameSite and no Secure** → browsers
+  default to Lax and never send the session into a cross-origin iframe
+  (file:// parents are always cross-origin) → login screen/loop in frames even
+  though the app itself has no X-Frame-Options/frame-ancestors. Fix: Library
+  Admin → Security Settings → SameSite=None (+ enable embedding / allowed
+  origins), host the embed page on https, or use the Embedding SDK / same-site
+  hosting (mandatory for Safari & blocked-third-party-cookie browsers).
+
 Asset v2 ("real-env edition") replaced all simulated content with captured data:
 live YQM wizard replay, both dashboard renders inline (data URIs), targeted-filter
 replica driven by the 36 real rows. Files: `render2.py`, `inspect_render.py`,
