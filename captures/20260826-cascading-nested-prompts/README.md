@@ -144,6 +144,14 @@ Session verified + captured against them:
   `C9E0D4793C43EC86A9C1D9940D7F5955`** (3 chapter filters on a grid, status
   ready = live targeted filters); replica JS removed → 4 live iframes total. Also
   renamed **"Strategy One" → "Strategy BI"** throughout the page.
+- Customer-clarity pass 2026-08-27 (feedback: too technical, and the walkthrough's
+  REST-syntax log strip was mistaken for "the API approach"): the interactive
+  walkthrough's dark strip now narrates in PLAIN ENGLISH (no HTTP verbs/endpoints/
+  SQL — e.g. "Quarters limited to your Year choice → only 4 of 16 now shown"),
+  retitled "See how a cascade works" / caption "What's happening as you choose";
+  the REST API section retitled "Automating it with the REST API", framed
+  optional/for-developers, and its payload collapsed into a <details> (all raw
+  /api/ syntax now lives only inside collapsibles). Nav labels softened.
 - Spec-observed (not exercised): this env family documents dashboard import
   (`POST /api/dashboards` from .mstr), deprecated create-from-report
   (`POST /api/dashboards/json`), and `POST /api/dossiers/instances`
