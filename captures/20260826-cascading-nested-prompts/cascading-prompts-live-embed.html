@@ -346,12 +346,12 @@
 <section id="rest">
   <p class="kicker">Approach 4 &middot; automation</p>
   <h2><span class="num">4</span>REST API</h2>
-  <p class="prose">The same cascade, driven by the public REST API instead of the UI &mdash; ideal for <strong>provisioning many cascades at once</strong> or scripting a migration, and there's no editor gap because there's no preview step. Two parts: at <strong>run time</strong> the API answers the prompts one level at a time (below), and at <strong>build time</strong> the API creates the object chain (the recipe). Step through a Year &rarr; Quarter &rarr; Month example and watch the exact call at each step:</p>
+  <p class="prose">The same cascade, driven by the public REST API instead of the UI &mdash; ideal for <strong>provisioning many cascades at once</strong> or scripting a migration, and there's no editor gap because there's no preview step. Two parts: at <strong>run time</strong> the API answers the prompts one level at a time (below), and at <strong>build time</strong> the API creates the object chain (the recipe). Step through a Category &rarr; Subcategory &rarr; Item example and watch the exact call at each step:</p>
 
   <div class="demo" id="sim">
     <div class="demo-head">
       <div>
-        <div class="demo-title">Runtime, step by step &middot; Year &rarr; Quarter &rarr; Month</div>
+        <div class="demo-title">Runtime, step by step &middot; Category &rarr; Subcategory &rarr; Item</div>
         <div class="demo-sub">Real captured data &middot; each pick shows the REST call the server handles</div>
       </div>
       <button class="btn" id="sim-reset" type="button">Reset</button>
@@ -370,28 +370,28 @@
 POST /api/model/changesets?schemaEdit=false        <span class="c">→ X-MSTR-MS-Changeset header</span>
 
 POST /api/model/prompts
-{ "information": { "subType": "prompt_elements", "name": "Elements of Quarter (cascading)", "destinationFolderId": "…" },
-  "question": { "attribute": { "objectId": "&lt;Quarter&gt;", "subType": "attribute" },
+{ "information": { "subType": "prompt_elements", "name": "Elements of Subcategory (cascading)", "destinationFolderId": "…" },
+  "question": { "attribute": { "objectId": "&lt;Subcategory&gt;", "subType": "attribute" },
                 "listAllElements": false,
-                <span class="k">"filter"</span>: { "objectId": "&lt;Year Filter Prompted&gt;", "subType": "filter" } },   <span class="c">← the cascade; no preview, no error</span>
+                <span class="k">"filter"</span>: { "objectId": "&lt;Category Filter Prompted&gt;", "subType": "filter" } },   <span class="c">← the cascade; no preview, no error</span>
   "restriction": { "required": true, "allowPersonalAnswers": "none" } }
 
 POST /api/model/filters
-{ "information": { "subType": "filter", "name": "Quarter Filter Prompted", "destinationFolderId": "…" },
+{ "information": { "subType": "filter", "name": "Subcategory Filter Prompted", "destinationFolderId": "…" },
   "qualification": { "tree": { "type": "predicate_element_list",
-    "predicateTree": { <span class="k">"elementsPrompt"</span>: { "objectId": "&lt;quarter prompt&gt;", "subType": "prompt_elements" } } } } }
+    "predicateTree": { <span class="k">"elementsPrompt"</span>: { "objectId": "&lt;subcategory prompt&gt;", "subType": "prompt_elements" } } } } }
 
 POST /api/model/changesets/{id}/commit   {}
 
 <span class="c"># the report — reference the deepest filter (the spec's "standaloneFilter" shape is rejected; use this)</span>
 POST /api/model/reports
 { "sourceType": "normal",
-  "dataSource": { "dataTemplate": { "units": [ Year, Quarter, Month, {metrics: [Revenue]} ] },
+  "dataSource": { "dataTemplate": { "units": [ Category, Subcategory, Item, {metrics: [Revenue]} ] },
     "filter": { "tree": { "type": "predicate_filter_qualification",
-      "predicateTree": { "filter": { "objectId": "&lt;Month Filter Prompted&gt;", "subType": "filter" }, "isIndependent": 0 } } } },
+      "predicateTree": { "filter": { "objectId": "&lt;Item Filter Prompted&gt;", "subType": "filter" }, "isIndependent": 0 } } } },
   "grid": { "viewTemplate": { … } } }
 POST /api/model/reports/{id}/instances/saveAs      <span class="c">→ X-MSTR-MS-Instance header from the create</span></pre>
-      <p class="prose small">Two traps found while building this live: resolve attributes from the <strong>system hierarchy</strong>, not name search (search returns managed "Quarter"/"Month" twins that prompts accept silently and reports reject with <code>8004da0c</code>); and test the cascade headlessly by looping the runtime calls shown in the stepper above.</p>
+      <p class="prose small">Two traps found while building this live: resolve attributes from the <strong>system hierarchy</strong>, not name search (search can return managed attribute twins with the same display name that prompts accept silently and reports reject with <code>8004da0c</code>); and test the cascade headlessly by looping the runtime calls shown in the stepper above.</p>
     </div>
   </details>
 
@@ -427,26 +427,26 @@ POST /api/model/reports/{id}/instances/saveAs      <span class="c">→ X-MSTR-MS
     <div class="build-body">
       <h4>Create the level-1 prompt</h4>
       <span class="path">Folder &rarr; New &rarr; Prompt &rarr; Elements of an attribute</span>
-      <p>Attribute: <strong>Year</strong>. Leave <em>Filtered elements</em> empty (level 1 shows everything). Set the title and instruction the user will read, tick <strong>Required</strong>, save as <em>Elements of Year</em>.</p>
+      <p>Attribute: <strong>Category</strong>. Leave <em>Filtered elements</em> empty (level 1 shows everything). Set the title and instruction the user will read, tick <strong>Required</strong>, save as <em>Elements of Category</em>.</p>
     </div>
   </div>
   <div class="build-step">
     <span class="build-no">2</span>
     <div class="build-body">
       <h4>Wrap it in a filter</h4>
-      <span class="path">New &rarr; Filter &rarr; add qualification on Year &rarr; use a prompt</span>
-      <p>The filter's only condition is the prompt itself &mdash; qualification reads <code>{Elements of Year}</code>. Save as <em>Year Filter Prompted</em>. (You can also create the prompt inline here &mdash; Workstation then embeds it inside the filter; embedded and standalone prompts cascade identically.)</p>
+      <span class="path">New &rarr; Filter &rarr; add qualification on Category &rarr; use a prompt</span>
+      <p>The filter's only condition is the prompt itself &mdash; qualification reads <code>{Elements of Category}</code>. Save as <em>Category Filter Prompted</em>. (You can also create the prompt inline here &mdash; Workstation then embeds it inside the filter; embedded and standalone prompts cascade identically.)</p>
     </div>
   </div>
   <div class="build-step">
     <span class="build-no">3</span>
     <div class="build-body">
       <h4>Create the level-2 prompt &mdash; and meet the gap</h4>
-      <span class="path">New &rarr; Prompt &rarr; Elements of an attribute &rarr; Quarter &rarr; Filtered elements</span>
-      <p>The natural move is to point <em>Filtered elements</em> at <em>Year Filter Prompted</em>. Workstation refuses:</p>
+      <span class="path">New &rarr; Prompt &rarr; Elements of an attribute &rarr; Subcategory &rarr; Filtered elements</span>
+      <p>The natural move is to point <em>Filtered elements</em> at <em>Category Filter Prompted</em>. Workstation refuses:</p>
       <div class="error-card" role="img" aria-label="Workstation error: the filter contains prompts; filtered element browsing is not supported with a filter that contains prompts.">
         <div class="bar"><span class="dot"></span>Error &mdash; New Untitled Prompt</div>
-        <div class="body">The filter 'Year Filter Prompted' contains prompts. Filtered element browsing is not supported with a filter that contains prompts.</div>
+        <div class="body">The filter 'Category Filter Prompted' contains prompts. Filtered element browsing is not supported with a filter that contains prompts.</div>
       </div>
       <p><strong>Why:</strong> the moment you pick a filter, the editor element-browses with it to show a preview. A prompted filter has no answer at design time, so the preview is impossible &mdash; and the editor rejects the pick instead of skipping the preview. <strong>This is an editor-preview limitation only.</strong> The engine resolves the restriction perfectly at run time (the live report in approach 1 is the proof), and the prompt <em>object</em> is allowed to reference a prompted filter.</p>
     </div>
@@ -456,24 +456,24 @@ POST /api/model/reports/{id}/instances/saveAs      <span class="c">→ X-MSTR-MS
     <div class="build-body">
       <h4>The workaround: restrict by a placeholder, then swap</h4>
       <span class="path">Filtered elements &rarr; pick a temporary static filter</span>
-      <p>Give the editor what it can preview: a throwaway static filter (say <code>Year = 2022</code>). The preview works, the Quarter prompt saves. Then <strong>edit that placeholder filter</strong> and replace its qualification with the Year prompt &mdash; exactly what you did in step 2. The prompt's stored restriction points at the filter <em>object</em>, so it now cascades. Server-verified: the swap commits and the reference survives.</p>
-      <p class="small">Afterwards, don't reopen this prompt's <em>Filtered elements</em> picker &mdash; the preview shows the same harmless error; Cancel leaves the object intact. Quick sanity check instead: run the report; if the Quarter list narrows to the chosen year, the link is live.</p>
+      <p>Give the editor what it can preview: a throwaway static filter (say <code>Category = Books</code>). The preview works, the Subcategory prompt saves. Then <strong>edit that placeholder filter</strong> and replace its qualification with the Category prompt &mdash; exactly what you did in step 2. The prompt's stored restriction points at the filter <em>object</em>, so it now cascades. Server-verified: the swap commits and the reference survives.</p>
+      <p class="small">Afterwards, don't reopen this prompt's <em>Filtered elements</em> picker &mdash; the preview shows the same harmless error; Cancel leaves the object intact. Quick sanity check instead: run the report; if the Subcategory list narrows to the chosen year, the link is live.</p>
     </div>
   </div>
   <div class="build-step">
     <span class="build-no">5</span>
     <div class="build-body">
       <h4>Wrap level 2, repeat for level 3</h4>
-      <span class="path">New &rarr; Filter &rarr; qualification = the Quarter prompt</span>
-      <p>Save <em>Quarter Filter Prompted</em>. Then repeat steps 3&ndash;5 for <strong>Month</strong> (placeholder &rarr; save prompt &rarr; swap placeholder to the Quarter prompt &rarr; wrap in <em>Month Filter Prompted</em>). Stack as many levels as the business needs.</p>
+      <span class="path">New &rarr; Filter &rarr; qualification = the Subcategory prompt</span>
+      <p>Save <em>Subcategory Filter Prompted</em>. Then repeat steps 3&ndash;5 for <strong>Item</strong> (placeholder &rarr; save prompt &rarr; swap placeholder to the Subcategory prompt &rarr; wrap in <em>Item Filter Prompted</em>). Stack as many levels as the business needs.</p>
     </div>
   </div>
   <div class="build-step">
     <span class="build-no">6</span>
     <div class="build-body">
       <h4>Put only the deepest filter on the report</h4>
-      <span class="path">Report editor &rarr; Filter panel &rarr; add existing filter &rarr; Month Filter Prompted</span>
-      <p>Template: Year, Quarter, Month + Revenue. The engine discovers the whole chain from that one filter and asks the prompts in order &mdash; the sequential wizard you tried in approach 1.</p>
+      <span class="path">Report editor &rarr; Filter panel &rarr; add existing filter &rarr; Item Filter Prompted</span>
+      <p>Template: Category, Subcategory, Item + Revenue. The engine discovers the whole chain from that one filter and asks the prompts in order &mdash; the sequential wizard you tried in approach 1.</p>
     </div>
   </div>
 
@@ -493,7 +493,7 @@ POST /api/model/reports/{id}/instances/saveAs      <span class="c">→ X-MSTR-MS
   <h3 id="gotchas">Gotchas that matter</h3>
   <ul class="prose">
     <li><strong>Make every level required.</strong> An optional lower prompt that goes unanswered means the report filter carries no qualification &mdash; nothing filters (<a href="https://community.strategy.com/article/KB37738-How-to-answer-N-Level-deep-nested-prompts-when-the">KB37738</a>). If you need optional levels, AND all the filters onto the report instead.</li>
-    <li><strong>Keep cascade attributes related in the schema.</strong> Year &rarr; Quarter &rarr; Month are parent&ndash;child in the Time hierarchy, so each restricted browse is a small lookup query. Unrelated attributes force fact-table joins per level &mdash; that's where nested prompts get slow.</li>
+    <li><strong>Keep cascade attributes related in the schema.</strong> Category &rarr; Subcategory &rarr; Item are parent&ndash;child in the Product hierarchy, so each restricted browse is a small lookup query. Unrelated attributes force fact-table joins per level &mdash; that's where nested prompts get slow.</li>
     <li><strong>Prompts are the "parameters."</strong> In classic Strategy BI there is no separate parameter object &mdash; a prompt <em>is</em> the reusable question, and its answer parameterizes the SQL.</li>
   </ul>
 </section>
@@ -504,9 +504,9 @@ POST /api/model/reports/{id}/instances/saveAs      <span class="c">→ X-MSTR-MS
   <h2>Still using Developer (desktop)?</h2>
   <p class="prose">Developer's prompt editor has no preview restriction, so <a href="https://community.strategy.com/article/KB10434-How-to-create-N-Level-deep-nested-prompts-in">KB10434</a> works verbatim &mdash; no placeholder-swap needed:</p>
   <ol class="prose">
-    <li>Prompt on Year's element list; save.</li>
+    <li>Prompt on Category's element list; save.</li>
     <li>Filter containing that prompt; save.</li>
-    <li>Quarter prompt: <em>Use a filter to reduce the list of elements</em> &rarr; pick the Year filter. Repeat for Month.</li>
+    <li>Subcategory prompt: <em>Use a filter to reduce the list of elements</em> &rarr; pick the Category filter. Repeat for Item.</li>
     <li>Put the deepest filter on the report.</li>
   </ol>
   <p class="prose small">Same objects, same runtime as the Workstation or REST builds &mdash; don't reinstall Developer just for this; the placeholder swap or REST produce the identical graph.</p>
@@ -559,11 +559,10 @@ POST /api/model/reports/{id}/instances/saveAs      <span class="c">→ X-MSTR-MS
     <div>
       <h4>Demo objects (MicroStrategy Tutorial project)</h4>
       <ul>
-        <li><strong>Approach 1 &mdash; reports:</strong> Cascading Prompts Demo (Year - Quarter - Month) &middot; (Category - Subcategory - Item)</li>
-        <li><strong>Approach 1 &mdash; dashboards:</strong> Cascading Prompt - Year, Quarter, Month &middot; - Category, Subcategory, Item</li>
+        <li><strong>Approach 1 &mdash; nested prompts:</strong> Cascading Prompts Demo (Category - Subcategory - Item) report, and its Cascading Prompt - Category, Subcategory, Item dashboard</li>
         <li><strong>Approach 2 &mdash; dashboard:</strong> Cascading Filter Panel - Category, Subcategory, Item</li>
         <li><strong>Approach 3:</strong> Product Hierarchy Prompt &rarr; Product Hierarchy Prompted Report &rarr; dashboard</li>
-        <li><strong>Approach 4:</strong> the whole time chain, built over REST (Year / Quarter / Month prompts + filters)</li>
+        <li><strong>Approach 4:</strong> the same product chain, built over REST (Category / Subcategory / Item prompts + filters)</li>
       </ul>
     </div>
     <div>
@@ -584,23 +583,23 @@ POST /api/model/reports/{id}/instances/saveAs      <span class="c">→ X-MSTR-MS
 (function () {
   "use strict";
 
-  /* ---------- real captured data ---------- */
-  var YEARS = ["2020", "2021", "2022", "2023"];
-  var MONS = { "Q1": ["Jan", "Feb", "Mar"], "Q2": ["Apr", "May", "Jun"], "Q3": ["Jul", "Aug", "Sep"], "Q4": ["Oct", "Nov", "Dec"] };
-  var REV = [{"y":"2020","q":"2020 Q1","m":"Jan 2020","rev":502224.0},{"y":"2020","q":"2020 Q1","m":"Feb 2020","rev":610056.0},{"y":"2020","q":"2020 Q1","m":"Mar 2020","rev":570376.0},{"y":"2020","q":"2020 Q2","m":"Apr 2020","rev":599718.4},{"y":"2020","q":"2020 Q2","m":"May 2020","rev":667888.1},{"y":"2020","q":"2020 Q2","m":"Jun 2020","rev":718181.0},{"y":"2020","q":"2020 Q3","m":"Jul 2020","rev":694056.8},{"y":"2020","q":"2020 Q3","m":"Aug 2020","rev":748848.0},{"y":"2020","q":"2020 Q3","m":"Sep 2020","rev":871389.7},{"y":"2020","q":"2020 Q4","m":"Oct 2020","rev":800501.0},{"y":"2020","q":"2020 Q4","m":"Nov 2020","rev":855617.85},{"y":"2020","q":"2020 Q4","m":"Dec 2020","rev":1008381.25},{"y":"2021","q":"2021 Q1","m":"Jan 2021","rev":749779.0},{"y":"2021","q":"2021 Q1","m":"Feb 2021","rev":851921.0},{"y":"2021","q":"2021 Q1","m":"Mar 2021","rev":897056.0},{"y":"2021","q":"2021 Q2","m":"Apr 2021","rev":827244.3},{"y":"2021","q":"2021 Q2","m":"May 2021","rev":892637.3},{"y":"2021","q":"2021 Q2","m":"Jun 2021","rev":964882.0},{"y":"2021","q":"2021 Q3","m":"Jul 2021","rev":995380.8},{"y":"2021","q":"2021 Q3","m":"Aug 2021","rev":1007634.2},{"y":"2021","q":"2021 Q3","m":"Sep 2021","rev":1064004.0},{"y":"2021","q":"2021 Q4","m":"Oct 2021","rev":1083047.0},{"y":"2021","q":"2021 Q4","m":"Nov 2021","rev":1096323.85},{"y":"2021","q":"2021 Q4","m":"Dec 2021","rev":1087696.55},{"y":"2022","q":"2022 Q1","m":"Jan 2022","rev":985107.0},{"y":"2022","q":"2022 Q1","m":"Feb 2022","rev":1014628.0},{"y":"2022","q":"2022 Q1","m":"Mar 2022","rev":1112254.0},{"y":"2022","q":"2022 Q2","m":"Apr 2022","rev":1124254.6},{"y":"2022","q":"2022 Q2","m":"May 2022","rev":1215105.5},{"y":"2022","q":"2022 Q2","m":"Jun 2022","rev":1165119.0},{"y":"2022","q":"2022 Q3","m":"Jul 2022","rev":1205939.4},{"y":"2022","q":"2022 Q3","m":"Aug 2022","rev":1235297.7},{"y":"2022","q":"2022 Q3","m":"Sep 2022","rev":1288219.2},{"y":"2022","q":"2022 Q4","m":"Oct 2022","rev":1457122.0},{"y":"2022","q":"2022 Q4","m":"Nov 2022","rev":1508206.1},{"y":"2022","q":"2022 Q4","m":"Dec 2022","rev":1547611.55}];
-  var REVMAP = {};
-  REV.forEach(function (r) { REVMAP[r.m] = r; });
-  function quartersOf(y) { return ["Q1", "Q2", "Q3", "Q4"].map(function (q) { return y + " " + q; }); }
-  function monthsOf(q) { var parts = q.split(" "); return MONS[parts[1]].map(function (m) { return m + " " + parts[0]; }); }
+  // Real product tree (Category -> Subcategory -> Item + item revenue),
+  // captured from the demo project.
+  var CATS = ["Books","Electronics","Movies","Music"];
+  var SUBS = {"Books":["Art & Architecture","Business","Literature","Books - Miscellaneous","Science & Technology","Sports & Health"],"Electronics":["Audio Equipment","Cameras","Computers","Electronics - Miscellaneous","TV's","Video Equipment"],"Movies":["Action","Comedy","Drama","Horror","Kids / Family","Special Interests"],"Music":["Alternative","Country","Music - Miscellaneous","Pop","Rock","Soul / R&B"]};
+  var ITEMS = {"Books|Art & Architecture":[["100 Places to Go While Still Young at Heart",67992.6],["Art As Experience",23733.05],["The Painted Word",22323.3],["Hirschfeld on Line",50442.0],["Adirondack Style",39101.4],["Architecture : Form, Space, & Order",41378.4],["50 Favorite Rooms",26502.3],["500 Best Vacation Home Plans",17728.8],["Blue & White Living",24668.6],["Ways of Seeing",23776.5],["Gonzo, the Art",41469.4],["Cabin Fever : Rustic Style Comes Home",17570.8],["American Bungalow Style",40985.0],["Building With Stone",22673.25],["Voyaging Under Power",19827.45]],"Books|Business":[["Working With Emotional Intelligence",26733.0],["Attention to Detail",24061.95],["The 48 Laws of Power",26513.1],["Don't Step in the Leadership",17711.2],["Topgrading",28070.6],["Career Intelligence",29256.5],["Cubicle Warfare",28061.8],["The Wisdom of Teams",18668.0],["The Power to Get in",26526.6],["Don't Sweat the Small Stuff",22354.0],["Jump Start Your Brain",17286.0],["Smart Choices",24472.8],["Day Job",25394.4],["The Joy of Work",24264.8],["Jobshift",26044.8],["Self-Management and Efficiency",35451.25]],"Books|Literature":[["The Prince",14877.6],["The Fountainhead",17585.2],["The Old Man and the Sea",17533.2],["Lord of the Flies",12951.6],["Atlas Shrugged",17770.4],["The Catcher in the Rye",18146.0],["Brave New World",17600.4],["The Weight of Water",26087.4],["Great Gatsby",20390.4],["1984",18424.0],["Catch-22",19959.3],["The Thin Red Line",29991.5],["Ulysses",22035.3],["Lolita",24684.55],["To Kill a Mockingbird",18192.0]],"Books|Books - Miscellaneous":[["Test Your Baseball IQ",10901.85],["Art of Getting Even",21334.8],["Complete Course in Magic",33370.7],["40 Most Wanted Cats",30847.0],["The Rules for Cats",17237.2],["Test Your History I.Q.",11050.05],["Great Comedians Talk about Comedy",17396.0],["The Complete Prose of Woody Allen",29404.0],["Test Your Own IQ Again",18191.0],["Games for the Superintelligent",17472.8],["Most of Andy Rooney",21885.0],["Guide to Life",28320.5],["Mensa Lateral Thinking",18266.8],["Completely Mad",22467.0],["How to Live with a Neurotic Dog",17784.4]],"Books|Science & Technology":[["Nanotechnology",22990.5],["Foundation Analysis and Design",120374.1],["Handbook of Hydraulics",98983.5],["Modern Recording Techniques",43894.5],["Digital Filters",24278.1],["Being Digital",26737.2],["Manufacturing Planning and Control Systems",69255.3],["Roark's Formulas for Stress and Strain",116704.0],["Envisioning Information",49079.0],["Design With Pic Microcontrollers",68440.8],["Engines of Creation",17821.2],["Basic Pro/Engineer in 20 Lessons",76700.0],["The Evolution of Useful Things",23865.6],["To Engineer Is Human",23344.2],["Rescuing Prometheus",29319.0]],"Books|Sports & Health":[["Nutrition 101",25499.7],["Pain Free",25322.35],["Body for Life",22845.55],["Facercise",24579.5],["Stretch Book",26841.0],["Pilates: The Way Forward",23550.4],["Sciatica Relief Handbook",27535.2],["The New Fit or Fat",17304.0],["When Food Is Love",24408.45],["Rehabilitation of Patients w/ Respiratory Disease",23706.1],["Fitness for Dummies",24428.8],["Ageless Body, Timeless Mind",17960.4],["Why Weight?",24048.2],["Reversing Diabetes",27076.2]],"Electronics|Audio Equipment":[["Harman Kardon Digital Surround Sound Receiver",745650.0],["Harman Kardon AM/FM Stereo Receiver",350075.0],["Harman Kardon Dolby Digital Receiver",514045.0],["GPX Portable CD Player with Bass Boost",44523.0],["GPX Portable CD Player with Car Kit",74252.5],["GPX CD AM/FM Cassette Recorder Karaoke Machine",147545.0],["Panasonic Portable CD Player",113384.0],["Pioneer 25-Disc Changer with Remote Control",94477.5],["Pioneer CD Recordable, Digital Synchro Recording",388075.0],["Pioneer Dolby Pro Logic Receiver",257932.5],["RCA CD Changer",132223.5],["Sony Discman",116440.0],["Sony Boombox with Digital Tuner",98839.0],["Sony Digital MiniDisc",416430.0],["Sony 100-Watt Receiver",288940.0]],"Electronics|Cameras":[["Hitachi Hi8 Camcorder",299560.0],["Hitachi DVD Camcorder",438750.0],["Minolta Freedom Zoom Supreme EX Camera",163806.0],["Minolta Maxxum Camera",313720.0],["Minolta Freedom Zoom Explorer Camera",129240.0],["Minolta Vectis Beam Camera",235590.0],["Olympus LT Zoom Compact Camera",208488.0],["Olympus Stylus Zoom Compact Camera",166566.0],["Olympus Zoom Ultra Compact Camera",193130.0],["Panasonic Digital Palmcorder Camcorder",644265.0],["Sharp Hi-Fi Stereo Viewcam Camcorder",344722.5],["Sharp Hi8 Viewcam Camcorder",462780.0],["Sharp Internet Viewcam",509425.0],["Sony Handycam Digital Recorder",662265.0],["Sony Handycam Video Camera",288840.0]],"Electronics|Computers":[["Microsoft Basic Mouse V1.0",36248.75],["Microsoft Natural Keyboard Elite V2.0",88950.0],["New Media 16 MB Compact Flash",75275.0],["New Media 64 MB Compact Flash",152220.0],["New Media 32 MB Compact Flash",147215.0],["New Media 32 MB Smart Media",145665.0],["3Com 56K Cellular Modem PC Card",144580.0],["3Com OfficeConnect 56K LAN Modem",225015.0],["3Com 10/100 CardBus",124952.0],["3Com Networking Kit",93301.0],["Hewlett Packard External Tape Drive",187712.5],["Hewlett Packard CD-Writer Plus",203910.0],["PNY 32 MB Memory Card",88773.0],["PNY 64 MB Memory Card",102792.75],["PNY 128MB Memory Card",112387.5]],"Electronics|Electronics - Miscellaneous":[["3Com Palm V Connected Organizer",288220.0],["3Com Palm IIIx Connected Organizer",230505.0],["Panasonic Compact Plain Paper Fax",123284.0],["Panasonic Fax Machine",92670.5],["Sharp Mobilon TriPad Handheld PC",715008.0],["Sharp Copier Toner",158389.0],["Xerox Workcentre 385",333250.0],["Xerox XD / XL Series Toner Cartridge",128151.0],["Xerox XE Series Toner Cartridge",114888.0],["Hewlett Packard Color Copier",438111.4],["Hewlett Packard LaserJet Printer/Copier/Scanner",462962.5],["Hewlett Packard Graphic Calculator",125824.5],["Hewlett Packard Financial Calculator",150302.6],["Hewlett Packard OfficeJet Printer",711030.0],["Hewlett Packard Jornada 680 Handheld PC",599360.0]],"Electronics|TV's":[["GPX 5\" AM/FM Portable TV",76702.5],["RCA 32\" Stereo TV",436830.0],["RCA Indoor TV Antenna",32781.0],["RCA Power TV Antenna",73040.0],["RCA 27\" Stereo TV",236160.0],["RCA 13\" TV/VCR",188687.5],["RCA 13\" TV",92306.5],["RCA 4\" LCD Color TV",156090.0],["RCA 2\" Diagonal LCD Color TV",145235.0],["Sharp 25\" TV/VCR Combo",271852.0],["Sharp 25\" Stereo Color TV",208474.0],["Sharp 13\" 2-Head TV/VCR",168946.5],["Sharp 32\" Color TV",460395.0],["Sony 32\" Trinitron Television",586960.0],["Sony 35\" Trinitron Television",703445.85]],"Electronics|Video Equipment":[["ErgoRev Elite Wireless Keyboard",754750.0],["Panasonic 4-Head Hi-Fi VCR",99533.0],["Panasonic Home Theater Stereo VCR",137511.0],["Panasonic Multiformat DVD Player",222855.0],["Panasonic Hi-Fi Stereo VCR",145200.0],["Panasonic 27\" TV/DVD Player Combo",436440.0],["Sony DVD/CD Player",294280.0],["Sony DVD Player w/Remote",260942.5],["Sony DVD/CD/Video Player",907500.0],["Sony Transportable DVD Player",345150.0],["Sony VCR",257086.5],["Sharp DVD Player",649395.0],["Sharp DVD/CD Player",287820.0],["Sharp VCR",185662.5],["Sharp VCR+",124338.0]],"Movies|Action":[["Small Soldiers",44267.0],["The Mask of Zorro",47580.65],["Vanishing Point",33045.3],["Godzilla",32121.1],["Apollo 13",33303.15],["Lethal Weapon 4",37471.4],["Le Mans",33378.75],["The Scarlet Pimpernel",46925.45],["The African Queen",29862.0],["Armageddon",46603.2],["The Avengers",57246.8],["Blade",47916.05],["Everest",51376.5],["Apocalypse Now",43597.4],["Manhunter",32870.25]],"Movies|Comedy":[["Babe",46413.25],["Ferris Bueller's Day Off",32358.6],["The Princess Bride",32380.7],["The Object Of My Affection",45765.2],["The Full Monty",47839.35],["The Wedding Singer",48371.7],["My Cousin Vinny",49217.35],["You've Got Mail",45922.0],["Caddyshack",50348.05],["As Good As It Gets",46911.15],["The Truman Show",46867.6],["Pretty Woman",33628.05],["Austin Powers",47060.65],["Swingers",48711.0],["Dr. Dolittle",47847.15]],"Movies|Drama":[["Last Glimpse of Summer",58550.7],["City Of Angels",50015.7],["Dangerous Beauty",47456.5],["Sense and Sensibility",46934.55],["Great Expectations",46603.05],["L.A. Confidential",55887.0],["Titanic",42404.2],["The Horse Whisperer",48873.3],["Schindler's List",44613.0],["Hope Floats",35364.0],["Gone With the Wind",46588.5],["Pulp Fiction",49258.3],["Wall Street",33380.1],["The Hustler",49949.4],["Good Will Hunting",42962.0]],"Movies|Horror":[["Psycho",35843.4],["Scream",48103.9],["The Lost Boys",33227.55],["Dracula",46505.55],["Scream 2",48806.55],["The Omen",32560.2],["The Picture of Dorian Gray",36912.95],["The Shining",50728.85],["The Exorcist",50490.0],["I Know What You Did Last Summer",46404.8],["Christine",33829.65],["Nightmare on Elm Street",47880.95],["Frankenstein",26278.8],["Rosemary's Baby",47354.45],["Interview With the Vampire",49065.25]],"Movies|Kids / Family":[["The Rugrats Movie",49259.1],["A Bug's Life",54243.9],["Mulan",51086.7],["Charlotte's Web",47700.9],["The Little Mermaid",61762.05],["The Lion King",37602.3],["Lady and the Tramp",42935.25],["The Jungle Book",47420.75],["Alice in Wonderland",37804.6],["Barney",46478.9],["Blue's Clues",32084.55],["The Parent Trap",36319.65],["The Muppet Movie",46970.3],["The Year Without a Santa Claus",40032.85],["Sesame Street",33255.45]],"Movies|Special Interests":[["AAA Travel Video Series",51016.15],["The Secrets of Happiness",56267.9],["Mysteries of the Bible",74105.55],["Exploring Antarctica",56824.3],["Learn! Microsoft Office 2000",55347.5],["Classic Rock Guitar",32586.95],["How to Play Piano 1",72921.5],["Jesus of Nazareth",63566.9],["9 Steps to Financial Freedom",50964.3],["Step Into Ballet",50029.3],["Let's Play Soccer",47162.7],["Golf My Way Collection",58657.3],["Tae-Bo Workout",49644.0],["Massage for Health",47299.2],["Living Yoga",47552.7]],"Music|Alternative":[["Sixteen Stone",51720.2],["Throwing Copper",62442.8],["Tails",54675.75],["Seal (94)",50609.3],["The Infinite Sadness",43094.85],["Jagged Little Pill",51870.0],["Morning Glory",54468.75],["And Out Come Wolves",29775.6],["One Hot Minute",55869.75],["Alice In Chains",36063.5],["Insomniac",44258.25],["Tigerlily",35575.0],["A Boy Named Goo",33148.8],["Pres Of The Unites States",51326.1],["Relish",51230.9]],"Music|Country":[["Strong Enough",62211.8],["Gone",53405.25],["Games Rednecks Play",43471.5],["Strait Out Of The Box",70077.6],["I Think About You",37621.0],["Fresh Horses",44253.75],["Now That I've Found You",64222.2],["All I Want",36424.0],["Tool Box",60980.5],["It Matters To Me",36713.0],["Starting Over",48302.15],["Bryan White",51975.0],["Time Marches On",37055.0],["The Woman In Me",38571.65],["Souvenirs",44014.5]],"Music|Music - Miscellaneous":[["Schubert Volume 1",35571.0],["Running With Scissors",29418.35],["Best of Disney Volume 2",59847.2],["Exotic Sound Effects",39387.6],["The Opera Album",25093.6],["The Memory Of Trees",47236.0],["I Love To Polka",27768.0],["The Four Seasons",32567.25],["Doo Wop Box",85526.4],["Pet Music",31228.05],["Sleepytime Songs",44644.5],["Revenge",29083.5],["Beethoven for Babies",25960.95],["The Gospel Box",51359.0],["Take My Hand",32816.25]],"Music|Pop":[["New Beginning",37717.0],["Bridge",52998.0],["Home",36887.5],["Don Henley's Greatest Hits",55651.5],["Live at the Bridge Vol 2",45356.1],["Whaler",43770.75],["Nobody Else",37217.5],["Cracked Rearview",44397.0],["Life",55785.75],["Waiting to Exhale: The Soundtrack",42106.5],["The Beatles Anthology",46927.2],["Daydream",47962.85],["Something To Remember",44526.0],["Another Night",51327.5],["Thriller",45230.25]],"Music|Rock":[["The Doors",36369.5],["Lucy",59219.2],["Your Little Secret",36226.0],["Ghost Of Tom Joad",35947.0],["Stripped",44244.75],["Road Tested",58640.0],["Collective Soul",43308.0],["Ozzmosis",54864.75],["Supernatural",47217.3],["Its A Mystery",45044.0],["Hell Freezes Over",46478.4],["Four",44175.75],["Crash",48057.1],["Astro Creep",55803.75],["Stunt",45160.2]],"Music|Soul / R&B":[["Live",28230.8],["Synkronized",29597.1],["My Love Is Your Love",27415.05],["Big Willie Style",32637.75],["Al Green's Greatest Hits",38372.1],["Barry White's All-Time Greatest Hits",29250.0],["Soul Of A Woman",28947.75],["Embrya",29320.85],["The Velvet Rope",31616.25],["The Boy Is Mine",29251.3],["Original Musiquarium",37488.15],["Simply The Best",27470.7],["98 Degrees & Rising",38379.25],["Aretha Franklin's 30 Greatest Hits",31608.9],["Never Say Never",32228.25]]};
+  var SUBKEY = {}, CAT_OF_SUB = {};
+  CATS.forEach(function (c) { SUBS[c].forEach(function (s) { SUBKEY[s] = c + "|" + s; CAT_OF_SUB[s] = c; }); });
+  var ALL_SUBS = CATS.reduce(function (a, c) { return a.concat(SUBS[c]); }, []);
+  var TOTAL_ITEMS = Object.keys(ITEMS).reduce(function (a, k) { return a + ITEMS[k].length; }, 0);
+  function itemsOfSub(s) { return (ITEMS[SUBKEY[s]] || []).map(function (it) { return s + "|" + it[0]; }); }
+  function revOf(s, item) { var a = ITEMS[SUBKEY[s]] || []; for (var i = 0; i < a.length; i++) if (a[i][0] === item) return a[i][1]; return 0; }
   function fmt(n) { return "$" + Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
-  var ALL_QUARTERS = YEARS.reduce(function (a, y) { return a.concat(quartersOf(y)); }, []);
-  var ALL_MONTHS = ALL_QUARTERS.reduce(function (a, q) { return a.concat(monthsOf(q)); }, []);
 
-  /* ---------- interactive walkthrough ---------- */
   var LEVELS = [
-    { name: "Elements of Year", tag: "embedded in Year Filter Prompted", attr: "Year" },
-    { name: "Elements of Quarter (cascading)", tag: "restricted by Year Filter Prompted", attr: "Quarter" },
-    { name: "Elements of Month (cascading)", tag: "restricted by Quarter Filter Prompted", attr: "Month" }
+    { name: "Elements of Category", tag: "embedded in the Category filter", attr: "Category" },
+    { name: "Elements of Subcategory (cascading)", tag: "restricted by the Category filter", attr: "Subcategory" },
+    { name: "Elements of Item (cascading)", tag: "restricted by the Subcategory filter", attr: "Item" }
   ];
   var sim = { step: 0, picks: [new Set(), new Set(), new Set()], confirmed: [false, false, false], log: [] };
   var stepsEl = document.getElementById("sim-steps");
@@ -608,20 +607,14 @@ POST /api/model/reports/{id}/instances/saveAs      <span class="c">→ X-MSTR-MS
   var resultEl = document.getElementById("sim-result");
 
   function optionsFor(level) {
-    if (level === 0) return YEARS.slice();
-    if (level === 1) return Array.from(sim.picks[0]).sort().reduce(function (a, y) { return a.concat(quartersOf(y)); }, []);
-    return Array.from(sim.picks[1]).sort().reduce(function (a, q) { return a.concat(monthsOf(q)); }, []);
+    if (level === 0) return CATS.slice();
+    if (level === 1) return Array.from(sim.picks[0]).reduce(function (a, c) { return a.concat(SUBS[c]); }, []);
+    return Array.from(sim.picks[1]).reduce(function (a, s) { return a.concat(itemsOfSub(s)); }, []);
   }
-  function countAll(level) { return level === 0 ? YEARS.length : (level === 1 ? ALL_QUARTERS.length : ALL_MONTHS.length); }
-  function quarterOfMonth(m) {
-    var parts = m.split(" ");
-    for (var q in MONS) { if (MONS[q].indexOf(parts[0]) >= 0) return parts[1] + " " + q; }
-    return "";
-  }
-  function logLine(html) {
-    sim.log.push(html);
-    engineEl.innerHTML = sim.log.map(function (l) { return "<div>" + l + "</div>"; }).join("");
-  }
+  function countAll(level) { return level === 0 ? CATS.length : (level === 1 ? ALL_SUBS.length : TOTAL_ITEMS); }
+  function groupOf(i, opt) { if (i === 1) return CAT_OF_SUB[opt]; if (i === 2) return opt.split("|")[0]; return null; }
+  function labelOf(i, opt) { return i === 2 ? opt.split("|")[1] : opt; }
+  function logLine(html) { sim.log.push(html); engineEl.innerHTML = sim.log.map(function (l) { return "<div>" + l + "</div>"; }).join(""); }
 
   function renderSim() {
     stepsEl.innerHTML = "";
@@ -631,45 +624,39 @@ POST /api/model/reports/{id}/instances/saveAs      <span class="c">→ X-MSTR-MS
       var done = sim.confirmed[i];
       var locked = i > sim.step;
       st.className = "step" + (open ? " open" : "") + (done ? " done" : "") + (locked ? " locked" : "");
-
       var head = document.createElement("div");
       head.className = "step-head";
       head.innerHTML = '<span class="step-no">' + (i + 1) + "</span><span>" + lv.name + "</span>" +
         '<span class="step-state">' + (done ? "answered" : (open ? "open" : "locked")) + "</span>" +
         '<span class="step-tag">' + lv.tag + "</span>";
       st.appendChild(head);
-
       var opts = document.createElement("div");
       opts.className = "opts";
       if (locked) {
-        var n = document.createElement("span");
-        n.className = "step-note";
-        n.textContent = "Waiting on prompt " + i + " — the server can't compute this list yet.";
+        var n = document.createElement("span"); n.className = "step-note";
+        n.textContent = "Waiting on prompt " + i + " \u2014 the server can't compute this list yet.";
         opts.appendChild(n);
       } else {
-        var groups = {};
-        optionsFor(i).forEach(function (item) {
-          var g = null;
-          if (i === 1) g = item.split(" ")[0];
-          if (i === 2) g = quarterOfMonth(item);
-          (groups[g] = groups[g] || []).push(item);
+        var groups = {}, order = [];
+        optionsFor(i).forEach(function (opt) {
+          var g = groupOf(i, opt);
+          if (!(g in groups)) { groups[g] = []; order.push(g); }
+          groups[g].push(opt);
         });
-        Object.keys(groups).forEach(function (g) {
-          if (g !== "null" && i > 0 && Object.keys(groups).length > 1) {
-            var gl = document.createElement("span");
-            gl.className = "opt-group-label";
-            gl.textContent = g;
+        order.forEach(function (g) {
+          if (i > 0 && g != null && g !== "null") {
+            var gl = document.createElement("span"); gl.className = "opt-group-label"; gl.textContent = g;
             opts.appendChild(gl);
           }
-          groups[g].forEach(function (item) {
+          groups[g].forEach(function (opt) {
             var b = document.createElement("button");
             b.type = "button";
-            b.className = "opt" + (sim.picks[i].has(item) ? " on" : "");
-            b.textContent = item;
-            b.setAttribute("aria-pressed", sim.picks[i].has(item) ? "true" : "false");
+            b.className = "opt" + (sim.picks[i].has(opt) ? " on" : "");
+            b.textContent = labelOf(i, opt);
+            b.setAttribute("aria-pressed", sim.picks[i].has(opt) ? "true" : "false");
             if (done) b.disabled = true;
             b.addEventListener("click", function () {
-              if (sim.picks[i].has(item)) sim.picks[i].delete(item); else sim.picks[i].add(item);
+              if (sim.picks[i].has(opt)) sim.picks[i].delete(opt); else sim.picks[i].add(opt);
               renderSim();
             });
             opts.appendChild(b);
@@ -677,31 +664,25 @@ POST /api/model/reports/{id}/instances/saveAs      <span class="c">→ X-MSTR-MS
         });
       }
       st.appendChild(opts);
-
       var foot = document.createElement("div");
       foot.className = "step-foot";
       if (open) {
         var c = document.createElement("button");
-        c.type = "button";
-        c.className = "btn primary";
-        c.textContent = i < 2 ? "Confirm ▸" : "Run report";
+        c.type = "button"; c.className = "btn primary";
+        c.textContent = i < 2 ? "Confirm \u25B8" : "Run report";
         c.disabled = sim.picks[i].size === 0;
         c.addEventListener("click", function () { confirmStep(i); });
         foot.appendChild(c);
-        var note = document.createElement("span");
-        note.className = "step-note";
-        note.textContent = sim.picks[i].size === 0 ? "Required — pick at least one." : sim.picks[i].size + " selected";
+        var note = document.createElement("span"); note.className = "step-note";
+        note.textContent = sim.picks[i].size === 0 ? "Required \u2014 pick at least one." : sim.picks[i].size + " selected";
         foot.appendChild(note);
       } else if (done) {
         var e = document.createElement("button");
-        e.type = "button";
-        e.className = "btn";
-        e.textContent = "Edit";
+        e.type = "button"; e.className = "btn"; e.textContent = "Edit";
         e.addEventListener("click", function () { reopen(i); });
         foot.appendChild(e);
-        var picked = document.createElement("span");
-        picked.className = "step-note";
-        picked.textContent = Array.from(sim.picks[i]).sort().join(", ");
+        var picked = document.createElement("span"); picked.className = "step-note";
+        picked.textContent = Array.from(sim.picks[i]).map(function (o) { return labelOf(i, o); }).join(", ");
         foot.appendChild(picked);
       }
       st.appendChild(foot);
@@ -711,17 +692,16 @@ POST /api/model/reports/{id}/instances/saveAs      <span class="c">→ X-MSTR-MS
 
   function confirmStep(i) {
     sim.confirmed[i] = true;
-    var names = Array.from(sim.picks[i]).sort();
-    logLine('<span class="lbl">PUT </span> …/prompts/answers  ' + LEVELS[i].attr + ' = {' + names.join(", ") + '}  →  204');
+    var names = Array.from(sim.picks[i]).map(function (o) { return labelOf(i, o); });
+    logLine('<span class="lbl">PUT </span> \u2026/prompts/answers  ' + LEVELS[i].attr + ' = {' + names.join(", ") + '}  \u2192  204');
     if (i < 2) {
       sim.step = i + 1;
       var offered = optionsFor(sim.step).length;
-      logLine('<span class="lbl">GET </span> …/prompts/{key}/elements  ' + LEVELS[sim.step].attr + ' <span class="hot">restricted by ' + (i === 0 ? "Year Filter Prompted" : "Quarter Filter Prompted") + '</span>  →  <span class="hot">' + offered + ' of ' + countAll(sim.step) + '</span> offered');
+      logLine('<span class="lbl">GET </span> \u2026/prompts/{key}/elements  ' + LEVELS[sim.step].attr + ' <span class="hot">restricted by the ' + (i === 0 ? "Category" : "Subcategory") + ' filter</span>  \u2192  <span class="hot">' + offered + ' of ' + countAll(sim.step) + '</span> offered');
     } else {
-      var months = Array.from(sim.picks[2]);
-      var withData = months.filter(function (m) { return REVMAP[m]; });
-      logLine('<span class="lbl">GET </span> …/reports/{id}/instances/{iid}  →  ' + withData.length + ' row' + (withData.length === 1 ? "" : "s") + ' returned' + (withData.length < months.length ? ' <span class="lbl">(' + (months.length - withData.length) + ' had no sales)</span>' : ''));
-      showResult(months);
+      var items = Array.from(sim.picks[2]);
+      logLine('<span class="lbl">GET </span> \u2026/reports/{id}/instances/{iid}  \u2192  ' + items.length + ' row' + (items.length === 1 ? "" : "s") + ' returned');
+      showResult(items);
     }
     renderSim();
   }
@@ -730,18 +710,21 @@ POST /api/model/reports/{id}/instances/saveAs      <span class="c">→ X-MSTR-MS
     for (var k = i; k < 3; k++) { sim.confirmed[k] = false; if (k > i) sim.picks[k] = new Set(); }
     sim.step = i;
     resultEl.classList.remove("show");
-    logLine('<span class="lbl">POST</span> …/instances/{iid}/rePrompt  →  step reopened, later answers cleared');
+    logLine('<span class="lbl">POST</span> \u2026/instances/{iid}/rePrompt  \u2192  step reopened, later answers cleared');
     renderSim();
   }
 
-  function showResult(months) {
-    var rows = months.sort(function (a, b) { return ALL_MONTHS.indexOf(a) - ALL_MONTHS.indexOf(b); }).map(function (m) {
-      var r = REVMAP[m];
-      if (!r) return "";
-      return "<tr><td>" + r.m + "</td><td>" + r.q + "</td><td>" + r.y + "</td><td class='num-cell'>" + fmt(r.rev) + "</td></tr>";
+  function showResult(items) {
+    var rows = items.map(function (o) {
+      var parts = o.split("|"); var sub = parts[0], item = parts[1];
+      return { cat: CAT_OF_SUB[sub], sub: sub, item: item, rev: revOf(sub, item) };
+    }).sort(function (a, b) {
+      return CATS.indexOf(a.cat) - CATS.indexOf(b.cat) || a.sub.localeCompare(b.sub) || a.item.localeCompare(b.item);
+    });
+    var html = rows.map(function (r) {
+      return "<tr><td>" + r.cat + "</td><td>" + r.sub + "</td><td>" + r.item + "</td><td class='num-cell'>" + fmt(r.rev) + "</td></tr>";
     }).join("");
-    if (!rows) rows = "<tr><td colspan='4' class='small'>No data returned — the chosen months have calendar elements but no sales in Tutorial (real behavior: 2023 exists in the lookup, not in the fact table).</td></tr>";
-    resultEl.innerHTML = '<div class="table-wrap"><table><thead><tr><th>Month</th><th>Quarter</th><th>Year</th><th style="text-align:right">Revenue</th></tr></thead><tbody>' + rows + "</tbody></table></div>";
+    resultEl.innerHTML = '<div class="table-wrap"><table><thead><tr><th>Category</th><th>Subcategory</th><th>Item</th><th style="text-align:right">Revenue</th></tr></thead><tbody>' + html + "</tbody></table></div>";
     resultEl.classList.add("show");
   }
 
@@ -750,14 +733,15 @@ POST /api/model/reports/{id}/instances/saveAs      <span class="c">→ X-MSTR-MS
     engineEl.innerHTML = "";
     resultEl.classList.remove("show");
     resultEl.innerHTML = "";
-    logLine('<span class="lbl">POST</span> /api/v2/reports/{id}/instances  →  200, status: prompted');
-    logLine('<span class="lbl">GET </span> …/prompts/{key}/elements  Year  →  <span class="hot">4</span> elements (no restriction)');
+    logLine('<span class="lbl">POST</span> /api/v2/reports/{id}/instances  \u2192  200, status: prompted');
+    logLine('<span class="lbl">GET </span> \u2026/prompts/{key}/elements  Category  \u2192  <span class="hot">' + CATS.length + '</span> elements (no restriction)');
     renderSim();
   }
   document.getElementById("sim-reset").addEventListener("click", resetSim);
   resetSim();
 })();
 </script>
+<script src="config.js"></script>
 <script>
 /* Demo auto-authentication.
    Hardcoded credentials for a SHARED DEMO environment only, so the embedded
@@ -767,7 +751,9 @@ POST /api/model/reports/{id}/instances/saveAs      <span class="c">→ X-MSTR-MS
    with real credentials in production — use SSO/OIDC or the Embedding SDK. */
 (function () {
   "use strict";
-  var DEMO = { username: "<operator>", password: "<demo-password>", loginMode: 1 };
+  // Demo credentials come from config.js (gitignored) — see config.example.js.
+  // If absent, the page still works; viewers just sign in inside a frame once.
+  var DEMO = window.DEMO_CREDENTIALS || null;
   var LIB = "/MicroStrategyLibrary";
 
   // Always start at the top on (re)load. Browsers can restore a prior scroll
@@ -802,6 +788,11 @@ POST /api/model/reports/{id}/instances/saveAs      <span class="c">→ X-MSTR-MS
     var ticks = 0, iv = setInterval(function () { pinTop(); if (++ticks > 50 || userScrolled) clearInterval(iv); }, 100);
   }
   function auth() {
+    if (!DEMO) {
+      pill("warn", "Demo sign-in not configured — sign in inside a frame");
+      loadFrames();
+      return;
+    }
     pill("", "Connecting to the live demo…");
     fetch(LIB + "/api/auth/login", {
       method: "POST",
