@@ -117,6 +117,11 @@ Session verified + captured against them:
   session first-party (Safari-safe). Recipe re-proven same day by `api_proof.py`:
   fresh temp 2-level chain created via the documented calls, cascade verified at
   runtime (Movies → 6 Movies subcats), then all temp objects deleted (204s).
+  DEPLOYED 2026-08-27: operator dropped the WAR into the env's Tomcat webapps
+  next to MicroStrategyLibrary; auto-deploy unpacked it — live at
+  `https://<env-base>/cascading-prompts/` (verified HTTP 200; iframes now
+  SAME-ORIGIN with Library → first-party session, works in every browser
+  including Safari, independent of the SameSite setting).
 - Spec-observed (not exercised): this env family documents dashboard import
   (`POST /api/dashboards` from .mstr), deprecated create-from-report
   (`POST /api/dashboards/json`), and `POST /api/dossiers/instances`
