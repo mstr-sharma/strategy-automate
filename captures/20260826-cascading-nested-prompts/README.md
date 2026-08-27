@@ -110,6 +110,13 @@ Session verified + captured against them:
   start.sh → http://localhost:8811): annotated wizard replay + build walkthrough with the
   Workstation gap/workaround inline + exactly one live iframe per example (YQM prompted
   report, CSI dashboard, hierarchy dashboard; YQM dashboard link-only to avoid duplication).
+  Final form (same day): **customer-facing wording** (no local-hosting or operator
+  references; generic "embedding Library in your pages" guidance) packaged as
+  **cascading-prompts.war** (webapp/ + build-war.sh + DEPLOY.md in the same Desktop
+  folder) for drop-in Tomcat deployment — same-Tomcat-as-Library placement makes the
+  session first-party (Safari-safe). Recipe re-proven same day by `api_proof.py`:
+  fresh temp 2-level chain created via the documented calls, cascade verified at
+  runtime (Movies → 6 Movies subcats), then all temp objects deleted (204s).
 - Spec-observed (not exercised): this env family documents dashboard import
   (`POST /api/dashboards` from .mstr), deprecated create-from-report
   (`POST /api/dashboards/json`), and `POST /api/dossiers/instances`
