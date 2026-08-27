@@ -201,14 +201,13 @@
 <section id="nested">
   <p class="kicker">Approach 1 &middot; the prompt-in-prompt pattern</p>
   <h2><span class="num">1</span>Nested prompts</h2>
-  <p class="prose">The classic prompt-in-prompt pattern (<a href="https://community.strategy.com/article/KB10434-How-to-create-N-Level-deep-nested-prompts-in">KB10434</a>): each level is an element-list <strong>prompt</strong> plus a <strong>filter</strong> that wraps it, and the next prompt's element list is restricted by the previous filter. It filters the SQL itself, so only the chosen slice ever leaves the warehouse. Here it is live &mdash; answer Year and click next, and the Quarter list arrives already narrowed:</p>
+  <p class="prose">The classic prompt-in-prompt pattern (<a href="https://community.strategy.com/article/KB10434-How-to-create-N-Level-deep-nested-prompts-in">KB10434</a>): each level is an element-list <strong>prompt</strong> plus a <strong>filter</strong> that wraps it, and the next prompt's element list is restricted by the previous filter. It filters the SQL itself, so only the chosen slice ever leaves the warehouse. Here it is live &mdash; answer Category and click next, and the Subcategory list arrives already narrowed:</p>
 
   <div class="frame-card">
     <div class="frame-bar">
-      <span class="frame-title">Cascading Prompts Demo (Year - Quarter - Month)<span class="live">live</span></span>
-      <a class="btn" href="/MicroStrategyLibrary/app/B7CA92F04B9FAE8D941C3E9B7E0CD754/52F8FB50AB4C3A2E7937598E9D5B39F6" target="_blank" rel="noopener">Open full screen ↗</a>
+      <span class="frame-title">Cascading Prompts Demo (Category - Subcategory - Item)<span class="live">live</span></span>
     </div>
-    <iframe src="about:blank" data-src="/MicroStrategyLibrary/app/B7CA92F04B9FAE8D941C3E9B7E0CD754/52F8FB50AB4C3A2E7937598E9D5B39F6" title="Cascading Prompts Demo (Year - Quarter - Month) — live prompted report" loading="lazy" allowfullscreen></iframe>
+    <iframe src="about:blank" data-src="/MicroStrategyLibrary/app/B7CA92F04B9FAE8D941C3E9B7E0CD754/FB1F79D0E745CB34B9C82D951051A4B0" title="Cascading Prompts Demo (Category - Subcategory - Item) — live prompted report" loading="lazy" allowfullscreen></iframe>
   </div>
   <p class="prose small">Embedded live from Strategy Library &mdash; you've already been signed in to the demo, so it runs with no login prompt. Frame not loading? See <a href="#reference">embedding &amp; documentation</a>.</p>
 
@@ -216,7 +215,7 @@
   <p class="prose">Each level is a pair of objects; only the deepest filter goes on the report, and the engine discovers the rest of the chain from there. No depth limit.</p>
   <figure>
     <div class="fig-scroll">
-    <svg viewBox="0 0 980 330" role="img" aria-label="Object graph of the three-level chain: Elements of Year is embedded in Year Filter Prompted, which restricts Elements of Quarter, wrapped by Quarter Filter Prompted, which restricts Elements of Month, wrapped by Month Filter Prompted, which is the report filter. Prompts resolve left to right at run time.">
+    <svg viewBox="0 0 980 330" role="img" aria-label="Object graph of the three-level chain: Elements of Category is embedded in the Category filter, which restricts Elements of Subcategory, wrapped by the Subcategory filter, which restricts Elements of Item, wrapped by the Item filter, which is the report filter. Prompts resolve left to right at run time.">
       <defs>
         <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
         <marker id="arrO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#FA660F"/></marker>
@@ -232,13 +231,13 @@
       </g>
       <g fill="currentColor" font-family="Inter, Arial, sans-serif">
         <g font-size="13" font-weight="600" text-anchor="middle">
-          <text x="130" y="66">Elements of Year</text><text x="450" y="66">Elements of Quarter</text><text x="770" y="66">Elements of Month</text>
-          <text x="130" y="206">Year Filter Prompted</text><text x="450" y="206">Quarter Filter Prompted</text><text x="770" y="206" fill="#FA660F">Month Filter Prompted</text>
+          <text x="130" y="66">Elements of Category</text><text x="450" y="66">Elements of Subcategory</text><text x="770" y="66">Elements of Item</text>
+          <text x="130" y="206">Category Filter</text><text x="450" y="206">Subcategory Filter</text><text x="770" y="206" fill="#FA660F">Item Filter</text>
           <text x="860" y="299" fill="#FA660F">Report</text>
         </g>
         <g font-size="11.5" text-anchor="middle" opacity=".75">
           <text x="130" y="86">prompt</text><text x="450" y="86">prompt (cascading)</text><text x="770" y="86">prompt (cascading)</text>
-          <text x="130" y="226">Year = ?prompt</text><text x="450" y="226">Quarter = ?prompt</text><text x="770" y="226">Month = ?prompt</text>
+          <text x="130" y="226">Category = ?prompt</text><text x="450" y="226">Subcategory = ?prompt</text><text x="770" y="226">Item = ?prompt</text>
         </g>
         <g font-size="11.5" opacity=".8"><text x="140" y="144">embedded in</text><text x="460" y="144">wrapped by</text><text x="780" y="144">wrapped by</text><text x="866" y="260" fill="#FA660F">report filter</text></g>
         <g font-size="11.5" font-weight="600" fill="#FA660F" text-anchor="middle">
@@ -271,18 +270,9 @@
     </div>
   </div>
 
-  <h3>Also: nested prompts on a dashboard</h3>
-  <p class="prose">Drop a prompted report into a dashboard and the whole cascade fires <strong>when the dashboard opens</strong> (or is re-prompted), then the dataset holds exactly the retrieved slice. Here's the product-chain twin (Category &rarr; Subcategory &rarr; Item) wrapped in a dashboard:</p>
-  <div class="frame-card">
-    <div class="frame-bar">
-      <span class="frame-title">Cascading Prompt - Category, Subcategory, Item<span class="live">live</span></span>
-      <a class="btn" href="/MicroStrategyLibrary/app/B7CA92F04B9FAE8D941C3E9B7E0CD754/942701A89C429C0996DF17BEA7AB1ECD" target="_blank" rel="noopener">Open full screen ↗</a>
-    </div>
-    <iframe src="about:blank" data-src="/MicroStrategyLibrary/app/B7CA92F04B9FAE8D941C3E9B7E0CD754/942701A89C429C0996DF17BEA7AB1ECD" title="Cascading Prompt - Category, Subcategory, Item — live dashboard on a prompted report" loading="lazy" allowfullscreen></iframe>
-  </div>
   <div class="callout">
-    <span class="callout-title">The distinction that leads to approach 2</span>
-    <p>Prompts are decided <strong>per dataset</strong> (once, up front); the filter panel narrows <strong>per viewer</strong> (always on). If you want viewers to keep re-slicing inside the dashboard without a re-prompt, that's targeted filters &mdash; next.</p>
+    <span class="callout-title">On a dashboard &mdash; and the distinction that leads to approach 2</span>
+    <p>Wrap this prompted report in a dashboard and the cascade is answered once, when the dashboard opens (decided <strong>per dataset</strong>) &mdash; not per viewer interaction. For always-on narrowing <em>inside</em> a dashboard, use targeted filters &mdash; approach 2, next.</p>
   </div>
 </section>
 
@@ -295,7 +285,6 @@
   <div class="frame-card">
     <div class="frame-bar">
       <span class="frame-title">Cascading Filter Panel - Category, Subcategory, Item<span class="live">live</span></span>
-      <a class="btn" href="/MicroStrategyLibrary/app/B7CA92F04B9FAE8D941C3E9B7E0CD754/C9E0D4793C43EC86A9C1D9940D7F5955" target="_blank" rel="noopener">Open full screen ↗</a>
     </div>
     <iframe src="about:blank" data-src="/MicroStrategyLibrary/app/B7CA92F04B9FAE8D941C3E9B7E0CD754/C9E0D4793C43EC86A9C1D9940D7F5955" title="Cascading Filter Panel - Category, Subcategory, Item — live dashboard with targeted filters" loading="lazy" allowfullscreen></iframe>
   </div>
@@ -329,7 +318,6 @@
   <div class="frame-card">
     <div class="frame-bar">
       <span class="frame-title">Cascading Prompt - Product Hierarchy Prompt<span class="live">live</span></span>
-      <a class="btn" href="/MicroStrategyLibrary/app/B7CA92F04B9FAE8D941C3E9B7E0CD754/B24CEE0BF04483AF3098548E682A2E18" target="_blank" rel="noopener">Open full screen ↗</a>
     </div>
     <iframe src="about:blank" data-src="/MicroStrategyLibrary/app/B7CA92F04B9FAE8D941C3E9B7E0CD754/B24CEE0BF04483AF3098548E682A2E18" title="Cascading Prompt - Product Hierarchy Prompt — live dashboard" loading="lazy" allowfullscreen></iframe>
   </div>
@@ -358,7 +346,7 @@
 <section id="rest">
   <p class="kicker">Approach 4 &middot; automation</p>
   <h2><span class="num">4</span>REST API</h2>
-  <p class="prose">The same cascade, driven by the public REST API instead of the UI &mdash; ideal for <strong>provisioning many cascades at once</strong> or scripting a migration, and there's no editor gap because there's no preview step. Two parts: at <strong>run time</strong> the API answers the prompts one level at a time (below), and at <strong>build time</strong> the API creates the object chain (the recipe). Step through the same Year &rarr; Quarter &rarr; Month example and watch the exact call at each step:</p>
+  <p class="prose">The same cascade, driven by the public REST API instead of the UI &mdash; ideal for <strong>provisioning many cascades at once</strong> or scripting a migration, and there's no editor gap because there's no preview step. Two parts: at <strong>run time</strong> the API answers the prompts one level at a time (below), and at <strong>build time</strong> the API creates the object chain (the recipe). Step through a Year &rarr; Quarter &rarr; Month example and watch the exact call at each step:</p>
 
   <div class="demo" id="sim">
     <div class="demo-head">
@@ -504,7 +492,7 @@ POST /api/model/reports/{id}/instances/saveAs      <span class="c">→ X-MSTR-MS
 
   <h3 id="gotchas">Gotchas that matter</h3>
   <ul class="prose">
-    <li><strong>Make every level required.</strong> An optional lower prompt that goes unanswered means the report filter carries no qualification &mdash; nothing filters (<a href="https://community.strategy.com/article/KB37738-How-to-answer-N-Level-deep-nested-prompts-when-the">KB37738</a>). If you need optional levels, AND all the filters onto the report instead. (The approach-1 demo's Year prompt is intentionally optional &mdash; skip it and level 2 offers all 16 quarters, a quick way to feel why Required matters.)</li>
+    <li><strong>Make every level required.</strong> An optional lower prompt that goes unanswered means the report filter carries no qualification &mdash; nothing filters (<a href="https://community.strategy.com/article/KB37738-How-to-answer-N-Level-deep-nested-prompts-when-the">KB37738</a>). If you need optional levels, AND all the filters onto the report instead.</li>
     <li><strong>Keep cascade attributes related in the schema.</strong> Year &rarr; Quarter &rarr; Month are parent&ndash;child in the Time hierarchy, so each restricted browse is a small lookup query. Unrelated attributes force fact-table joins per level &mdash; that's where nested prompts get slow.</li>
     <li><strong>Prompts are the "parameters."</strong> In classic Strategy BI there is no separate parameter object &mdash; a prompt <em>is</em> the reusable question, and its answer parameterizes the SQL.</li>
   </ul>
