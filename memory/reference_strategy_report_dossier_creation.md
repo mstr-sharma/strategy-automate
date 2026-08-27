@@ -16,6 +16,10 @@ Verified on a Strategy ONE Library tenant, 2026.
 
 Conclusion: **Creating a new report, dossier, or dashboard from scratch is not exposed over REST on current Library servers.** This is intentional — the object-authoring surface is Workstation and Library Web, not the public API.
 
+Two dated corrections (2026-08-26/27, Strategy ONE Cloud env family):
+- **Reports ARE creatable via the Modeling Service** — `POST /api/model/reports` (grid + dataSource + optional filter) followed by `POST /api/model/reports/{id}/instances/saveAs` with the `X-MSTR-MS-Instance` header. Verified repeatedly (see `reference_strategy_legacy_semantic_admin.md`). The 500s above were against `POST /api/reports`, which is indeed execution-only.
+- **A dashboard-authoring candidate path exists in the spec** (observed with `?visibility=all`, NOT yet exercised): `POST /api/dossiers/instances` accepts `DashboardCreationInfo` (`{objects: [{id: <reportId>, type: 3}]}`) to build an in-memory dashboard around report(s), and `POST /api/documents/{id}/instances/{mid}/saveAs` persists a document instance to a folder. Also `POST /api/dashboards` imports a .mstr file, and the deprecated `POST /api/dashboards/json` creates a dashboard view from a report. Probe these before repeating the "not possible" claim on a fresh tenant.
+
 ## What REST DOES support
 Execution and read-back against *existing* objects:
 

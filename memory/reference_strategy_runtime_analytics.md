@@ -54,6 +54,8 @@ Runtime endpoints include:
 
 Prompt APIs can read definitions, answer with explicit values, answer defaults, close optional prompts without answers, and reset/re-prompt depending on prompt type.
 
+Tenant-verified (2026-08-27): a dashboard/dossier whose dataset is a prompted report goes to prompt status when the DOCUMENT instance is created; the same progressive nested-prompt loop (list → elements → answers, one open level at a time) works through `/api/documents/{id}/instances/{mid}/prompts[...]` — including N-level cascading element restrictions. Answering every level with ALL offered elements is the fastest full-slice data extract from a prompted chain.
+
 ## Filters
 
 Keep these separate:
@@ -69,7 +71,7 @@ For dashboards/dossiers, `GET /api/dossiers/{dossierId}/definition` can reveal c
 
 Common export patterns:
 
-- Document/dashboard PDF: `POST /api/documents/{id}/instances/{instanceId}/pdf`, then result/status endpoint when asynchronous.
+- Document/dashboard PDF: `POST /api/documents/{id}/instances/{instanceId}/pdf`, then result/status endpoint when asynchronous. Tenant-verified (2026-08-27): the `orientation` enum on the observed Library build is `NONE|AUTO` (`LANDSCAPE`/`PORTRAIT` are rejected with ERR006), and the 200 response is JSON `{"data": "<base64 PDF>"}` — decode before writing to disk.
 - Document Excel: `POST /api/documents/{id}/instances/{instanceId}/excel`.
 - Document/dashboard CSV or visualization CSV/PDF: `/api/documents/{id}/instances/{instanceId}/csv`, `/visualizations/{nodeKey}/csv`, `/visualizations/{nodeKey}/pdf`.
 - Dashboard file import/export paths may live under `/api/dashboards`.

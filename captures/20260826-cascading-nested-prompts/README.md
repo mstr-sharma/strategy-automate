@@ -81,6 +81,43 @@ Caveat noted: the operator's embedded "Elements of Year" prompt has
 quarters. Fix in Workstation by editing the filter's embedded prompt settings
 (no filtered-elements preview involved, so no error).
 
+## Day 2 (2026-08-27): operator dashboards + real-data asset rebuild
+
+Operator hand-built two dashboards in the same folder (each = 1 chapter / 1 grid
+viz on the corresponding prompted demo report, no filter-panel filters):
+"Cascading Prompt - Year, Quarter, Month" `0AAC02C345417364A65EF6898F87FA1F` and
+"Cascading Prompt - Category, Subcategory, Item" `942701A89C429C0996DF17BEA7AB1ECD`.
+Session verified + captured against them:
+
+- **Dashboards over prompted reports prompt at document-instance creation**
+  (status 2); the nested cascade answers through the DOCUMENT prompt endpoints
+  (`GET/PUT /api/documents/{id}/instances/{mid}/prompts[...]`) exactly like the
+  report flow — Year offered 4 → Quarter 4 (chosen year) → Month 3, and
+  Category 4 → Subcategory 6 → Item 15, on dashboard instances.
+- **PDF export of a dashboard instance**: `POST /api/documents/{id}/instances/{mid}/pdf`
+  — this build's `orientation` enum is `NONE|AUTO` (`LANDSCAPE` → ERR006);
+  response is JSON `{data: <base64>}`. Rendered PNGs via pymupdf.
+- **Full-cascade data extract**: answering every prompt with ALL elements returns
+  the whole fact slice — 36 month rows (2020–2022), total revenue $35,023,708.15;
+  2023 has calendar elements but no fact rows. 2021 Q2 = Apr $827,244.30 /
+  May $892,637.30 / Jun $964,882.00 (matches dashboard render).
+- **Library is not frame-blocked** on this env (`/app` serves no X-Frame-Options
+  and CSP has no frame-ancestors) — plain-iframe embedding works when the viewer
+  is signed in; artifact host CSP still forbids third-party frames, so the asset
+  embeds REST-rendered PNGs + links, with a local `cascading-prompts-live-embed.html`
+  companion for true iframes.
+- Spec-observed (not exercised): this env family documents dashboard import
+  (`POST /api/dashboards` from .mstr), deprecated create-from-report
+  (`POST /api/dashboards/json`), and `POST /api/dossiers/instances`
+  (DashboardCreationInfo) + `POST /api/documents/{id}/instances/{mid}/saveAs` —
+  a candidate in-memory→persist authoring path if programmatic dashboard
+  creation is ever needed.
+
+Asset v2 ("real-env edition") replaced all simulated content with captured data:
+live YQM wizard replay, both dashboard renders inline (data URIs), targeted-filter
+replica driven by the 36 real rows. Files: `render2.py`, `inspect_render.py`,
+`real_data.json`, `dash_info.json`, `dash_*.pdf/png`.
+
 ## Gotchas hit and fixed this run
 
 1. `POST /api/model/reports` rejected the OpenAPI-documented
