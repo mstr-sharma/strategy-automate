@@ -44,12 +44,43 @@ Library Admin → Library Server → Security Settings:
 
 Verified after the change: `Set-Cookie: … HttpOnly; Secure; SameSite=None`.
 
+## Auto sign-in (demo convenience)
+
+The page authenticates itself so viewers see live reports and dashboards with
+**no login prompt**:
+
+- On load, a small script calls `POST /MicroStrategyLibrary/api/auth/login` with
+  a **shared demo account hardcoded in `index.html`** (search for `DEMO =`).
+- Because the page is served same-origin with Library, that login sets a
+  **first-party** session cookie, so all three iframes — and any same-origin API
+  call — are already authenticated. The status pill shows "Connected as demo user".
+- The iframes stay blank until sign-in resolves, so viewers never see a login
+  screen. If auto sign-in ever fails, the pill says so and the frames fall back
+  to their own login.
+
+This is deliberate for a **shared demo environment** and makes the page trivial to
+showcase. The credentials are visible in page source — fine here, never do this
+with real/production credentials. For a production embed use SSO/OIDC or the
+Embedding SDK (`embeddinglib.js`) instead of a stored password. To change the demo
+account, edit the `DEMO = { username, password, loginMode }` line in
+`webapp/index.html` and run `./build-war.sh`.
+
+## Redeploying after an edit
+
+Editing `webapp/index.html` (e.g. the demo credentials) means rebuilding and
+re-uploading:
+
+1. `./build-war.sh`
+2. Upload `cascading-prompts.war` to Tomcat `webapps/`, overwriting the old one.
+   Tomcat auto-redeploys (undeploys the old exploded folder, unpacks the new WAR).
+
 ## Viewing
 
-- Viewers need credentials for the Tutorial project on the demo environment —
-  they sign in once inside any frame and all frames share the session.
-- The interactive walkthrough and filter-panel replica on the page run on
-  captured demo data and need no sign-in.
+- The interactive walkthrough and filter-panel replica run on captured demo data
+  and need no sign-in.
+- The three live embeds authenticate automatically (above). If you deploy this
+  build somewhere **not** same-origin with Library, the auto sign-in cookie is
+  cross-site again — use a same-domain deployment or the Embedding SDK.
 
 ## Local preview without Tomcat
 

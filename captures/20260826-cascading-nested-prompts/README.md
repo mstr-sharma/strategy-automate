@@ -122,6 +122,17 @@ Session verified + captured against them:
   `https://<env-base>/cascading-prompts/` (verified HTTP 200; iframes now
   SAME-ORIGIN with Library → first-party session, works in every browser
   including Safari, independent of the SameSite setting).
+  Then (per user, for easy showcasing) the deployed build got **hardcoded demo
+  auto-login**: a small script POSTs the shared demo creds to
+  `/MicroStrategyLibrary/api/auth/login` on load; being same-origin, that sets a
+  first-party session so all three iframes render with NO login prompt (status
+  pill flips to "Connected as demo user"; iframes held on about:blank until auth
+  resolves; URLs relativized so the page is origin-portable). The credentialed
+  index.html is NOT committed here (repo no-creds rule) — creds live only in the
+  Desktop webapp/deployed WAR. Verified: on localhost the login no-ops → warn
+  fallback → frames still load (logic sound); the 204/green path is the deployed
+  same-origin behavior. **Redeploy = rebuild WAR + re-upload (overwrite) → Tomcat
+  auto-redeploys.**
 - Spec-observed (not exercised): this env family documents dashboard import
   (`POST /api/dashboards` from .mstr), deprecated create-from-report
   (`POST /api/dashboards/json`), and `POST /api/dossiers/instances`
