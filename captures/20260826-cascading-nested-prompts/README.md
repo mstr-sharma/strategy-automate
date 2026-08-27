@@ -152,6 +152,17 @@ Session verified + captured against them:
   the REST API section retitled "Automating it with the REST API", framed
   optional/for-developers, and its payload collapsed into a <details> (all raw
   /api/ syntax now lives only inside collapsibles). Nav labels softened.
+- Restructured again 2026-08-27 (customer feedback): dropped the standalone
+  "how it works" section and MOVED the interactive stepper into a new **Approach 4
+  · REST API** (where the per-step API calls now belong, resolving the earlier
+  confusion) — stepper shows the runtime call at each step + a collapsed "full
+  recipe" (object-creation payload). Page is now FOUR approaches, each with a live
+  example AND a Pros/Cons block: 1 Nested prompts (+ flow diagram), 2 Targeted
+  filter panel, 3 Hierarchy prompt, 4 REST API. Then a consolidated **How to build
+  in Workstation** section (nested 6-step gap+fix, filter-panel, hierarchy,
+  gotchas), a **Developer (desktop)** section, and **References** (compare-at-a-
+  glance 4-col table, embedding, docs). Section order: nested, filter-panel,
+  hierarchy, rest, workstation, developer, reference.
 - Spec-observed (not exercised): this env family documents dashboard import
   (`POST /api/dashboards` from .mstr), deprecated create-from-report
   (`POST /api/dashboards/json`), and `POST /api/dossiers/instances`
