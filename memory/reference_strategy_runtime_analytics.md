@@ -56,6 +56,8 @@ Prompt APIs can read definitions, answer with explicit values, answer defaults, 
 
 Tenant-verified (2026-08-27): a dashboard/dossier whose dataset is a prompted report goes to prompt status when the DOCUMENT instance is created; the same progressive nested-prompt loop (list → elements → answers, one open level at a time) works through `/api/documents/{id}/instances/{mid}/prompts[...]` — including N-level cascading element restrictions. Answering every level with ALL offered elements is the fastest full-slice data extract from a prompted chain.
 
+Expression/hierarchy prompts (runtime type `EXPRESSION`, e.g. a hierarchy qualification prompt): the answer uses the **runtime `{operator, operands}` expression grammar** — `answers: {"expression": {"operator": "In", "operands": [{"type": "attribute", "id": …}, {"type": "elements", "elements": [{"id": "h<N>;<attrId>", "name": …}]}]}}` — NOT the Modeling `predicate_*` tree (that 400s ERR006). Sending the prompt key with no `answers` closes an optional prompt without qualification. Verified 2026-08-27 on a hierarchy prompt over a user hierarchy, via the document prompt endpoints.
+
 ## Filters
 
 Keep these separate:
