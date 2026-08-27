@@ -105,7 +105,11 @@ Session verified + captured against them:
   and CSP has no frame-ancestors) — plain-iframe embedding works when the viewer
   is signed in; artifact host CSP still forbids third-party frames, so the asset
   embeds REST-rendered PNGs + links, with a local `cascading-prompts-live-embed.html`
-  companion for true iframes.
+  companion for true iframes. Later on 2026-08-27 that companion grew into the full
+  **live-edition educational page** at `~/Desktop/cascading-prompts-embed/` (index.html +
+  start.sh → http://localhost:8811): annotated wizard replay + build walkthrough with the
+  Workstation gap/workaround inline + exactly one live iframe per example (YQM prompted
+  report, CSI dashboard, hierarchy dashboard; YQM dashboard link-only to avoid duplication).
 - Spec-observed (not exercised): this env family documents dashboard import
   (`POST /api/dashboards` from .mstr), deprecated create-from-report
   (`POST /api/dashboards/json`), and `POST /api/dossiers/instances`
