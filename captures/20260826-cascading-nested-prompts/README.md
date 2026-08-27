@@ -144,6 +144,18 @@ Session verified + captured against them:
   `C9E0D4793C43EC86A9C1D9940D7F5955`** (3 chapter filters on a grid, status
   ready = live targeted filters); replica JS removed → 4 live iframes total. Also
   renamed **"Strategy One" → "Strategy BI"** throughout the page.
+- Deployed to GitHub 2026-08-27: **private repo `<gh-handle>/cascading-prompts-embed`**
+  (created via the machine's stored token, pushed over HTTPS). Demo creds
+  externalized to a gitignored `webapp/config.js` (repo ships `config.example.js`) so
+  the repository is credential-free; the deployed WAR still auto-signs-in from its
+  local config. README/.gitignore/DEPLOY added.
+- Whole-page example unified to **Category → Subcategory → Item** (2026-08-27): the
+  REST stepper (approach 4) rebuilt on the real captured product tree (4 cats × 6
+  subcats × ~15 items each = 360 items with revenue, pulled via a temp report then
+  deleted); Workstation walkthrough, Developer note, gotchas, recipe payload, and
+  footer switched from Year/Quarter/Month. Only remaining time words are real item
+  names in the data (e.g. the movie "The Year Without a Santa Claus"). Also: scroll
+  pinned to top on load (iframes were autofocus-scrolling the parent down).
 - Customer-clarity pass 2026-08-27 (feedback: too technical, and the walkthrough's
   REST-syntax log strip was mistaken for "the API approach"): the interactive
   walkthrough's dark strip now narrates in PLAIN ENGLISH (no HTTP verbs/endpoints/
