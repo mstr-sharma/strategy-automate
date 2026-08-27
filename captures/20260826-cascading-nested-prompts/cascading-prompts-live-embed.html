@@ -769,6 +769,19 @@ POST /api/model/reports/{id}/instances/saveAs      <span class="c">→ X-MSTR-MS
   "use strict";
   var DEMO = { username: "<operator>", password: "<demo-password>", loginMode: 1 };
   var LIB = "/MicroStrategyLibrary";
+
+  // Always start at the top on (re)load. Browsers can restore a prior scroll
+  // position, and iframes loading Library can autofocus and scroll the parent
+  // down to the first embed — so pin to the top until the viewer scrolls or
+  // follows an in-page (#section) link.
+  if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+  var userScrolled = false;
+  ["wheel", "touchmove", "keydown"].forEach(function (ev) {
+    window.addEventListener(ev, function () { userScrolled = true; }, { passive: true });
+  });
+  function pinTop() { if (!userScrolled && !location.hash) window.scrollTo({ top: 0, left: 0, behavior: "instant" }); }
+  pinTop();
+
   function pill(state, text) {
     var el = document.getElementById("auth-pill");
     if (!el) return;
@@ -777,7 +790,16 @@ POST /api/model/reports/{id}/instances/saveAs      <span class="c">→ X-MSTR-MS
   }
   function loadFrames() {
     var frames = document.querySelectorAll("iframe[data-src]");
-    for (var i = 0; i < frames.length; i++) frames[i].src = frames[i].getAttribute("data-src");
+    for (var i = 0; i < frames.length; i++) {
+      frames[i].addEventListener("load", function () {
+        // the app inside can autofocus a beat after 'load' — pin now and shortly after
+        pinTop(); setTimeout(pinTop, 200); setTimeout(pinTop, 700);
+      });
+      frames[i].src = frames[i].getAttribute("data-src");
+    }
+    // backstop: iframe focus-scroll can fire seconds after load — snap back for a
+    // few seconds, but stop the moment the viewer scrolls on purpose.
+    var ticks = 0, iv = setInterval(function () { pinTop(); if (++ticks > 50 || userScrolled) clearInterval(iv); }, 100);
   }
   function auth() {
     pill("", "Connecting to the live demo…");
