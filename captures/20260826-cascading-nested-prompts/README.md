@@ -132,7 +132,18 @@ Session verified + captured against them:
   Desktop webapp/deployed WAR. Verified: on localhost the login no-ops → warn
   fallback → frames still load (logic sound); the 204/green path is the deployed
   same-origin behavior. **Redeploy = rebuild WAR + re-upload (overwrite) → Tomcat
-  auto-redeploys.**
+  auto-redeploys.** Deployed live at `https://<env-base>/cascading-prompts/`
+  (verified HTTP 200, same-origin with Library).
+- Reorganized 2026-08-27 into a teaching IA: header → "On this page" contents nav
+  (4 groups, all anchor-linked) → #mechanics (walkthrough) → #nested (Approach 1:
+  live report, #diagram, #workstation walkthrough+gap+fix, #api REST recipe,
+  on-a-dashboard CSI embed, #gotchas) → #filter-panel (Approach 2) → #hierarchy
+  (Approach 3) → #decision → #reference (embedding + docs). The simulated
+  targeted-filter replica was REPLACED by the operator's new real dashboard
+  **"Cascading Filter Panel - Category, Subcategory, Item"
+  `C9E0D4793C43EC86A9C1D9940D7F5955`** (3 chapter filters on a grid, status
+  ready = live targeted filters); replica JS removed → 4 live iframes total. Also
+  renamed **"Strategy One" → "Strategy BI"** throughout the page.
 - Spec-observed (not exercised): this env family documents dashboard import
   (`POST /api/dashboards` from .mstr), deprecated create-from-report
   (`POST /api/dashboards/json`), and `POST /api/dossiers/instances`
