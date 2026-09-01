@@ -78,3 +78,17 @@ AI-adjacent surfaces:
 - Prefer read-only config/columns/description calls before training or NER updates.
 - For questions, capture question IDs and stream/status/result data IDs.
 - Do not persist conversation contents, prompts, answer text, or uploaded images into memory unless the user explicitly asks and the content is non-sensitive.
+
+## Asking agents: MCP connector vs bare /api/questions (verified 2026-08-24, studio)
+
+- The **MCP agent connector** (`ask_agent` with id + projectId from `list_agents`) reliably scopes to the bot's
+  bound AI-dataset collection and honors its customInstructions. Answers validated against cube totals.
+- **Bare `POST /api/questions` with `botId`** (Prefer: respond-async, poll `GET /api/questions/{id}` until 200,
+  answers[].text) SOMETIMES answers from a different "certified" dataset entirely (<hospitality-customer>-dining-flavored Net
+  Sales/Snack/Guest answers with guardrail boilerplate) while the first question scoped correctly — do NOT trust
+  it for bot-scoped Q&A; prefer the connector or bot-scoped chats. Also: one question at a time per user
+  (ERR001 "another question being processed"), ~40-60 s per answer.
+- Agent-instruction gotcha: a values line like "Plan Type: EReaderCo Plus Read 7.99, ..." gets parsed as literal
+  element names -> zero-row filters. Write "Plan Type values: 'EReaderCo Plus Read' ($7.99/mo)" instead.
+- Two-fact questions ("total revenue" = sales + MRR) grouped by a shared dim can fan ~15x (single-pass SQL);
+  the same pair grouped by the conformed date was correct. Pre-seed single-process phrasings.
