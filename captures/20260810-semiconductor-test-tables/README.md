@@ -136,3 +136,5 @@ After adding the two tables, wire relationships on the conformed keys:
 `TEST_DATE` → Test Date, `TEST_STAGE` → Test Stage, plus `TEST_RUN_ID` between the two new
 tables. Then re-publish and re-run the rollup check
 (`memory/reference_rollup_consistency_validation.md`).
+
+> **Naming note (2026-09-04):** company, person, and tenant identifiers in this capture are stand-ins (`EReaderCo`, `PharmaCo`, `<operator>`, …) per `memory/feedback_generalize_durable_artifacts.md`. The gitignored local scripts/payloads in this folder and the live warehouse objects keep the original identifiers, so table, plan, and file names here will not match them verbatim.

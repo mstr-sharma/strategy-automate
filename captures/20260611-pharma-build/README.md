@@ -90,3 +90,5 @@
 - `probe_publish.py` — cube-execute probe (returned -2147072488)
 - `diagnose_publish.py` / `publish_diag.json` — 3-step publish diagnostic (run 2)
 - `canary_probe.py` / `canary.json` — tenant-health canary (June 9 model execute + job monitor)
+
+> **Naming note (2026-09-04):** company, person, and tenant identifiers in this capture are stand-ins (`EReaderCo`, `PharmaCo`, `<operator>`, …) per `memory/feedback_generalize_durable_artifacts.md`. The gitignored local scripts/payloads in this folder and the live warehouse objects keep the original identifiers, so table, plan, and file names here will not match them verbatim.

@@ -45,7 +45,7 @@ type: feedback
 **Scope — this rule does NOT apply to:**
 
 - `.env` / `.env.local` / `.env.example` — those are templates and explicitly excluded from commits
-- `captures/<date>/` — raw captures are inherently tenant-specific; that's their job. Captures must not be referenced as if they were rules.
+- `captures/<date>/` — raw captures are inherently tenant-specific; that's their job. Captures must not be referenced as if they were rules. **Exception to the exemption (2026-09-04):** even captures carry no real company, organization, or person names — customer/prospect brands, merchants used as demo data, colleagues, git handles, tenant hostnames. Use invented stand-ins (`EReaderCo`, `PharmaCo`, `NaturalFoodsCo`) or angle-bracket placeholders (`<operator>`, `<tenant>.strategy.com`) and keep the technical payload (IDs, SQL, timings) intact.
 - Strategy platform constants that are genuinely universal across all tenants (e.g., the universal ID form `45C11FA478E745FEA08D781CEA190FE5`, documented subtype codes, documented OpenAPI paths). Call these out explicitly as "platform constant, safe to use as-is" in the artifact.
 
 **When the check catches something already committed.** Prefer a follow-up commit that replaces the leak with placeholders plus a pointer to a new capture file. Do not rewrite git history unless the leak is an actual credential — PII and tenant IDs are addressed going forward; historical commits are left alone.

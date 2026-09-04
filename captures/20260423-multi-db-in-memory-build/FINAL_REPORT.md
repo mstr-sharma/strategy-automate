@@ -40,7 +40,7 @@
 | **SESSION CAP WAIT** | **~15 min** | 30s backoff loop; root cause: too many CLI invocations → 8004cb0a |
 | Relationship wiring (16 rels, single PUT per child) | <1 s | grouped by child attribute, one changeset |
 | Publish attempts pre-cleanse (parallel-stall) | ~3 min | `-2147212544` — dirty warehouse dataTypes blocked publish |
-| Security filter create + assign (Shape B element_list, after Shape A 500'd) | ~30 s | `<sf-assignee-login>` resolved via `abbreviationBegins=t` |
+| Security filter create + assign (Shape B element_list, after Shape A 500'd) | ~30 s | `<sf-assignee-login>` resolved via `abbreviationBegins` |
 | **DataType cleanse** | ~4 s | 62 columns re-typed across 4 tables (warehouse → UI-clean: utf8_char, int64, double, integer, time_stamp) |
 | Final publish (post-cleanse) | **~10 s on server** (but polling endpoint blocked by job lock for ~5 min) | Job 13507 via `/api/cubes/{id}?cubeAction=publish` — completes in seconds; separately-fired 3-step `/publishStatus` poll returned lockout errors for the full job life |
 | Model description PATCH | <1 s (after 2 length rejections) | ~250-char cap |
@@ -60,6 +60,8 @@
 9. **SF naming discipline** — SF names must describe the qualification, not the user. New memory: `feedback_security_filter_naming.md`.
 
 ## Durable artifacts added this run (seven memories, one playbook)
+
+_Historical list — several of these were since consolidated into `feedback_build_mosaic_session_leak.md`, `reference_mosaic_publish_path.md`, and `reference_mosaic_security_filter.md`._
 - `memory/checklist_strategy_automation_modeling_playbook.md` — mandatory pre-build modeling pass
 - `memory/feedback_one_session_per_build.md` — single-session rule for post-build ops
 - `memory/feedback_security_filter_naming.md` — qualification-descriptive SF names
@@ -68,4 +70,6 @@
 - `memory/reference_local_skill_bundles.md` — index for `skills/strategy-brand` + `skills/strategy-product-knowledge`
 - MEMORY.md index updated
 
-Scripts + logs snapshot: `captures/20260423-tenant-gpu-analysis/` (18 files).
+Scripts + logs snapshot: this folder (gitignored scripts + logs, 18 files).
+
+> **Naming note (2026-09-04):** company, person, and tenant identifiers in this capture are stand-ins (`EReaderCo`, `PharmaCo`, `<operator>`, …) per `memory/feedback_generalize_durable_artifacts.md`. The gitignored local scripts/payloads in this folder and the live warehouse objects keep the original identifiers, so table, plan, and file names here will not match them verbatim.
