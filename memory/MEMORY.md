@@ -76,6 +76,7 @@
 - [Package & migration lifecycle (STUB)](reference_strategy_package_migration.md) — migrations/packages between projects and tenants; endpoints sketched; no verified write path yet.
 - [Monitoring / jobs / caches (STUB)](reference_strategy_monitoring_jobs_alerts.md) — job monitor, cache ops, alerts; Mosaic refresh vs classic cache refresh differ; stub captures families, no wrapped helper yet.
 - [AI agents](reference_strategy_ai_agents.md) — Auto Agent (`/api/questions`, `/api/v2/bots`) vs deprecated Bot APIs; chat/question flow, agent config, nuggets/learnings endpoints, AI indexing; unstructured-data uploads now wrapped by `skills/create-unstructured-data/`.
+- [HyperIntelligence REST surface](reference_strategy_hyperintelligence.md) — `/api/hyper/*` family (hidden behind `openapi.yaml?visibility=all`): card listing, keyword inventory via `mainAttribute/elements`, instance + view-filtered `cardInstances` gateway JSON, layout/templates, enable-disable, favorites; subtype 781 object search; session-bound instances + required `X-MSTR-ProjectID` gotchas; embedding SDK at `static/hyper/sdk/js/mstr_hyper.bundle.js`. No card create/update via public REST.
 
 ## Validation
 - [Strategy model + data validation](reference_strategy_data_validation.md) — 10-check design suite + runnable 5-query paired-query suite; pluggable reference sources (Mosaic, legacy report, flat file, warehouse SQL, REST fixture); tolerance rules; failure triage.
