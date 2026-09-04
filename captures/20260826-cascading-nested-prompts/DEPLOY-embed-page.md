@@ -2,7 +2,7 @@
 
 A single-page, customer-facing educational site with live iframe embeds of the
 cascading-prompt demo objects (MicroStrategy Tutorial project on
-<tenant-env>). No server-side code — one static HTML page packaged as a WAR.
+<env-base>). No server-side code — one static HTML page packaged as a WAR.
 
 ## Contents
 
@@ -33,7 +33,7 @@ That's it — no configuration inside the WAR.
   browsers with third-party cookies blocked need the same-domain option or the
   Embedding SDK.
 
-## Library server prerequisites (already configured on <tenant-env>, 2026-08-27)
+## Library server prerequisites (already configured on <env-base>, 2026-08-27)
 
 Library Admin → Library Server → Security Settings:
 

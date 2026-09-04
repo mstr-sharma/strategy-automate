@@ -16,8 +16,8 @@
 |---|---|---|
 | incidents (Neon/public) | `84133D6FB6184BE5A4BA8FD43C9BDA16` | small |
 | tenant_service_hourly (Neon/public) | `0536BC83ADC242CDB17518F7910F313A` | ~126k |
-| TENANTS (<snowflake-db>/<snowflake-schema>) | `854074F02BEA4AF580B7B217C4791D1D` | 10 |
-| USAGE_HOURLY (<snowflake-db>/<snowflake-schema>) | `FC75A50067A04CB58377121B1CF4AF46` | ~126k |
+| TENANTS (<snowflake-db>/<snowflake-db-schema>) | `854074F02BEA4AF580B7B217C4791D1D` | 10 |
+| USAGE_HOURLY (<snowflake-db>/<snowflake-db-schema>) | `FC75A50067A04CB58377121B1CF4AF46` | ~126k |
 
 ## Semantic objects (post-build + surgery)
 - 22 attributes (conformed: Tenant on 4 tables, Cluster on 3, Service Timestamp on 2)

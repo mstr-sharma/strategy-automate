@@ -123,3 +123,5 @@ PATCH body carries `forms` AND corrected `displays` atomically (see
   `memory/reference_mosaic_derived_metrics.md` §0b and the error-code index
   (8004cb04, 8004d711, 8004d716, 8004cd15-variant, plus the report-level no-op
   semantics).
+
+> **Naming note (2026-09-04):** company, person, and tenant identifiers in this capture are stand-ins (`EReaderCo`, `PharmaCo`, `<operator>`, …) per `memory/feedback_generalize_durable_artifacts.md`. The gitignored local scripts/payloads in this folder and the live warehouse objects keep the original identifiers, so table, plan, and file names here will not match them verbatim.

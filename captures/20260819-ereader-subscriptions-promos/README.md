@@ -102,3 +102,5 @@ the record of the REST-committed state and the reusable recipe.
 3. Identity token IS required for Mosaic data-model changeset commits even on
    studio (the tenant's "identity-off" note applies to classic/project reads);
    `cmd_build` itself logs in with `identity=True`.
+
+> **Naming note (2026-09-04):** company, person, and tenant identifiers in this capture are stand-ins (`EReaderCo`, `PharmaCo`, `<operator>`, …) per `memory/feedback_generalize_durable_artifacts.md`. The gitignored local scripts/payloads in this folder and the live warehouse objects keep the original identifiers, so table, plan, and file names here will not match them verbatim.

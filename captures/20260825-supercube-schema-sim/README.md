@@ -56,3 +56,5 @@ Full classic-route build on the <tenant-b> env, project '<operator>':
 tests (mean/sigma/Cpk); `FMAX_MHZ` Active USL = manual 2550, all other tests =
 mean+3σ (`cube_validation.json`). Durable gotchas recorded in
 `memory/reference_strategy_legacy_semantic_admin.md` and the error-code index.
+
+> **Naming note (2026-09-04):** company, person, and tenant identifiers in this capture are stand-ins (`EReaderCo`, `PharmaCo`, `<operator>`, …) per `memory/feedback_generalize_durable_artifacts.md`. The gitignored local scripts/payloads in this folder and the live warehouse objects keep the original identifiers, so table, plan, and file names here will not match them verbatim.

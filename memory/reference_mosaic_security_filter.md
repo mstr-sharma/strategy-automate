@@ -107,11 +107,11 @@ Gotchas:
 `/api/users?searchTerm=<q>` returned 0 results on Strategy ONE even for known users. Use the `Begins` variants:
 
 ```
-GET /api/users?nameBegins=O&limit=100
-GET /api/users?abbreviationBegins=t&limit=100
+GET /api/users?nameBegins=<initial>&limit=100
+GET /api/users?abbreviationBegins=<login-initial>&limit=100
 ```
 
-- `nameBegins` matches the `fullName` field (e.g., `"<user-a-fullname>"` matches the leading `S`).
+- `nameBegins` matches the `fullName` field by prefix (the first letter of the `"Last, First"` string).
 - `abbreviationBegins` matches the `abbreviation` (username-like) field.
 - Both default to small `limit`; set explicitly. Response shape is a flat list `[{id, username, fullName, abbreviation, ...}]`.
 - `searchTerm` is documented in the OpenAPI but silently returns empty — considered unreliable; avoid.

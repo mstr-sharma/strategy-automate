@@ -236,3 +236,5 @@ replica driven by the 36 real rows. Files: `render2.py`, `inspect_render.py`,
 - `cascade_ids.json` — created object IDs
 - `cascade_evidence.json` — full request/response evidence incl. element lists
 - `swap_result.json` — placeholder-swap after-state (filter + prompt GETs)
+
+> **Naming note (2026-09-04):** company, person, and tenant identifiers in this capture are stand-ins (`EReaderCo`, `PharmaCo`, `<operator>`, …) per `memory/feedback_generalize_durable_artifacts.md`. The gitignored local scripts/payloads in this folder and the live warehouse objects keep the original identifiers, so table, plan, and file names here will not match them verbatim.
