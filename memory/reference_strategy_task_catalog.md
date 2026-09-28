@@ -63,7 +63,8 @@ Coverage levels are defined in `reference_strategy_automation_coverage.md`: wrap
 ## Reports, dashboards, dossiers, documents
 - "List/execute/export report or dashboard/document": `/api/reports`, `/api/dashboards`, `/api/dossiers`, `/api/documents`; see `reference_strategy_runtime_analytics.md`.
 - "Export PDF": document/dashboard instance export endpoints.
-- "Publish/unpublish to Library": published object endpoints in OpenAPI; verify users/groups first.
+- "Publish/unpublish to Library": read `reference_strategy_library_publications.md`; `POST /api/library` (additive, groups stay groups), per-recipient `DELETE /api/library/{id}/recipients/{recipientId}`; never bare `DELETE /api/library/{id}` (unpublishes for everyone); verify users/groups first.
+- "Which dashboards/documents are published to which users/groups" / "copy Library publications to a duplicated project": per-object `GET /api/library/{id}` with `X-MSTR-ProjectID`; helper `strategy_library_publications.py export` then `replicate` (dry run unless `--apply`).
 
 ## Governance/admin
 - "Resolve users from names/emails": helper `resolve-users`; final writes should use IDs.
