@@ -57,7 +57,8 @@ All paths prefixed with `{BASE} = {MSTR_BASE}`. Unless otherwise noted, send `X-
 See `reference_mosaic_modeling_concepts.md` for full body shapes. Endpoints:
 - `POST /api/model/dataModels/{id}/attributes`
 - `POST /api/model/dataModels/{id}/facts`
-- `POST /api/model/dataModels/{id}/factMetrics` (also used for compound/conditional/transformation metrics — differentiator is which top-level keys are set)
+- `POST /api/model/dataModels/{id}/factMetrics` — fact metrics (a `fact` block + `function`); `attach-transformation` still posts transformation metrics here (unverified)
+- `POST /api/model/dataModels/{id}/metrics` — derived metrics: compound, level, conditional (conditional adds `POST .../metrics/{metricId}/embeddedObjects` for its filter); verified bodies in `reference_mosaic_derived_metrics.md`
 - `POST /api/model/dataModels/{id}/filters`
 - `POST /api/model/dataModels/{id}/transformations`
 - `POST /api/model/dataModels/{id}/hierarchies`

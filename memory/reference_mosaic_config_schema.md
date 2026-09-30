@@ -53,7 +53,7 @@ For image/PDF ERDs, the agent should read the image/document first and write a J
 
 Derived metric workflow:
 - For formula metrics over existing metric IDs, run `create-compound-metric --model-id M --name N --formula 'METRIC_ID1 / METRIC_ID2'`.
-- For filtered metrics, create/reuse a filter or security filter first, then run `create-conditional-metric --model-id M --name N --source-metric MID --filter FID`.
+- For filtered metrics, run `create-conditional-metric --model-id M --name N --source-metric "<fact metric>" --attribute "<attribute>" --elements V1 [V2 ...]` — it creates the filter embedded in the metric, so no separate filter object is needed (verified path: `reference_mosaic_derived_metrics.md` §0c).
 - For prior-period / time-shift metrics, run `create-transformation`, then `attach-transformation`.
 - On {MSTR_BASE host}, if token-based compound metrics fail on commit, use the known fallback: a fact metric with an inline column formula using `character` operator tokens (`TOTAL_COST`, `/`, `QUANTITY_ORDERED`) and an aggregate function such as `avg`.
 

@@ -67,18 +67,18 @@ The Modeling Service `format.values[]` token list drives how numbers render. Nev
 
 | Metric kind | Format category | Token shape |
 |---|---|---|
-| Dollar/currency (Revenue, Cost, Profit, Sales, Price) | currency | `[{"type":"number_category","value":"2"},{"type":"number_decimal_places","value":"2"},{"type":"number_format","value":"$#,##0.00;($#,##0.00)"}]` — or locale-appropriate symbol |
-| Percent (Discount Rate, Margin, Growth %) — 0-1 scale | percent | `[{"type":"number_category","value":"5"},{"type":"number_decimal_places","value":"2"},{"type":"number_format","value":"0.00%"}]` |
-| Count / Units / Quantity | integer | `[{"type":"number_category","value":"1"},{"type":"number_decimal_places","value":"0"},{"type":"number_format","value":"#,##0"}]` |
-| Fixed decimal (Price per unit, Ratio) | fixed | `[{"type":"number_category","value":"1"},{"type":"number_decimal_places","value":"2"},{"type":"number_format","value":"#,##0.00"}]` |
-| Very large magnitudes (Trade Volume, Population) | scientific | `[{"type":"number_category","value":"7"},{"type":"number_decimal_places","value":"2"},{"type":"number_format","value":"0.00E+00"}]` |
-| Date-like numeric (YearMonth, YYYYMMDD key) | integer, no thousands sep | `[{"type":"number_category","value":"1"},{"type":"number_decimal_places","value":"0"},{"type":"number_format","value":"0"}]` |
+| Dollar/currency (Revenue, Cost, Profit, Sales, Price) | currency (`1`) | `[{"type":"number_category","value":"1"},{"type":"number_decimal_places","value":"2"},{"type":"number_format","value":"\"$\"#,##0.00;\"$\"-#,##0.00"},{"type":"number_currency_symbol","value":"$"}]` — or locale-appropriate symbol |
+| Percent (Discount Rate, Margin, Growth %) — 0-1 scale | percentage (`4`) | `[{"type":"number_category","value":"4"},{"type":"number_decimal_places","value":"1"},{"type":"number_format","value":"0.0%"}]` |
+| Count / Units / Quantity | fixed (`0`), integer | `[{"type":"number_category","value":"0"},{"type":"number_decimal_places","value":"0"},{"type":"number_format","value":"#,##0"}]` |
+| Fixed decimal (Price per unit, Ratio) | fixed (`0`) | `[{"type":"number_category","value":"0"},{"type":"number_decimal_places","value":"2"},{"type":"number_format","value":"#,##0.00"}]` |
+| Very large magnitudes (Trade Volume, Population) | scientific (`6`) | `[{"type":"number_category","value":"6"},{"type":"number_decimal_places","value":"2"},{"type":"number_format","value":"0.00E+00"}]` |
+| Date-like numeric (YearMonth, YYYYMMDD key) | fixed (`0`), no thousands sep | `[{"type":"number_category","value":"0"},{"type":"number_decimal_places","value":"0"},{"type":"number_format","value":"0"}]` |
 
 Everything else gets an explicit 2-decimal fixed format so the default doesn't render with 6+ trailing zeros.
 
 **Verified format.values shape (Strategy ONE 2026):** entries use `{type, value}` pairs, NOT `{category, formatString}` pairs. The Modeling Service rejects `{category: X}` payloads with `Unrecognized field: category`. Each format property is its own entry — `number_category`, `number_decimal_places`, `number_format` are independent.
 
-**`number_category` enum (tenant-verified, canonical):** 0=General, 1=Number, 2=Currency, 3=Date, 4=Time, 5=Percentage, 6=Fraction, 7=Scientific, 9=Accounting.
+**`number_category` enum (Modeling service, verified 2026-09-29 against a live tenant — canonical):** 0=Fixed, 1=Currency, 2=Date, 3=Time, 4=Percentage, 5=Fraction, 6=Scientific, 7=Special, 8=Custom, 9=General. The enum previously recorded here (0=General, 1=Number, 2=Currency, …, 5=Percentage) was wrong: category `2` renders money as dates. The currency and percent rows are the verified recipes (the currency pattern quotes the `$` so it renders in dashboard grids — see `reference_mosaic_derived_metrics.md` "Format tokens"); the fixed and scientific rows follow from the enum.
 
 Assignment heuristic (apply **before** build, cache in the dictionary):
 

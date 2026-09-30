@@ -61,7 +61,7 @@ Attributes and factMetrics are written via `POST /api/model/batch` for performan
 
 3. **ApplySimple expressions.** Facts whose token list contains `apply_simple`, `custom_expression`, or `raw_sql` are included verbatim and flagged in the review file. They may fail at query time if the Mosaic SQL engine does not accept the syntax. Review and remediate manually after the build.
 
-4. **Conditional metric filters.** Conditional metrics carry `conditionality.filter` references that point to classic project filter object IDs. These IDs do not exist in the Mosaic model, so the filter reference will be broken. Recreate the filter inside the Mosaic model and patch the metric post-build.
+4. **Conditional metric filters.** Conditional metrics carry `conditionality.filter` references that point to classic project filter object IDs. These IDs do not exist in the Mosaic model, so the filter reference will be broken. Recreate the filter inside the Mosaic model and patch the metric post-build — for an element-list filter, `build_mosaic.py create-conditional-metric` rebuilds the metric with an embedded filter in one changeset (`reference_mosaic_derived_metrics.md` §0c).
 
 5. **Level/dimensionality metrics.** The `dimty.dimensions` attribute IDs are translated through the mosaic attribute ID map when possible. Attributes not in the translated set retain their classic IDs and will not resolve in Mosaic.
 

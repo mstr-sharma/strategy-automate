@@ -4071,30 +4071,134 @@ def cmd_create_compound_metric(m: MSTR, args):
     print(json.dumps({"ok": True, "metric_id": mid}, indent=2))
 
 
-def cmd_create_conditional_metric(m: MSTR, args):
-    """Create a filtered metric: copy a source metric and apply a filter.
-    --source-metric: existing metric id to clone semantics from.
-    --filter: existing filter object id to embed."""
-    m.login(identity=True)
-    r = m.get(f"/api/model/dataModels/{args.model_id}/factMetrics/{args.source_metric}")
-    if not r.ok: die(f"source metric GET: {r.status_code} {r.text[:200]}")
-    src = r.json()
+# Aggregate-function objectIds are platform constants (same on every tenant) —
+# memory/reference_mosaic_derived_metrics.md "Well-known function objectIds".
+AGG_FUNCTION_IDS = {"Sum": "8107C31BDD9911D3B98100C04F2233EA",
+                    "Avg": "8107C31DDD9911D3B98100C04F2233EA"}
+
+
+def conditional_metric_tokens(function: str, source: dict, filter_id: str = "") -> list[dict]:
+    """Tokens for `Fn<UseLookupForAttributes=False>([Source]){~+}`; with filter_id,
+    the `<embedded filter>` binding goes just before end_of_text.
+
+    source is {"objectId", "subType": "fact_metric", "name"}. Every token carries
+    a "value", end_of_text included — omitting one fails with 8004cb04.
+    """
+    tokens = [
+        {"type": "function", "value": function,
+         "target": {"objectId": AGG_FUNCTION_IDS[function], "subType": "function", "name": function}},
+        {"type": "character", "value": "<"},
+        {"type": "identifier", "value": "UseLookupForAttributes"},
+        {"type": "function", "value": "="},
+        {"type": "boolean", "value": "False"},
+        {"type": "character", "value": ">"},
+        {"type": "character", "value": "("},
+        {"type": "object_reference", "value": f"[{source['name']}]", "target": source},
+        {"type": "character", "value": ")"},
+    ]
+    tokens += [{"type": "character", "value": c} for c in "{~+}"]
+    if filter_id:
+        tokens += [
+            {"type": "character", "value": "<"},
+            {"type": "object_reference", "value": "",
+             "target": {"objectId": filter_id, "subType": "filter", "isEmbedded": True}},
+            {"type": "character", "value": ">"},
+        ]
+    return tokens + [{"type": "end_of_text", "value": ""}]
+
+
+def conditional_metric_body(name: str, function: str, source: dict, fmt_values: list | None = None,
+                            description: str = "", filter_id: str = "") -> dict:
+    """/metrics body for a conditional metric. Without filter_id it is the
+    unfiltered create (POST); with it, the binding update (PUT) — filter-bound
+    tokens plus the conditionality block."""
+    info = {"name": name, "subType": "metric"}
+    if description:
+        info["description"] = description
     body = {
-        "information":{"name": args.name},
-        "fact": src.get("fact"),
-        "function": src.get("function","sum"),
-        "functionProperties": src.get("functionProperties",[]),
-        "dimty": src.get("dimty",{}),
-        "format": src.get("format",{}),
-        "conditionality":{"filter":{"objectId": args.filter, "subType":"filter"},
-                          "embed": True, "removeAttrQualifications": False},
+        "information": info,
+        "expression": {"text": f"{function}({{{source['name']}}})",
+                       "tokens": conditional_metric_tokens(function, source, filter_id)},
+        "dimty": {"dimtyUnits": [{"dimtyUnitType": "report_base_level", "aggregation": "normal",
+                                  "filtering": "apply", "groupBy": True}],
+                  "excludeAttribute": False, "allowAddingUnit": True},
+        "format": {"header": [], "values": list(fmt_values or [])},
     }
+    if filter_id:
+        body["conditionality"] = {
+            "filter": {"objectId": filter_id, "subType": "filter", "isEmbedded": True},
+            "embedMethod": "report_into_metric_filter", "removeElements": True}
+    return body
+
+
+def embedded_element_filter_body(attribute: dict, elements: list[str]) -> dict:
+    """POST /metrics/{id}/embeddedObjects body for `<attribute> IN (elements)`.
+    elements are ID-form values; each elementId is `h<value>;<attribute objectId>`."""
+    return {"subType": "filter", "qualification": {"tree": {
+        "type": "predicate_element_list",
+        "predicateTree": {
+            "attribute": attribute,
+            "elements": [{"elementId": f"h{v};{attribute['objectId']}", "display": v} for v in elements],
+            "function": "in"}}}}
+
+
+def resolve_model_object_ref(m: MSTR, model_id: str, collection: str, sub_type: str,
+                             name_or_id: str) -> dict:
+    """Name (case-insensitive) or objectId → {"objectId", "subType", "name"} from a
+    Modeling list endpoint (factMetrics, attributes). Dies unless exactly one matches."""
+    r = m.get(f"/api/model/dataModels/{model_id}/{collection}",
+              params={"limit": 2000} if collection == "attributes" else None)
+    if not r.ok: die(f"list {collection}: {format_mstr_error(r)}")
+    infos = [o.get("information") or {} for o in (r.json() or {}).get(collection, [])]
+    hits = [i for i in infos if (i.get("objectId") or "").upper() == name_or_id.upper()
+            or (i.get("name") or "").lower() == name_or_id.lower()]
+    if not hits:
+        die(f"no {collection} entry matches '{name_or_id}'")
+    if len(hits) > 1:
+        die(f"'{name_or_id}' is ambiguous in {collection}: {[h.get('objectId') for h in hits]}. Pass the objectId.")
+    return {"objectId": hits[0]["objectId"], "subType": sub_type, "name": hits[0]["name"]}
+
+
+def cmd_create_conditional_metric(m: MSTR, args):
+    """Create a conditional (filtered) derived metric: Fn(<fact metric>) scoped to
+    <attribute> IN (<elements>) by a filter embedded in the metric.
+
+    Verified write path (memory/reference_mosaic_derived_metrics.md §0c), ONE
+    changeset: POST /metrics (unfiltered) → POST /metrics/{id}/embeddedObjects
+    (the filter) → PUT /metrics/{id} (filter-bound tokens + conditionality) →
+    commit. Any failure discards the changeset. Number format values are copied
+    from the source fact metric.
+    """
+    m.login(identity=True)
+    mp = f"/api/model/dataModels/{args.model_id}"
+    source = resolve_model_object_ref(m, args.model_id, "factMetrics", "fact_metric", args.source_metric)
+    attribute = resolve_model_object_ref(m, args.model_id, "attributes", "attribute", args.attribute)
+    r = m.get(f"{mp}/factMetrics/{source['objectId']}")
+    if not r.ok: die(f"source metric GET: {format_mstr_error(r)}")
+    fmt_values = ((r.json() or {}).get("format") or {}).get("values")
+    q = {"showAdvancedProperties": "true"}
     cs = open_cs(m)
-    r = m.post(f"/api/model/dataModels/{args.model_id}/factMetrics?changesetId={cs}", json=body)
-    if not r.ok: die(f"conditional metric: {r.status_code} {r.text[:300]}")
-    mid = r.json()["information"]["objectId"]
-    commit_cs(m, cs)
-    print(json.dumps({"ok": True, "metric_id": mid}, indent=2))
+    try:
+        r = m.post(f"{mp}/metrics", params=q,
+                   json=conditional_metric_body(args.name, args.function, source, fmt_values,
+                                                args.description))
+        if not r.ok: die(f"create metric: {format_mstr_error(r)}")
+        metric_id = r.json()["information"]["objectId"]
+        r = m.post(f"{mp}/metrics/{metric_id}/embeddedObjects", params={"showExpressionAs": "tree"},
+                   json=embedded_element_filter_body(attribute, args.elements))
+        if not r.ok: die(f"embed filter: {format_mstr_error(r)}")
+        emb = r.json() or {}
+        filter_id = emb.get("id") or (emb.get("information") or {}).get("objectId")
+        if not filter_id: die(f"embed filter: no id in response {str(emb)[:200]}")
+        r = m.put(f"{mp}/metrics/{metric_id}", params=q,
+                  json=conditional_metric_body(args.name, args.function, source, fmt_values,
+                                               args.description, filter_id=filter_id))
+        if not r.ok: die(f"bind filter: {format_mstr_error(r)}")
+        commit_cs(m, cs)
+    except BaseException:  # die() raises SystemExit; discard on every failure path
+        discard_cs(m, cs)
+        raise
+    print(json.dumps({"ok": True, "metric_id": metric_id, "embedded_filter_id": filter_id}, indent=2))
 
 
 def cmd_attach_transformation(m: MSTR, args):
@@ -4794,11 +4898,20 @@ def build_parser():
     sp.add_argument("--name", required=True)
     sp.add_argument("--formula", required=True, help="space-separated: 'METRIC_ID1 - METRIC_ID2'")
 
-    sp = sub.add_parser("create-conditional-metric")
+    sp = sub.add_parser("create-conditional-metric",
+        help="Derived metric Fn(<fact metric>) scoped to <attribute> IN (<elements>) by an embedded "
+             "filter, in one changeset (see memory/reference_mosaic_derived_metrics.md §0c).")
     sp.add_argument("--model-id", required=True)
     sp.add_argument("--name", required=True)
-    sp.add_argument("--source-metric", required=True, help="existing metric ID to clone semantics from")
-    sp.add_argument("--filter", required=True, help="filter object ID to embed")
+    sp.add_argument("--source-metric", required=True,
+                    help="fact metric to aggregate: name (case-insensitive) or objectId")
+    sp.add_argument("--attribute", required=True,
+                    help="attribute to filter on: name (case-insensitive) or objectId")
+    sp.add_argument("--elements", required=True, nargs="+",
+                    help="attribute ID-form values to keep (IN list); quote values that contain spaces")
+    sp.add_argument("--function", default="Sum", choices=sorted(AGG_FUNCTION_IDS),
+                    help="aggregation wrapped around the source metric (default Sum, the live-verified path)")
+    sp.add_argument("--description", default="", help="business description for the new metric")
 
     sp = sub.add_parser("attach-transformation")
     sp.add_argument("--model-id", required=True)

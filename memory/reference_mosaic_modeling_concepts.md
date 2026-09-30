@@ -63,15 +63,7 @@ Drop the `fact` block; the top-level `expression.tokens` references other metric
 Use parentheses via `{"type":"operator","value":"("|")"}` tokens. Ratio/margin/CAGR all fit here. Posted to the same `/factMetrics` endpoint.
 
 ## Conditional metrics (filter-scoped)
-Layer a `conditionality` block on top of any fact/compound metric:
-```json
-{"information":{"name":"Revenue (EMEA)"},
- "fact":{...}, "function":"sum", "dimty":{}, "format":{...},
- "conditionality":{"filter":{"objectId":"<filterId>","subType":"filter"},
-                   "embed":true,             // inline (true) vs reference (false)
-                   "removeAttrQualifications":false}}
-```
-Filter must exist first (via `/filters`).
+A conditional metric is a derived metric on `/metrics` (not a `/factMetrics` body with a `fact` block): `Sum(<fact metric>)` tokens plus an embedded element-list filter created under the metric (`POST .../metrics/{id}/embeddedObjects`), then bound through the tokens and a `conditionality` block (`filter` with `isEmbedded: true`, `embedMethod: "report_into_metric_filter"`, `removeElements: true`) — create, embed and bind in one changeset. Full verified bodies: `reference_mosaic_derived_metrics.md` §0c; helper: `build_mosaic.py create-conditional-metric`. The `embed` / `removeAttrQualifications` keys this section used to show were invented; the verified block uses `embedMethod` / `removeElements`.
 
 ## Level (dimensionality-override) metrics
 Control aggregation level independent of the report template via `dimty`:
