@@ -95,6 +95,8 @@ own date hierarchy. Not changed here because it alters the shape the user built.
 **All 56 metrics were auto-generated as `function: sum`**, and the number formats used
 the wrong `number_category` codes throughout (percentages landed on `4` = *Time*,
 currency on `1` = *Number*; canonical enum is 0=General, 1=Number, 2=Currency, 3=Date,
+
+> **Correction 2026-09-17:** the enum is 0=Fixed, 1=Currency, 2=Date, 3=Time, 4=Percentage, 5=Fraction, 6=Scientific, 7=Special, 8=Custom, 9=General — so the auto codes were right and the fix script's original constants (2 for currency, 7 for scientific) were the defect. `fix_metrics.py` now carries the verified codes; the model still needs a re-run.
 4=Time, 5=Percentage, 6=Fraction, 7=Scientific, 9=Accounting).
 
 Summing a percentage or a Cpk is not a rounding problem — it produces numbers that are
