@@ -90,6 +90,18 @@ the same 82 rows and values. Resolved the temp tables from `/factMetrics` + `/me
 `queryDetails` → 200 (`select from <model>`); passing attribute/metric objects (type 12/4) → 500 "You have entered an
 invalid name"; the manipulations body's `actions` string is undocumented, so the per-section plan was not reproduced.
 
+### 7. Complete plan for an ad-hoc request (transient Modeling-service report, same tenant)
+`POST /api/model/reports` with the cube-weather objects (2 attributes, 6 metrics) → 201 + `X-MSTR-MS-Instance`;
+`POST /api/model/reports/{id}/instances` → 204; `GET /api/v2/reports/{id}/instances/{msInstance}/sqlView` → 200 with
+Tables Accessed (month lookup, 3 relationship tables, 2 fact tables), pass 1 `sum([[F_<SNOWFLAKE_FACT>].…])@{…} … Save
+As TempTable76`, pass 2 over `[F_<POSTGRES_TELEMETRY>]` → `TempTable77`, pass 3 the join of both at (cloud, month), then
+`[Analytical engine calculation steps: Calculate metric <ratio 1>, <ratio 2>, cross-tabbing]` — the Studio validation text
+from §6, reproduced by API. Filters: `predicate_form_qualification` with a `constant` field at the tree level → 8004c90a
+"Unrecognized field: constant"; the `parameters: [{parameterType: constant, constant: {type: character, value}}]` shape is
+accepted; a qualification on the derived month attribute → 8004c767 "not found in metadata". A changeset header on the
+POST → 8004cc4d "should not include X-MSTR-MS-Changeset"; `DELETE /api/objects/{id}?type=3` → 404 (nothing persisted).
+Captured for all 17 app queries by the demo app's tracer (`fullPlan` per section).
+
 ## Tenant observations (not rules)
 - `GET /api/monitors/jobs?nodeName=…` → ERR014 -2147213784 "You do not have Monitor Jobs privilege(s)" for the operator user on the Cloud tenant; the `sql` field on in-flight jobs therefore stays unverified.
 - A connect_live model over a public TPC-H Snowflake sample failed at query time with a JDBC "Incorrect username or password" from the datasource — the datasource login behind that model is stale; the Trino error text itself exposes the engine job (`Document execution fails. Error initializing data model from document instance, job <n>`), and a failed query has no `queryProfile` (500 "No query stats found for the provided trinoQueryId").
