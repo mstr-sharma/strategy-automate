@@ -18,7 +18,7 @@ into one or more passes against one or more data sources. These are the surfaces
 | **Mosaic SQL actual passes (after running)** | `GET /api/telemetry/performance/queryProfile/{trinoQueryId}` then `GET /api/telemetry/performance/queryProfile/{trinoFragmentId}/sourceBreakdown/{instanceId}[/{templateId}]` | profile: `queryStats.sqlQuery` (your SQL), `fragmentStats[]` (`pushdownType` FULL/PARTIAL, `pushdownDisabledReason`, `parentJobId`, `isLinkedModelStat`), `documents[]` (`instanceId`, `templateIds`, `jobIds`, `serveModes` 1=in-memory / 2=live, objects). breakdown: `jobs[].passes[]` with `sqlQuery`, `sqlType`, `executionTimeMs`, `fetchTimeMs`, `outputRows` | every Mosaic model; only successful queries (failed query → 500 "No query stats found") | verified on all three serve shapes |
 | **Published cube / in_memory model load SQL** | `GET /api/v2/cubes/{id}/sqlView` → `{sqlStatement}` (mstrio: `OlapCube.export_sql_view()`) | one block per table, each headed `[DB Instance: <name>]`, the SQL the publish job ran | in_memory models, classic cubes | verified; **400 DE93362 "Live Intelligent Cubes cannot be published"** on connect_live models |
 | **Cube publish job statistics** | `GET /api/monitors/caches/cubes?clusterNode=<node>&projectIds=<id>` → match `source.id` → `GET /api/monitors/caches/cubes/{cacheId}` | `jobExecutionStatistics`: `sqlPassesCount`, durations, `dbInstanceNames`, `accessedTables[]`, `queryPasseInfos[].sqlStatement` (+ rows, duration per pass) | published cubes only | verified |
-| **Classic report** | `POST /api/v2/reports/{id}/instances` → `GET /api/v2/reports/{id}/instances/{instanceId}/sqlView` | `{sqlStatement}` multi-pass report SQL | classic grid reports | verified on a classic Tutorial project (multi-pass SQL: `CREATE TEMP TABLE` → `insert … select … group by` → final select with lookups + subquery → `drop table` → Analytical Engine step). **Does not work on a Mosaic cube instance** from `POST /api/v2/cubes/{id}/instances` (500 -2147206852); `/api/v2/cubes/{id}/instances/{iid}/sqlView` is 404 |
+| **Classic report / transient report over a model** | `POST /api/v2/reports/{id}/instances` → `GET /api/v2/reports/{id}/instances/{instanceId}/sqlView`; for an ad-hoc request over a Mosaic model, `POST /api/model/reports` (sourceType cube) → `POST /api/model/reports/{id}/instances` (`X-MSTR-MS-Instance`) → the same sqlView with the modeling instance id | `{sqlStatement}` multi-pass plan: tables accessed, per-table passes, join, Analytical Engine steps | classic grid reports; any Mosaic model via the transient report | verified on a classic Tutorial project (multi-pass SQL: `CREATE TEMP TABLE` → `insert … select … group by` → final select with lookups + subquery → `drop table` → Analytical Engine step). **Does not work on a Mosaic cube instance** from `POST /api/v2/cubes/{id}/instances` (500 -2147206852); `/api/v2/cubes/{id}/instances/{iid}/sqlView` is 404 |
 | **Dashboard datasets** | `POST /api/dossiers/{id}/instances` → `GET /api/dossiers/{id}/instances/{mid}/datasets/sqlView` | `datasets[].sqlStatement` (load SQL + in-memory view SQL per dataset) | dashboards | verified |
 | **Dashboard visualization query details** | `GET /api/dossiers/{id}/instances/{mid}/queryDetails?chapterKey=&visualizationKey=` (document form: `GET /api/documents/{id}/instances/{iid}/queryDetails`) | `chapters[].visualizations[].{queryDetails, sql}` — the Workstation "Query Details" text with per-step timings | grid/graph visualizations | verified |
 | **Datamart** | `GET /api/datamarts/{id}/instances/{iid}/sqlView?preview=true|false` | `{sqlStatement}` | datamart reports | spec only |
@@ -58,10 +58,22 @@ model's `/factMetrics?showExpressionAs=tree` (metric → `fact.expressions[].tab
 metrics, scan the whole definition for `subType: fact_metric|metric` references — conditional and level metrics keep theirs
 outside the expression tree) resolves every temp table to its fact table and, via `cubes/{id}/sqlView` block headers, its DB
 instance. No attributes in the query ⇒ the temp tables are one-row totals joined with `CrossJoin … Tuple()`; that is correct.
-No documented REST call reproduces Studio's ad-hoc validation plan: `POST /api/dossiers/instances` with
-`{"objects":[{"id":<model id>,"type":3}]}` creates an in-memory dashboard (one empty visualization) whose `queryDetails`
-works, but putting objects on that visualization goes through the manipulations `actions` string, which the spec leaves
-undocumented.
+**The complete plan for an ad-hoc request IS reachable (verified 2026-10-01): a transient report through the Modeling
+service.** `POST /api/model/reports` (no changeset header — it is refused) with `information.subType: report_grid`,
+`sourceType: cube`, `dataSource.cube: {objectId: <data model id>, subType: report_cube}`, `grid.viewTemplate.rows.units`
+= `{type: attribute, id}` per attribute, `columns.units` = one `{type: metrics, elements: [{id, subType: metric}]}`; filters
+as `grid.viewFilter.tree` with `predicate_form_qualification` nodes (`predicateId`, `predicateText`, `predicateTree:
+{function: equals, parameters: [{parameterType: constant, constant: {type: character, value}}], attribute, form}`) — the
+auto date hierarchy's month/day attributes are virtual and return 8004c767 "not found in metadata" when qualified. The
+201 response's `X-MSTR-MS-Instance` header names a modeling instance; `POST /api/model/reports/{id}/instances` with that
+header executes it (204, no body); `GET /api/v2/reports/{id}/instances/{msInstance}/sqlView` then returns the engine's
+full plan — `Tables Accessed`, one `Save As TempTableNN` pass per fact table, the final join, `[Analytical engine
+calculation steps]` — identical to Studio › Validation › Query for the same objects. Nothing is written to metadata
+(`versionId` is all zeros; `DELETE /api/objects/{id}` answers 404); delete the modeling instance when done. Caveat: the
+report's final join follows report defaults (inner `Join`) whereas the SQL endpoint's pass for the same query used
+`LeftOuterJoin` and Studio's preview `OuterJoin` — same rows only when every key exists in both sources.
+The in-memory dashboard route (`POST /api/dossiers/instances` with the model as a type-3 object) still works for
+`queryDetails` but needs the undocumented manipulation `actions` string to place objects — prefer the report route.
 
 ## Trace recipe
 
