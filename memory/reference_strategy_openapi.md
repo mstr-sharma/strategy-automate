@@ -21,6 +21,8 @@ Verified 2026-04-21:
 - `info.title: Strategy REST`
 - `info.version: "2026"`
 - studio tenant returned 652 paths and tags including Authentication, Data Models, Datasource Management, Cubes, Changesets, Security Filters.
+
+Re-verified 2026-10-01 on the same tenant family: 762 public paths, 1,178 with `?visibility=all`; 111 public paths added since April and 1 removed — inventory with summaries in `reference_strategy_rest_surface_delta_2026-10.md`.
 - `/api-docs/swagger-config` returned 404.
 
 Use the helper instead of manual curl:
