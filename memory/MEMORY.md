@@ -86,3 +86,4 @@
 
 ## Field captures (capture targeting)
 - [Chrome MCP capture — arm BEFORE the click](reference_chrome_mcp_capture.md) — `read_network_requests` is opt-in per tab and records only after first invocation; call it to arm the capture, THEN have the user interact.
+- [REST surface delta Apr→Oct 2026](reference_strategy_rest_surface_delta_2026-10.md) — 111 new public paths (telemetry query profile, Explorer MCP servers, data-model YAML export/restore/saveAs, scripts conversion, privilege/security-role/subscription bulk ops, report bulk export, questions transformsql, nuggets, ontology vocabularies, flows), 1 removed; refresh procedure.

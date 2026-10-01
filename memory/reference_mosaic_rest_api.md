@@ -99,3 +99,7 @@ See `reference_mosaic_modeling_concepts.md` for full body shapes. Endpoints:
 - **Catalog IDs are base64(JSON)**, not UUIDs — must be computed, not guessed.
 - **Changesets can silently fail to commit** if any referenced object (e.g., a security-filter member) doesn't resolve; helper script prints the full response on non-2xx.
 - **Relationships must live in a separate changeset after tables/attributes commit** — the objects referenced must already exist in metadata.
+
+## Model-level operations added in the 2026 spec (listed 2026-10-01, not yet exercised)
+- `POST /api/model/dataModels/{id}/export` → the model as YAML (`ms-YamlModel`); `POST …/restore` (multipart YAML file) restores a definition inside a changeset — commit it; `POST …/saveAs` (`ms-DataModelSaveAsRequest`) copies the model. First documented export/import path for Mosaic models; try before building another clone-and-remap script.
+- `GET …/externalDataModels/{externalId}/objects?showDefinition=` → the objects a composed model imported from one base model.
