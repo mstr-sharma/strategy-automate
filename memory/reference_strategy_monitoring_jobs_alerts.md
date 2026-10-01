@@ -19,6 +19,9 @@ Treat as **generic REST hook** until exercised.
 - `POST /api/dataModels/{id}/publish` with `refreshPolicy:"update"|"upsert"` — Mosaic incremental refresh (pairs with `reference_mosaic_publish_path.md`).
 - `POST /api/cubes/{id}/refresh?refreshType=add|replace|update|upsert|incremental` — classic cube refresh.
 
+- `GET /api/monitors/jobs?nodeName=<node>&projectId=<id>` — job records carry `sql`, `template`, `filter` while the job runs; needs the **Monitor Jobs** privilege (ERR014 -2147213784 otherwise). Verified 2026-10-01.
+- `GET /api/monitors/caches/cubes?clusterNode=<node>&projectIds=<id>` → `GET /api/monitors/caches/cubes/{cacheId}` — detail carries `jobExecutionStatistics` (pass counts, durations, `dbInstanceNames`, `accessedTables`, `queryPasseInfos[].sqlStatement`) for the last publish job; cache id = base64 of `<cacheId>:<projectId>:<node>`, match on `source.id`. Verified 2026-10-01 — see `reference_strategy_sql_visibility.md`.
+
 ## Routing rules
 
 - **Mosaic model data refresh** → `POST /api/dataModels/{id}/publish` or UI's `/api/cubes/{id}?cubeAction=publish` (see publish-path memory).
