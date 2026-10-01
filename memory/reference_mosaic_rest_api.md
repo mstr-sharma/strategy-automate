@@ -20,7 +20,7 @@ All paths prefixed with `{BASE} = {MSTR_BASE}`. Unless otherwise noted, send `X-
 - `GET /api/datasources` → `{"datasources":[{id,name,description,database,dbms,...}]}` (`id` is 32-hex)
 - `GET /api/datasources/{dsId}/catalog/namespaces` → `{"namespaces":[{name, id}]}` where `id` = base64(`{"ns":"<schemaName>"}`)
 - `GET /api/datasources/{dsId}/catalog/namespaces/{namespaceId}/tables` → `{"tables":[{name, id, namespace}]}` where table `id` = base64(`{"tbn":"<tableName>","ns":"<schema>"}`)
-- `GET /api/datasources/{dsId}/catalog/tables/{tableId}` → full column list + metadata
+- `GET /api/datasources/{dsId}/catalog/namespaces/{namespaceId}/tables/{tableId}` → full column list + metadata (`{"columns":[{name,dataType:{type,precision,scale}}]}`; numeric(p,s) → `decimal`, varchar(n) → `fixed_length_string`). The shorter `/catalog/tables/{tableId}` form 404s (observed 2026-09-17); `describe-table` in the helper uses the namespace-scoped path. The `/catalog/namespaces` list can lag behind a freshly created schema while the namespace-scoped table list already resolves it.
 - `POST /api/datasources/{dsId}/testConnection`
 
 **ID encoding:** namespace + table IDs are NOT opaque UUIDs — they are base64(JSON). The helper script encodes them; if you hand-craft, add `=` padding to multiple of 4.

@@ -195,3 +195,28 @@ The fastest way to fix an already-built dirty-typed model is to clone a known-go
 - `/api/dataModels/{id}/publish` with per-table bodies → 204, followed by `publishStatus` returning `status=1 tables:[]` while a parallel `/api/cubes` publish completed. Conclusion: the Modeling-native publish accepts the request but queues it in a way the CubeServer may not always drain on this tenant family — the `/api/cubes` path is the reliable one here. Recheck on other iServer build families.
 
 (Raw reproduction, including model IDs and query text, lives under `captures/` on the run date. Link the capture from the follow-up ticket rather than re-embedding IDs here. The 2026-04-22 tenant-level QueryEngineServer stall narrative lives in `captures/2026-04-22-queryengine-publish-incident/README.md`.)
+
+## Republish completion proof (observed 2026-09-17)
+
+On a **republish** of an already-published in_memory model, the cube-execute probe (`POST /api/v2/cubes/{id}/instances`) keeps succeeding against the OLD cube, so a 2xx probe proves nothing about the new definition. Prove the republish landed by probing a metric whose definition you just changed (e.g., a `sum`→`avg` function fix: values drop from thousands to single digits) or a table you just added; poll that until the new shape appears. One trigger per run still applies.
+
+**Metric function/format edits do NOT need a republish (observed 2026-09-21, Strategy ONE Cloud, in_memory model):**
+a `PATCH /factMetrics/{id}` that flipped `function` sum→avg read back as averages in both the cube-instance API and the
+Trino/MCP surface immediately after the changeset commit, before the `cubeAction=publish` job (202) had run. Aggregation
+function, format and description changes are applied at query time; so are compound (derived) metrics. Reserve the
+republish + changed-definition probe for data-shape changes — new tables, new columns, refreshed rows.
+
+**Derived-metric-only changes and the cube-instance API (observed 2026-09-22, Strategy ONE Cloud, in_memory model):** a
+derived (level) metric created after the last publish is listed in `GET /api/v2/cubes/{id}` `availableObjects` and queryable on
+the Trino/MCP surface immediately, but `POST /api/v2/cubes/{id}/instances` answers `ERR006 "Failed to find the metric … in the
+report or cube"` until a publish job is registered. `POST /api/cubes/{id}?cubeAction=publish` returned 202 yet produced no new
+cube version in 20 minutes (cube cache monitor `GET /api/monitors/caches/cubes?clusterNode=<node>&projectIds=<pid>`: state loaded,
+processing=false, lastUpdateTime unchanged — the REST trigger appears to be a no-op when no table/column changed). The Studio
+UI's Publish button DID reload the cube (new version on both cluster nodes in ~1 minute), after which the cube-instance API
+served the metric. A Modeling-native 3-step publish fired a minute after that returned 204 with every table `reserved` but
+produced no further cube version (duplicate/no-op), so it is not established as the fix for this case. Practical rule: after
+derived-metric-only changes, verify through Trino/MCP, and have the model owner press Publish in Studio (or make a real
+table/column change) before relying on cube-instance or dashboard grids. Cache-monitor ids are base64 of
+`<cacheId>:<projectId>:<node>` (pad to a multiple of 4 before decoding); match a model through `source.id`; the cache monitor
+is the reliable publish-completion evidence when `publishStatus` is unavailable.
+
