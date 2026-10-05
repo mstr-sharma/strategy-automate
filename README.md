@@ -15,7 +15,7 @@ Tested with **Claude Code** and **Codex CLI**; any harness that reads Markdown c
 
 ## How agents route work
 
-The cold-start routing tree, the strict skill-precedence chain, and all operating rules live in [`AGENTS.md`](AGENTS.md) — maintained there only. In one line: `strategy-automation` classifies the surface, `strategy-data-modeling` plans the model, `skills/build-mosaic-model/SKILL.md` executes via REST, `strategy-validation` verifies the numbers, and on any Strategy error code the first stop is [`memory/reference_strategy_error_codes.md`](memory/reference_strategy_error_codes.md).
+The cold-start routing tree, the strict skill-precedence chain, and all operating rules live in [`AGENTS.md`](AGENTS.md) — maintained there only. In one line: `strategy-automation` classifies the surface and hands admin, distribution, content, migration, ops and AI work to its domain skill; for models, `strategy-data-modeling` plans, `skills/build-mosaic-model/SKILL.md` executes via REST and `strategy-validation` verifies the numbers; `strategy_api.py` reaches any other operation; and on any Strategy error code the first stop is [`memory/reference_strategy_error_codes.md`](memory/reference_strategy_error_codes.md).
 
 ## Repo layout
 
@@ -57,7 +57,7 @@ strategy-automate/
 │   │       ├── mosaic_safety.py         # stateless defensive helpers (error parsing, expression builders, merge-aware PUT)
 │   │       ├── preflight_model_check.py
 │   │       ├── schema_object_translator.py    # classic schema objects → Mosaic payloads
-│   │       ├── strategy_mosaic_inventory.py   # walk every Mosaic data model (subType 779)
+│   │       ├── strategy_mosaic_inventory.py   # walk subtype-779 models (Mosaic = extType 448)
 │   │       ├── strategy_semantic_inventory.py # walk classic attrs / facts / metrics / filters / hierarchies
 │   │       ├── strategy_semantic_mine.py      # top-down / reverse lineage for legacy → Mosaic
 │   │       ├── strategy_library_publications{,_mstrio}.py # export + replay Library publications
@@ -100,10 +100,13 @@ Required: `MSTR_BASE` and either `MSTR_PROJECT_ID` or `MSTR_PROJECT_NAME`. For b
 ### 2. Install Python deps
 
 ```bash
-python3 -m pip install --user requests
+uv sync                                       # recommended: the locked versions, in .venv
+uv run python3 skills/strategy-platform/scripts/strategy_auth.py methods
 ```
 
-`requests` is the only non-stdlib dependency, declared in [`pyproject.toml`](pyproject.toml) (dependency declaration only — scripts stay directly runnable, no install required). Optionally add `PyYAML` for YAML configs (used by `build-from-config` and other `--file *.yaml` inputs); without it the scripts fall back to a `ruby -ryaml` one-liner for YAML parsing. If your default Python is Anaconda and you see SSL-handshake timeouts against your tenant, switch to `/usr/bin/python3` — some Anaconda builds ship an old OpenSSL that hangs on Strategy Cloud TLS.
+or, without uv, `python3 -m pip install --user "requests>=2.32.5"`.
+
+`requests` (with its `urllib3`) is the only non-stdlib dependency, declared in [`pyproject.toml`](pyproject.toml) and pinned in `uv.lock` (dependency declaration only — scripts stay directly runnable, no install required). Optionally add `PyYAML` for YAML configs (used by `build-from-config` and other `--file *.yaml` inputs); without it the scripts fall back to a `ruby -ryaml` one-liner for YAML parsing. Prefer Python 3.10 or newer: the current security fixes in requests (2.33+) and urllib3 (2.8+) don't install on 3.9, which still works with the advisories reviewed in `tests/tools/osv_audit.py`. `strategy_auth.py methods` warns when the Python it runs under has older HTTP libraries. If your default Python is Anaconda and you see SSL-handshake timeouts against your tenant, use `uv sync` / `uv run` (or `/usr/bin/python3`) — some Anaconda builds ship an old OpenSSL that hangs on Strategy Cloud TLS.
 
 ### 3. Verify tenant connectivity
 
@@ -141,7 +144,7 @@ Tables: <T1>, <T2>, <T3>
 
 For multi-DB builds (e.g., Postgres + Snowflake), route through [`skills/strategy-data-modeling/SKILL.md`](skills/strategy-data-modeling/SKILL.md) first — declare conformed dims, classify tables, pick the topology before hitting REST. Case-mismatch FKs (`<entity>_id` vs `<ENTITY>_ID`) and semantically-same-but-differently-named FKs (`primary_<entity>_id` vs `<entity>_id`) silently break auto-conformance unless you pass `--conformance-map` or `--fk-map` to `build`. See [`memory/feedback_mosaic_relationship_wiring.md`](memory/feedback_mosaic_relationship_wiring.md) for the six-step recipe.
 
-End-to-end chain in a single Python process (avoids session-cap trips — see [`memory/feedback_build_mosaic_session_leak.md`](memory/feedback_build_mosaic_session_leak.md)):
+End-to-end chain in one session — one Python process, or separate commands with `MSTR_REUSE_SESSION=1` (avoids session-cap trips — see [`memory/feedback_build_mosaic_session_leak.md`](memory/feedback_build_mosaic_session_leak.md)):
 
 ```bash
 python3 skills/build-mosaic-model/scripts/build_mosaic.py build-from-config --config model-spec.yaml
@@ -232,17 +235,45 @@ $API call createSubscription --body @sub.json --yes    # sends it
 
 ## Memory, conventions, and security
 
-Durable knowledge lives in `memory/` — [`memory/MEMORY.md`](memory/MEMORY.md) is the one-line-per-file index, and each file carries `type:` frontmatter (`user` / `project` / `reference` / `feedback`). The operating rules agents follow — Kimball-first planning, changesets as the unit of write, one-session-one-process, error-code-grep-first, the consumer-grade-naming ship bar, and the generalization/scrub rules — are maintained in [`AGENTS.md`](AGENTS.md) → "Operating rules", not here.
+Durable knowledge lives in `memory/` — [`memory/MEMORY.md`](memory/MEMORY.md) is the one-line-per-file index, and each file carries `type:` frontmatter (`user` / `project` / `reference` / `feedback`). The operating rules agents follow — Kimball-first planning, changesets as the unit of write, one session per chain, error-code-grep-first, the consumer-grade-naming ship bar, and the generalization/scrub rules — are maintained in [`AGENTS.md`](AGENTS.md) → "Operating rules", not here.
 
 Security posture for humans: no hardcoded credentials, tenant IDs, real company or person names, or industry-specific content anywhere in durable text (`.env` is gitignored, `.env.example` is the template); raw tenant payloads go to private temp files or `captures/<date>-<topic>/`, never into memory files. Secrets come from environment variables or the OS keychain — never command-line flags, which other local processes can read. See [`memory/feedback_generalize_durable_artifacts.md`](memory/feedback_generalize_durable_artifacts.md) for the scrub checklist.
 
+## Testing and CI
+
+The suite is offline and hermetic: no tenant, no network beyond loopback, no Keychain.
+
+```bash
+python3 -m unittest discover -s tests          # the whole suite (~370 tests, ~15 s)
+python3 tests/tools/check.py                   # the CI gates: tests, ruff, mypy, bandit, coverage
+python3 tests/tools/check.py --online deps     # OSV audit of every package in uv.lock
+python3 tests/live/smoke.py --project "<p>"    # read-only checks against YOUR tenant (signs in with auto)
+```
+
+| Layer | What it proves | Where |
+|---|---|---|
+| Unit | parsing, validation and payload building, module by module | `tests/test_*.py` |
+| Fake tenant | the real CLIs end to end against an in-process Strategy REST stand-in with fault injection: every sign-in logged out, request budgets, changesets committed or discarded on every failure path, secrets never printed, transient 503s absorbed | `tests/fake_tenant.py`, `tests/test_integration_fake_tenant.py` |
+| Transport | retries only where repeating is safe, default timeouts, cross-origin redirects refused — on real sockets | `tests/test_transport_resilience.py` |
+| Contract | every REST call written in a script exists in the spec (catch-all routes don't count); every skill cites real operationIds | `tests/test_rest_contract.py`, `tests/test_skill_operations.py` |
+| Hygiene | no secrets, home paths, e-mail addresses or real tenant hosts in tracked files; every script's `--help` runs | `tests/test_repo_hygiene.py`, `tests/test_script_help.py` |
+| Budgets | complexity regressions in spec indexing, lookups and parsers | `tests/test_performance_budgets.py` |
+| Live smoke | sign-in, session, projects, spec drift + contract against the live spec, a validated read, a search, MCP discovery, logout really ends the session | `tests/live/smoke.py` (self-tested against the fake tenant) |
+
+`tests/_hermetic.py`, imported first by every test module, removes `MSTR_*` and proxy variables and points the secret store at a throw-away folder, so the suite behaves the same on every machine and never touches your Keychain.
+
+GitHub Actions (`.github/workflows/`):
+- **tests** — the suite on Python 3.9, 3.10, 3.12, 3.13 and 3.14, macOS, and macOS's own `/usr/bin/python3`, with dependencies installed hash-checked from `uv.lock`; once more under a hostile environment; then ruff, mypy, bandit and the platform-core coverage gate. Runs on every push and weekly.
+- **security** — OSV audit of every locked package, weekly and whenever the lock changes. Accepted advisories are reviewed and dated in `tests/tools/osv_audit.py`.
+- **live-smoke** — manual only, behind a `strategy-live` environment with required reviewers and a read-only service account's API token (setup in the workflow file). It prints step names and timings, never hosts, names or tokens.
+
 ## Contributing
 
-1. **New endpoint or workflow** → prove the hook with `openapi-search` + read-only `api-call`; add a subcommand to [`skills/build-mosaic-model/scripts/build_mosaic.py`](skills/build-mosaic-model/scripts/build_mosaic.py) when it deserves a typed helper; update [`memory/reference_mosaic_build_skill.md`](memory/reference_mosaic_build_skill.md) and the relevant `SKILL.md`.
+1. **New endpoint or workflow** → prove the hook with `strategy_api.py ops --search` / `describe` and a read-only `call`; record the workflow in the owning skill's `SKILL.md`; write a typed helper in that skill's `scripts/` only when it deserves one ([`skills/strategy-platform/SKILL.md`](skills/strategy-platform/SKILL.md), "When to write a typed helper"). Mosaic build helpers are subcommands of [`skills/build-mosaic-model/scripts/build_mosaic.py`](skills/build-mosaic-model/scripts/build_mosaic.py), indexed in [`memory/reference_mosaic_build_skill.md`](memory/reference_mosaic_build_skill.md).
 2. **New durable knowledge** → add a memory file with `name` / `description` / `type` frontmatter, then point to it from [`memory/MEMORY.md`](memory/MEMORY.md). Cite code by function/subcommand name, never line numbers. New error codes MUST add a row to [`memory/reference_strategy_error_codes.md`](memory/reference_strategy_error_codes.md).
 3. **New platform surface or known gap** → update [`memory/reference_strategy_automation_coverage.md`](memory/reference_strategy_automation_coverage.md) and [`memory/reference_strategy_task_catalog.md`](memory/reference_strategy_task_catalog.md).
 4. **New skill surface** → new directory under `skills/` with a `SKILL.md`; add routing in [`skills/strategy-automation/SKILL.md`](skills/strategy-automation/SKILL.md) so other sessions find it. Skills must stay one-way (classify → plan → build → verify).
-5. **Dated tenant-specific content** goes under `captures/<YYYY-MM-DD>-<topic>/`, not in memory.
+5. **Dated tenant-specific content** goes under `captures/<YYYY-MM-DD>-<topic>/` (older folders use `<YYYYMMDD>-<topic>`), not in memory.
 6. **Do not commit** tenant IDs, usernames, passwords, personal names, or industry-specific terminology (see generalization rule above).
 
 ## License

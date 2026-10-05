@@ -13,7 +13,8 @@ The goal is complete automation coverage for Strategy where an API, SDK, MCP too
 **How the repo reaches everything (2026-10-05):** every REST operation in the tenant's spec is callable through `skills/strategy-platform/scripts/strategy_api.py call <operationId>` — validated against the spec (parameters, enums, body), with project / changeset / `Prefer` headers filled in and writes gated behind `--yes`. Each API area has an owning skill (`strategy-admin`, `-distribution`, `-content`, `-migration`, `-ops`, `-ai`, modeling, validation) that records the workflows; `memory/reference_strategy_api_surface.md` is the generated area → skill → coverage table, and `tests/test_rest_contract.py` keeps scripts honest against the spec. The levels below still apply: a validated single call is a *generic REST hook*, not a wrapped workflow.
 
 - **Wrapped helper:** a local command implements a repeatable workflow with validation, dry-run or read-back, and cleanup where needed.
-- **Generic REST hook:** the endpoint is reachable and spec-validated through `strategy_api.py describe` / `call` (raw `build_mosaic.py api-call` for multipart), even if no typed subcommand exists yet.
+- **Skill workflow:** a domain `SKILL.md` records the steps, safety rules and read-back for a task as `strategy_api.py call` lines; its Status section says whether they are spec-verified only or have run live.
+- **Generic REST hook:** the endpoint is reachable and spec-validated through `strategy_api.py describe` / `call` (multipart via `--file` / `--form`), even if no skill workflow or typed subcommand exists yet.
 - **Specialized hook:** MCP, Trino, mstrio-py, Workstation CLI, or another official/tenant-supported surface is the safer automation path than raw REST.
 - **Captured fallback:** no documented API exists, but a browser/devtools capture can identify a stable request. Record the capture and tenant/version before treating it as reusable.
 - **Known gap:** no available automation hook is verified. State the limitation plainly and give the closest reliable workaround.
@@ -41,7 +42,7 @@ Track coverage across these families, not just Mosaic:
 For any new Strategy capability:
 
 1. Search the live spec first: `python3 skills/strategy-platform/scripts/strategy_api.py ops --search "<words>"`, then `describe <operationId>`.
-2. If an endpoint exists, prove it with a read-only `api-call` or a dry-run wrapper before adding writes.
+2. If an endpoint exists, prove it with a read-only `strategy_api.py call` (writes print a dry run until `--yes`) before adding writes.
 3. Add or update the task row in `reference_strategy_task_catalog.md`.
 4. Add typed helper code only when the workflow is common, risky, multi-step, or needs payload construction/read-back.
 5. Document authentication requirements, changeset requirements, cleanup, and verification in the relevant memory file.
@@ -54,7 +55,9 @@ For any new Strategy capability:
 - When OpenAPI, public docs, and tenant behavior disagree, prefer tenant-verified memory, then live OpenAPI, then public docs, then clone-and-remap from a working object.
 - Keep legacy/classic, Mosaic, runtime, dataset, and admin surfaces separate even when they share object names.
 
-## Proposed skills — ranked gaps from the 2026-10-05 documentation audit
+## Proposed skills from the 2026-10-05 documentation audit — status
+
+Built the same day: #1 → `strategy-ai` workflows 4–5, #2 → `strategy-migration`, #3 → `strategy-distribution`, #5 → `strategy-admin`, #6 and #9 → `strategy-ops`, #8 → `strategy-content`. Still open: #4 (Test Center — owned by `strategy-validation`, which has a spec-verified workflow only) and #7 (Mosaic lifecycle section in `build-mosaic-model`).
 
 Compared against the REST spec, the REST docs, product help and mstrio-py master. Each is a candidate `skills/<name>/SKILL.md` (or a section, where noted). Sign-in is no longer a gap: `strategy_auth.py`, `strategy_mcp.py`, `reference_strategy_authentication.md`.
 

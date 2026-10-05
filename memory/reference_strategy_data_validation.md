@@ -108,10 +108,10 @@ Do NOT call a new build shippable if:
 
 ## Gotchas observed
 
-- **`ERR001 iServerCode -2147072486` / `8004cb0a`** — fires after ~10 consecutive REST logins. Mitigation: (a) reuse sessions via a single helper process, (b) explicit `DELETE /api/auth/login` on exit, (c) route read validations through MCP `query` which uses a pool. See `feedback_build_mosaic_session_leak.md`. Do not loop-login per-query.
+- **`ERR001 iServerCode -2147072486` / `8004cb0a`** — fires after ~10 consecutive REST logins. Mitigation: (a) one session — `MSTR_REUSE_SESSION=1` or a single helper process, (b) `POST /api/auth/logout` on exit (`DELETE /api/auth/login` is a 404 and never logged out), (c) route read validations through MCP `query` which uses a pool. See `feedback_build_mosaic_session_leak.md`. Do not loop-login per-query.
 - **Column names over Trino** use `"<attribute name lowercase> (<form name lowercase>)"` — e.g., `"region (region name)"`, `"customer market segment (customer market segment)"`. Entity IDs appear as `"order (order key)"`. Metric columns use just the metric name, lowercase, with spaces preserved (`"order total price"`).
 - **Missing expected column** returns Trino `Column 'X' cannot be resolved` — check form-category naming before blaming the model.
-- **Connect-live models don't need a publish step.** `POST /api/cubes/{id}` returns "no publish endpoint accepted" for `connect_live` models; that's expected, not an error.
+- **Connect-live models don't need a publish step.** The internal, deprecated `POST /api/cubes/{id}` returns "no publish endpoint accepted" for `connect_live` models; that's expected, not an error.
 
 ## Helper script
 

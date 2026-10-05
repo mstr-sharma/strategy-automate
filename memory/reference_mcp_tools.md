@@ -13,6 +13,6 @@ type: reference
 
 **From scripts:** `skills/strategy-platform/scripts/strategy_mcp.py` signs in exactly like the MCP connector (OAuth 2.1 + PKCE through the tenant's single sign-on, dynamic client registration, refresh tokens in the OS secret store) and exposes `login`, `tools`, `call <tool> --args JSON` and `query --project P --sql S` (`--server mosaic` by default, `--server agent` for the Agent server). The token is scoped to the MCP server — REST ignores it — so REST scripts sign in with `strategy_auth.py` (`--auth-method sso` for the same SSO). See `reference_strategy_authentication.md`.
 
-**Strategy REST:** no first-class MCP; every write and admin task goes through `$REPO/skills/build-mosaic-model/scripts/build_mosaic.py` and its siblings, signing in through `strategy_auth.py` with configuration from env vars (never stored credentials).
+**Strategy REST:** no first-class MCP; every write and admin task goes through `$REPO/skills/strategy-platform/scripts/strategy_api.py` and the domain skills (Mosaic builds through `$REPO/skills/build-mosaic-model/scripts/build_mosaic.py`), signing in through `strategy_auth.py` with configuration from env vars (never stored credentials).
 
 **Browser-automation MCPs** (Claude Preview, Claude in Chrome): useful to confirm something in the Library UI, never a substitute for REST — and never used to type a user's credentials.

@@ -16,7 +16,7 @@ Both return the same underlying ACL but shaped differently:
 GET /api/objects/{objectId}?type={objectType}&showACL=true
 ```
 
-- `type` is the numeric object type (4 for metric, 12 for attribute, 776 for logical_table, 779 for data model, etc.)
+- `type` is the numeric object type (EnumDSSXMLObjectTypes: 4 metric, 12 attribute, 13 fact, 15 table, 3 for a Mosaic model, cube or report); 776 and 779 are subtypes, not types.
 - Returns `acl[]` as a list of entries with numeric rights mask:
   ```json
   [
@@ -96,7 +96,7 @@ Body (verified shape, mirrors the read response):
 }
 ```
 
-- Wholesale replacement of the ACL (similar semantics to the relationships PUT — any trustee omitted from the body is removed). `build_mosaic.py` merges with the current ACL first.
+- Wholesale replacement of the ACL (similar semantics to the relationships PUT — any trustee omitted from the body is removed). `build_mosaic.py` merges with the current ACL first, and per trustee: `--grant` / `--deny` OR their bits into the trustee's existing `granted` / `denied` masks and keep its `subType` (a group stays a group). `--replace-trustee` sets a named trustee's entry exactly. Before 2026-10-05 a `--deny` replaced the whole entry — a group holding Full Control lost every right and was re-typed as a user.
 - Must be wrapped in a changeset (same as attribute/metric edits).
 - `subType` must match the target object's subtype — `metric`, `fact_metric`, `attribute`, `logical_table` for a contained table, `report_emma_cube` for the model root.
 

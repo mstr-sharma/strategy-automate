@@ -1,6 +1,6 @@
 ---
 name: Mosaic API gotchas learned
-description: Undocumented-or-surprising Mosaic REST behaviors — lifecycle symptom journal. Catalog base64 IDs, X-MSTR-IdentityToken mandatory, changeset commit rounds, managed-attribute trap (8004cd15), publish/delete paths, /api/users lockdown, ACL endpoint asymmetry, snowflake + entity-first patterns. Exact payload shapes live in reference_mosaic_rest_gotchas.md; session cap in feedback_build_mosaic_session_leak.md. Pair with reference_strategy_error_codes.md to grep from symptom to fix.
+description: Undocumented-or-surprising Mosaic REST behaviors — lifecycle symptom journal. Catalog base64 IDs, X-MSTR-IdentityToken grant-dependent (default off), changeset commit rounds, managed-attribute trap (8004cd15), publish/delete paths, /api/users lockdown, ACL endpoint asymmetry, snowflake + entity-first patterns. Exact payload shapes live in reference_mosaic_rest_gotchas.md; session cap in feedback_build_mosaic_session_leak.md. Pair with reference_strategy_error_codes.md to grep from symptom to fix.
 type: feedback
 tags: [mosaic, build, payload, error-code]
 ---
@@ -25,7 +25,7 @@ tags: [mosaic, build, payload, error-code]
 - [When payload shape is unknown: clone-and-remap](#when-payload-shape-is-unknown-clone-and-remap)
 
 **Publish + delete**
-- [Publish an in-memory data model via `POST /api/cubes/{modelId}` (empty body) → 202](#publish-an-in-memory-data-model-via-post-apicubesmodelid-empty-body--202)
+- [Publish an in-memory data model: the documented 3-step flow (`POST /api/cubes/{id}` is a fallback)](#publish-an-in-memory-data-model-the-documented-3-step-flow-post-apicubesid-is-a-fallback)
 - [Cube/model delete: `DELETE /api/objects/{id}?type=3`](#cubemodel-delete-delete-apiobjectsidtype3)
 
 **Users, ACL, permissions**
@@ -55,7 +55,7 @@ Objects referenced inside a changeset must already exist (committed). Relationsh
 **How to apply:** in `build`, commit base model first, THEN open a second changeset for relationships, SF, ACL, translations.
 
 ### Opening too many sessions without logout throws "Maximum interactive sessions per user"
-Canonical coverage: `feedback_build_mosaic_session_leak.md` (cap ~5 per user per project; auth-token logout does NOT reap iServer sessions — ~30-min idle timer; one-session-one-process rule). Failure signature `8004cb0a` / iServerCode `-2147072486` in `reference_strategy_error_codes.md`.
+Canonical coverage: `feedback_build_mosaic_session_leak.md` (cap ~5 per user per project; the old `DELETE /api/auth/login` logout was a 404, so sessions idled out after ~30 min — `POST /api/auth/logout` ends them; one session per pipeline (one process or `MSTR_REUSE_SESSION=1`)). Failure signature `8004cb0a` / iServerCode `-2147072486` in `reference_strategy_error_codes.md`.
 
 ---
 
@@ -97,8 +97,8 @@ Fetch a working object via `GET /api/model/dataModels/{refModelId}/attributes/{i
 
 ## Publish + delete
 
-### Publish an in-memory data model via `POST /api/cubes/{modelId}` (empty body) → 202
-NOT `/api/cubes/{id}/instances` (the latter requires an already-published cube and returns 500 otherwise). Same model id is used as cube id. Public OpenAPI also lists `/api/dataModels/{dataModelId}/publish`, but the verified no-interaction path on Strategy ONE Cloud tenants is the cube POST. Do not fire both concurrently — see `reference_mosaic_publish_path.md` ("Never fire both publish endpoints") for the iServerCode `-2147072194` lockout.
+### Publish an in-memory data model: the documented 3-step flow (`POST /api/cubes/{id}` is a fallback)
+Use `POST /api/dataModels/{id}/instances` → `POST /api/dataModels/{id}/publish` (`tables[].refreshPolicy`) → poll `GET /api/dataModels/{id}/publishStatus` (corrected 2026-10-05). `POST /api/cubes/{modelId}?cubeAction=publish` (empty body → 202), which the Studio UI fired in 2026-04 captures, is internal and deprecated in the spec — a tenant-observed fallback only. NOT `/api/cubes/{id}/instances` (that executes an already-published cube and returns 500 otherwise). Same model id is used as cube id. Do not fire both triggers in one run — see `reference_mosaic_publish_path.md` ("Never fire both publish endpoints") for the iServerCode `-2147072194` lockout.
 
 ### Cube/model delete: `DELETE /api/objects/{id}?type=3`
 Returns 204 on success. Type 3 = data model.
@@ -133,7 +133,7 @@ The entity-first pattern handles snowflake data design natively — no special-c
 
 Additions for snowflake:
 - **Conformed dimensions:** a non-PK, non-noise string column in ≥2 tables (e.g., `REGION` in CUSTOMERS + SUPPLIERS) is created as ONE multi-table attribute instead of per-table duplicates with `(Table)` suffix.
-- **Hierarchy path detection:** DFS over the entity-adjacency graph finds the longest dim chain (≥3 nodes) and emits a `hierarchy_path` + attempts to create a user-defined hierarchy object. The hierarchy POST endpoint on some tenants returned 404 at both `/hierarchies` and `/userHierarchies` — the relationships still wire correctly; the standalone hierarchy object is a nice-to-have. TBD: discover the right path (possibly `/drillHierarchies` or via `/objects` type 47).
+- **Hierarchy objects (removed 2026-10-05):** `build` used to search the dim graph for the longest chain and POST a user-defined hierarchy to `/dataModels/{id}/hierarchies` or `/userHierarchies`. Both paths are absent from the spec (tenants answered 404) and the search was factorial in the number of entities, so it is gone; dim chains are wired as attribute relationships only. Classic project hierarchies live at `/api/model/hierarchies` (`patch-model-object --kind project_hierarchy`).
 - **Expanded noise list:** `SOURCE_SYSTEM, LOAD_TIMESTAMP, LAST_UPDATED_AT, INGESTION_DATE, LOAD_DATE, ETL_BATCH_ID, DW_CREATED_AT, DW_UPDATED_AT` (threshold: present in ≥3 tables).
 
 ### Canonical pattern: entity-first attribute creation

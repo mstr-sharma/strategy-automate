@@ -4,15 +4,15 @@ description: Map natural-language Strategy automation requests to references, he
 type: reference
 originSessionId: codex-session
 ---
-Use this as a routing table. Confirm exact paths with `openapi-search` when implementing. The repo's platform goal is complete automation coverage where hooks exist: if a task has no typed helper yet, route through the generic OpenAPI + `api-call` hook, then promote it to a helper when it becomes repeatable, risky, or multi-step. If no API/SDK/MCP/CLI/captured hook exists, record it as a known gap instead of treating it as implemented.
+Use this as a routing table. Confirm exact operations with `strategy_api.py ops --search` / `describe` when implementing. The repo's platform goal is complete automation coverage where hooks exist: if a task has no typed helper yet, route through the owning domain skill or `strategy_api.py call`, then promote it to a helper when it becomes repeatable, risky, or multi-step. If no API/SDK/MCP/CLI/captured hook exists, record it as a known gap instead of treating it as implemented.
 
-Coverage levels are defined in `reference_strategy_automation_coverage.md`: wrapped helper, generic REST hook, specialized hook, captured fallback, known gap.
+Coverage levels are defined in `reference_strategy_automation_coverage.md`: wrapped helper, skill workflow, generic REST hook, specialized hook, captured fallback, known gap.
 
 ## Environment/session
 - "Log in", "check auth", "who am I": `auth-probe`, `/api/auth/login`, `/api/auth/identityToken`, `/api/sessions`.
-- "List projects": `/api/projects` via `api-call` or mstrio-py.
+- "List projects": `/api/projects` via `strategy_api.py call getProjects_1` or mstrio-py.
 - "Use a different tenant/project": override `MSTR_BASE`, `MSTR_PROJECT_ID`, `MSTR_USER`, `MSTR_PASSWORD`.
-- "Call an endpoint that has no helper yet": `openapi-search`, then `api-call --method ... --path ...`; add `--identity-token` only when the selected surface requires it.
+- "Call an endpoint that has no helper yet": `strategy_api.py ops --search`, `describe`, then `call` (dry run until `--yes`); add an identity token (`build_mosaic.py api-call --with-identity-token`) only when the selected surface requires it.
 
 ## Object discovery and metadata
 - "Find object/report/dashboard/model/user": helper `search-objects`, `/api/searches/results`, `/api/folders/{id}`, `/api/objects/{id}`.
@@ -55,7 +55,7 @@ Coverage levels are defined in `reference_strategy_automation_coverage.md`: wrap
 - "Runtime filter/view filter/metric limit/requested objects": instance request body or dashboard filter endpoint; do not create project filter objects unless explicitly requested.
 
 ## Cubes and datasets
-- "Create/update/publish Intelligent Cube / OLAP cube": `/api/model/cubes`, then publish with `/api/v2/cubes/{cubeId}` or tenant-supported `/api/cubes/{cubeId}`; see `reference_strategy_surface_matrix.md` ("Cubes and datasets").
+- "Create/update/publish Intelligent Cube / OLAP cube": `/api/model/cubes`, then publish with `POST /api/v2/cubes/{cubeId}` (`publishCube_2`; `POST /api/cubes/{cubeId}` is internal and deprecated); see `reference_strategy_surface_matrix.md` ("Cubes and datasets").
 - "Execute/read cube data": `POST /api/cubes/{cubeId}/instances`, then `GET /api/cubes/{cubeId}/instances/{instanceId}`.
 - "Create/update Push Data / Super Cube / MTDI dataset": single-table `POST /api/datasets` or multi-table `POST /api/datasets/models` + `/uploadSessions`; publish/status endpoints under `/api/datasets/{datasetId}/uploadSessions/{uploadSessionId}`.
 - "Cube caches/refresh/status": `GET /api/monitors/caches/cubes?clusterNode=<node>` (+ `GET/PATCH/DELETE …/cubes/{id}`) and `GET /api/monitors/caches/contents?clusterNode=<node>` — there is no bare `/api/monitors/caches` (corrected 2026-10-05; `reference_strategy_monitoring_jobs_alerts.md`); cube state via `HEAD /api/cubes/{id}` (`X-MSTR-CubeStatus`); `/api/datasets/cubes/{id}/status` is internal; use mstrio cube cache helpers when useful.
@@ -84,6 +84,7 @@ Coverage levels are defined in `reference_strategy_automation_coverage.md`: wrap
 ## When unsure
 Run:
 ```bash
-python3 skills/build-mosaic-model/scripts/build_mosaic.py openapi-search "<domain word>" --context 3
+python3 skills/strategy-platform/scripts/strategy_api.py ops --search "<domain word>"
+python3 skills/strategy-platform/scripts/strategy_api.py describe <operationId>
 ```
-Then make a read-only `api-call` to confirm response shape before writing.
+Then make a read-only `call` to confirm the response shape before writing.

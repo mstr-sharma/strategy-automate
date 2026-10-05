@@ -20,18 +20,19 @@ Verified 2026-04-21:
 - `openapi: 3.0.1`
 - `info.title: Strategy REST`
 - `info.version: "2026"`
-- studio tenant returned 652 paths and tags including Authentication, Data Models, Datasource Management, Cubes, Changesets, Security Filters.
+- a Strategy ONE Cloud tenant returned 652 paths and tags including Authentication, Data Models, Datasource Management, Cubes, Changesets, Security Filters.
 
 Re-verified 2026-10-01 on the same tenant family: 762 public paths, 1,178 with `?visibility=all`; 111 public paths added since April and 1 removed — inventory with summaries in `reference_strategy_rest_surface_delta_2026-10.md`.
 - `/api-docs/swagger-config` returned 404.
 
-Use the helper instead of manual curl:
+Use the spec tool instead of manual curl — it caches `{MSTR_BASE}/api/openapi.json?visibility=all` (public + internal) and validates calls against it:
 ```bash
 cd "$REPO"
-python3 skills/build-mosaic-model/scripts/build_mosaic.py openapi-summary --limit 80
-python3 skills/build-mosaic-model/scripts/build_mosaic.py openapi-search "dataModels" --context 2
-python3 skills/build-mosaic-model/scripts/build_mosaic.py openapi-summary --out /tmp/strategy-openapi.yaml
+python3 skills/strategy-platform/scripts/strategy_api.py sync
+python3 skills/strategy-platform/scripts/strategy_api.py ops --search "dataModels" --internal
+python3 skills/strategy-platform/scripts/strategy_api.py describe <operationId>
 ```
+The older YAML helpers (`build_mosaic.py openapi-summary` / `openapi-search`) still work as a fallback.
 
 If a local `openapi.yaml` exists in the Mosaic Build root, treat it as a reference/cache, not as the source of truth. Refresh it from the tenant when endpoint behavior matters.
 
@@ -39,11 +40,11 @@ Before searching by endpoint name, read `reference_strategy_surface_matrix.md` w
 
 For one-off REST operations that are not wrapped yet:
 ```bash
-python3 skills/build-mosaic-model/scripts/build_mosaic.py api-call --method GET --path /api/projects
-python3 skills/build-mosaic-model/scripts/build_mosaic.py api-call --method PATCH --path /api/model/dataModels/<id> --json-file /tmp/body.json
+python3 skills/strategy-platform/scripts/strategy_api.py call getProjects_1
+python3 skills/strategy-platform/scripts/strategy_api.py call ms-updateDataModel -p dataModelId=<id> --body @/tmp/body.json   # dry run; --yes sends
 ```
 
-This generic `api-call` path is the baseline API hook for every Strategy REST endpoint exposed by the tenant OpenAPI spec. Treat it as reachability, not as a full workflow wrapper; promote high-value or high-risk flows into typed helpers with dry-run/read-back/cleanup behavior.
+This generic `call` path is the baseline API hook for every Strategy REST operation in the tenant spec (`build_mosaic.py api-call` remains a raw probe; it gates only `DELETE` behind `--yes`). Treat it as reachability, not as a full workflow wrapper; promote high-value or high-risk flows into typed helpers with dry-run/read-back/cleanup behavior.
 
 For read-first automation flows:
 ```bash
@@ -67,7 +68,7 @@ Important OpenAPI paths for Mosaic automation:
 - `PATCH /api/model/dataModels/{dataModelId}/objects/{objectId}/acl?subType=<objectSubType>` for ACL on model-contained objects.
 - `PATCH /api/model/dataModels/{dataModelId}/objects/{objectId}/translations?subType=<objectSubType>` for name/description/form translations.
 - `GET/PATCH /api/model/attributes/{attributeId}` for classic/legacy schema attributes outside a Mosaic data model; use changesets and request `showExpressionAs=tokens` when editing expressions.
-- `GET/PATCH /api/model/metrics/{metricId}`, `/api/model/facts/{factId}`, `/api/model/tables/{tableId}` for classic schema objects.
+- `GET/PUT /api/model/metrics/{metricId}` and `/api/model/facts/{factId}`, `GET/PATCH /api/model/tables/{tableId}` for classic schema objects.
 - `GET/POST /api/users`, `GET/PATCH/DELETE /api/users/{id}`, `POST /api/users/{id}/addresses` for user management; dry-run and resolve exact duplicates before creating users.
 - Mosaic publish (corrected 2026-10-05): use the documented, public data-model flow first — `POST /api/dataModels/{id}/instances` → `POST /api/dataModels/{id}/publish` (`tables[].refreshPolicy`) → `GET /api/dataModels/{id}/publishStatus` (per-table `completed`) → `DELETE /api/dataModels/{id}/instances/{instanceId}`. `POST /api/cubes/{cubeId}` (`?cubeAction=publish`) is internal + deprecated in the spec — a tenant-observed fallback only, never in the same run (`reference_mosaic_publish_path.md`). Classic/MTDI cubes publish with the public `POST /api/v2/cubes/{cubeId}`.
 
@@ -78,7 +79,7 @@ Important OpenAPI paths for classic/project semantic-layer and admin automation:
 - `POST /api/model/metrics`, `GET/PUT /api/model/metrics/{metricId}` for classic/project metrics.
 - `POST /api/model/securityFilters` creates a **classic project security filter** in a changeset. This is top-level Modeling Service, not `/api/model/dataModels/{id}/securityFilters`.
 - `GET /api/model/securityFilters/{securityFilterId}` reads a classic security filter definition; use `showExpressionAs=tree|tokens` when modifying or validating qualification shape.
-- `GET/POST /api/model/prompts`, `GET/PATCH /api/model/prompts/{promptId}` for editable classic prompt objects. System prompts return an explicit non-editable error.
+- `POST /api/model/prompts`, `GET/PUT /api/model/prompts/{promptId}` for editable classic prompt objects. System prompts return an explicit non-editable error.
 - `GET /api/securityFilters` lists project security filters.
 - `PATCH /api/securityFilters/{id}/members` assigns/revokes a classic project security filter for users/groups with `{operationList:[{op:"addElements",path:"/members",value:[ids...]}]}`.
 - `GET /api/securityFilters/{id}/members` verifies assignments.
@@ -90,11 +91,11 @@ Important OpenAPI paths for classic/project semantic-layer and admin automation:
 
 Important OpenAPI paths for cube and dataset families:
 - Intelligent/OLAP cube definition: `POST /api/model/cubes`, `GET/PUT /api/model/cubes/{cubeId}`.
-- Intelligent/OLAP cube publish: `POST /api/v2/cubes/{cubeId}` in official docs; some tenants also expose `POST /api/cubes/{cubeId}`.
+- Intelligent/OLAP cube publish: `POST /api/v2/cubes/{cubeId}` in official docs (`publishCube_2`); `POST /api/cubes/{cubeId}` is internal and deprecated.
 - Cube execution/data: `POST /api/cubes/{cubeId}/instances`, `GET /api/cubes/{cubeId}/instances/{instanceId}`, cube element endpoints under `/api/cubes/{cubeId}/attributes/{attributeId}/elements`.
 - Push Data single-table dataset / Super Cube: `POST /api/datasets`, `PATCH /api/datasets/{datasetId}/tables/{tableId}`.
 - Push Data multi-table / MTDI dataset: `POST /api/datasets/models`, `POST /api/datasets/{datasetId}/uploadSessions`, `PUT /api/datasets/{datasetId}/uploadSessions/{uploadSessionId}`, `POST .../publish`, `GET .../publishStatus`.
-- Dataset status/refresh/security views: `/api/datasets/cubes/{id}/status`, `/api/datasets/{datasetId}/instances/{instanceId}/refresh`, `/api/datasets/{id}/securityFilterViews`.
+- Dataset status/refresh/security views: `/api/datasets/cubes/{id}/status`, `/api/datasets/{datasetId}/instances/{instanceId}/refresh`, `/api/datasets/{id}/securityFilterViews` (all three internal in the 2026 spec).
 
 Important OpenAPI paths for runtime analytics:
 - Reports/cubes: `/api/reports/{reportId}/instances`, `/api/cubes/{cubeId}/instances`, `/api/cubes/{cubeId}/instances/{instanceId}`.
@@ -118,6 +119,6 @@ Important OpenAPI paths for AI/agents:
 
 When docs and tenant behavior disagree, prefer this order:
 1. Tenant-verified gotcha in `feedback_mosaic_gotchas.md`
-2. Live `openapi-summary` / `/api/openapi.yaml`
+2. The live spec (`strategy_api.py sync` / `describe`)
 3. Official REST docs at `https://microstrategy.github.io/rest-api-docs/`
 4. Clone-and-remap from a working object returned by `GET`

@@ -1,6 +1,6 @@
 ---
 name: mosaic-portfolio-inventory-rules
-description: Mosaic portfolio inventory rules + legacy↔Mosaic translation — subType-779 + extType-448 REST discovery, the MCP-shows-published-catalog-only rule, the Mosaic sub-resource map, and the object-by-object classic→Mosaic translation matrix. Load when inspecting, cloning, translating, or converting between classic semantic objects and Mosaic data models.
+description: Mosaic portfolio inventory rules + legacy↔Mosaic translation — subType-779 + extType-448 REST discovery, the MCP-shows-certified-only rule, the Mosaic sub-resource map, and the object-by-object classic→Mosaic translation matrix. Load when inspecting, cloning, translating, or converting between classic semantic objects and Mosaic data models.
 type: reference
 ---
 Use this when the user asks to inspect, clone, translate, or convert between legacy (classic project) semantic-layer objects and Mosaic data models. Pair with `reference_strategy_tutorial_semantic_field_study.md` (classic) and `reference_strategy_legacy_to_mosaic_mining.md` (discovery helper).

@@ -57,7 +57,7 @@ Core steps:
 - Resolve `MicroStrategy Tutorial`
 - Fetch live `/api/openapi.yaml?visibility=all`
 - Optional `GET /api/sessions` or identity/session endpoints if exposed
-- `DELETE /api/auth/login`
+- `POST /api/auth/logout`
 
 Verification:
 - Auth token received, project ID resolved, OpenAPI reachable, logout succeeds.

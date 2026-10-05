@@ -30,7 +30,7 @@ Strategy docs use both dashboard and dossier naming; the REST API still exposes 
 - Filter dashboard instance: `PUT /api/dossiers/{dossierId}/instances/{instanceId}/filters`.
 - Document instance: `POST /api/documents/{id}/instances`.
 - Tenant-verified shape: document instance creation can return HTTP 201 with `mid` instead of `instanceId`; use `mid` as the instance identifier for follow-up export calls.
-- Dashboard/document visual data: `GET /api/documents/{id}/instances/{instanceId}/layouts/{layoutKey}/visualizations/{visualizationKey}` and dossier visualization/page endpoints.
+- Dashboard/document visual data: `GET /api/documents/{id}/instances/{instanceId}/layouts/{layoutKey}/visualizations/{visualizationKey}` (internal) and dossier visualization/page endpoints.
 - Definition/hierarchy: `GET /api/documents/{id}/definition`, `GET /api/dossiers/{dossierId}/definition`, instance definition endpoints.
 - Dashboard import/export/in-memory creation can also use `/api/dashboards...` and `/api/dossiers/instances`; inspect OpenAPI for the exact tenant variant.
 
@@ -48,8 +48,8 @@ Runtime endpoints include:
 - `GET /api/documents/{id}/instances/{instanceId}/prompts/{promptIdentifier}/elements`
 - `GET /api/documents/{id}/instances/{instanceId}/prompts/{promptIdentifier}/objects`
 - `PUT /api/documents/{id}/instances/{instanceId}/prompts/answers`
-- `POST /api/documents/{id}/instances/{instanceId}/promptsAnswers`
-- `POST /api/dossiers/{dossierId}/instances/{instanceId}/answerPrompts`
+- `POST /api/documents/{id}/instances/{instanceId}/promptsAnswers` (deprecated — use `PUT …/prompts/answers`)
+- `POST /api/dossiers/{dossierId}/instances/{instanceId}/answerPrompts` (internal)
 - `POST /api/documents/{id}/instances/{instanceId}/rePrompt`
 
 Prompt APIs can read definitions, answer with explicit values, answer defaults, close optional prompts without answers, and reset/re-prompt depending on prompt type.
@@ -75,7 +75,7 @@ Common export patterns:
 
 - Document/dashboard PDF: `POST /api/documents/{id}/instances/{instanceId}/pdf`, then result/status endpoint when asynchronous. Tenant-verified (2026-08-27): the `orientation` enum on the observed Library build is `NONE|AUTO` (`LANDSCAPE`/`PORTRAIT` are rejected with ERR006), and the 200 response is JSON `{"data": "<base64 PDF>"}` — decode before writing to disk.
 - Document Excel: `POST /api/documents/{id}/instances/{instanceId}/excel`.
-- Document/dashboard CSV or visualization CSV/PDF: `/api/documents/{id}/instances/{instanceId}/csv`, `/visualizations/{nodeKey}/csv`, `/visualizations/{nodeKey}/pdf`.
+- Document/dashboard CSV or visualization CSV/PDF: `/api/documents/{id}/instances/{instanceId}/csv` (internal), `/visualizations/{nodeKey}/csv`, `/visualizations/{nodeKey}/pdf`.
 - Dashboard file import/export paths may live under `/api/dashboards`.
 
 Always create or reuse the correct instance first, especially for prompted content.

@@ -26,13 +26,15 @@ re-save as `.pptx` or export text another way.
 
 ## Environment / prerequisites
 
-- Standard env vars: `MSTR_BASE`, `MSTR_USER`, `MSTR_PASSWORD`, `MSTR_PROJECT_ID`
-  (or `MSTR_PROJECT_NAME`), `MSTR_DEST_FOLDER_ID` (destination folder for the nugget).
+- Standard env vars: `MSTR_BASE`, `MSTR_PROJECT_ID` (or `MSTR_PROJECT_NAME`),
+  `MSTR_DEST_FOLDER_ID` (destination folder for the nugget), plus a sign-in method
+  (`--auth-method` / `MSTR_AUTH_METHOD`: `MSTR_USER` + `MSTR_PASSWORD`, `MSTR_API_TOKEN`,
+  or browser `sso` — `memory/reference_strategy_authentication.md`).
 - The nuggets API family ships in recent Strategy ONE releases (docs say April 2026+).
-  **Verify before promising:** `build_mosaic.py openapi-search "nugget"` must show
-  `/api/nuggets`. Most nugget endpoints are `visibility: internal` — fetch
-  `{Library}/api/openapi.yaml?visibility=all` to see the full set
-  (`/{id}`, `/{id}/file`, `/{id}/categories`, `/status/query`, `/{id}/deleteRequest`, `/orphans`).
+  **Verify before promising:** `python3 skills/strategy-platform/scripts/strategy_api.py ops --search nuggets --internal`
+  must list `createNuggets` (`POST /api/nuggets`). Most nugget operations are internal; the same
+  listing shows the full set (`/{id}`, `/{id}/file`, `/{id}/categories`, `/status/query`,
+  `/{id}/deleteRequest`, `/orphans`).
 
 ## One-shot workflow
 
@@ -54,16 +56,15 @@ Conversion only (no upload): `python3 skills/create-unstructured-data/scripts/pp
 
 ## Raw REST fallback (generic hook)
 
-`build_mosaic.py api-call` supports multipart via `--file` / `--form`:
+`strategy_api.py call` sends multipart bodies with `--file` / `--form` (a dry run until `--yes`):
 
 ```bash
-python3 skills/build-mosaic-model/scripts/build_mosaic.py api-call \
-  --method POST --path /api/nuggets --param type=unstructuredData \
+python3 skills/strategy-platform/scripts/strategy_api.py call createNuggets -p type=unstructuredData \
   --form fileName=doc.md --form fileType=3 --form folderId=$MSTR_DEST_FOLDER_ID \
-  --file file=/path/to/doc.md
+  --file file=/path/to/doc.md --yes
 ```
 
-Related maintenance endpoints (same family, use `api-call`):
+Related maintenance endpoints (same family; `ops --search nuggets --internal` lists them):
 `GET /api/nuggets/{id}` (name/file/status/uploadedTime — the quick existence check),
 `PUT /api/nuggets/{id}` (re-upload/replace file), `GET /api/nuggets/{id}/file`
 (download), `GET /api/nuggets/{id}/categories`, `POST /api/nuggets/orphans`.
@@ -80,7 +81,8 @@ Related maintenance endpoints (same family, use `api-call`):
   lifecycle: `"indexing"` → `"ready"` (~5 s for a small Markdown file). Poll
   `status/query` (or `GET /api/nuggets/{id}`) until `ready`.
 - `GET /api/nuggets/{id}/file` returns **406** against a JSON-only Accept header —
-  pass `--header "Accept=*/*"` (comes back as `text/markdown` etc.).
+  pass `--accept '*/*'` to `strategy_api.py call` (or `--header "Accept=*/*"` to `build_mosaic.py api-call`);
+  it comes back as `text/markdown` etc.
 - **Deleting a standalone nugget:** `POST /api/nuggets/{id}/deleteRequest` does NOT
   take the nugget id — it operates on an Agent's nugget *collection* (returns
   ERR006 "Content Ids are empty" / 404 on a nugget id). Use the objects API

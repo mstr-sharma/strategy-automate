@@ -27,12 +27,12 @@ A single, composable Strategy automation brain that:
 
 ## How to add to this repo
 
-1. **New endpoint or workflow?** First prove the hook with `openapi-search` and a read-only or dry-run call. Add a subcommand to `skills/build-mosaic-model/scripts/build_mosaic.py` when the workflow is common, risky, multi-step, or needs payload construction/read-back. Keep `skills/build-mosaic-model/SKILL.md` in sync with the script's flags.
+1. **New endpoint or workflow?** First prove the hook with `strategy_api.py ops --search` / `describe` and a read-only or dry-run `call`, and record the workflow in the owning skill's `SKILL.md`. Add a typed helper (for Mosaic builds, a subcommand of `skills/build-mosaic-model/scripts/build_mosaic.py`) when the workflow is common, risky, multi-step, or needs payload construction/read-back. Keep `skills/build-mosaic-model/SKILL.md` in sync with the script's flags.
 2. **New kind of durable knowledge?** Add a memory file in `memory/` with the standard frontmatter (`name`, `description`, `type`), then add a one-line pointer to `memory/MEMORY.md`.
 3. **New platform surface or unavailable API?** Update `reference_strategy_automation_coverage.md` and `reference_strategy_task_catalog.md` with the hook level or known gap.
 4. **New skill surface?** New directory under `skills/` with a `SKILL.md`. Add routing in `skills/strategy-automation/SKILL.md` so other sessions find it.
 5. **Tenant-specific value discovered?** Do **not** commit it. Add an env-var lookup and document it in `.env.example` / `reference_strategy_env.md`.
-6. **Before trusting an old endpoint note?** Re-probe with `openapi-summary` / `openapi-search` against the live `/api/openapi.yaml` and update the memory file.
+6. **Before trusting an old endpoint note?** Re-probe with `strategy_api.py sync` + `describe` against the tenant's live spec and update the memory file.
 
 ## Hardening direction
 

@@ -1,6 +1,6 @@
 ---
 name: strategy-data-modeling
-description: Design, review, migrate, and operationalize Strategy semantic models — Kimball-first. Business process, grain, conformed dimensions, attributes, facts, metrics, relationships, hierarchies, time semantics, and validation plans for Mosaic and classic surfaces. Strategy's SQL engine is built for star/snowflake schemas; this skill enforces that invariant before any REST write.
+description: Design, review, migrate, and operationalize Strategy semantic models — Kimball-first. Business process, grain, conformed dimensions, attributes, facts, metrics, relationships, hierarchies, time semantics, and validation plans for Mosaic and classic surfaces. Strategy's SQL engine is built for star/snowflake schemas; this skill enforces that invariant before any REST write. Use it for "design a model", "review my model", "what is the grain", "star schema", "conformed dimension", "fact or dimension" or "plan a classic-to-Mosaic migration".
 ---
 
 # Strategy Data Modeling (Kimball-first planning layer)

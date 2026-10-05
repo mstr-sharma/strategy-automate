@@ -12,14 +12,14 @@ Reports, dashboards (dossiers), documents, folders, cubes and datasets: find the
 Owns the spec tags Reports (with `/api/model/reports`), Dashboards, Dashboards(Dossiers) and Documents, Dashboard(Dossier) Personal View, the ToBeDeprecated `/api/dossier/…` family, Library, Browsing, Object Management, Content Groups, Content Bundles, Themes, Palettes, Maps, Cards, Hyper, Elements, Transaction Reports, Cubes, Datasets, Datamarts, MDX Cube Catalog, Runtimes and Shared File Store: `$API ops --tag strategy-content`. Themes, palettes, maps, datamarts, transaction reports, MDX catalogs, runtimes and the shared file store have no workflow here yet — `ops --tag <tag>`, `describe`, `call`.
 
 Route elsewhere:
-- Mosaic data models (type 3, subtype 779 + extType 448): build, publish, refresh, model objects, model ACLs and security filters → `skills/build-mosaic-model/SKILL.md`. Classic schema objects (attributes, facts, metrics, filters, prompt definitions) → `skills/strategy-data-modeling/SKILL.md`.
+- Mosaic data models (type 3, subtype 779 + extType 448): build, publish, refresh, model objects, model ACLs and security filters → `skills/build-mosaic-model/SKILL.md`. Classic schema objects (attributes, facts, metrics, filters, prompt definitions) → `skills/build-mosaic-model/SKILL.md` ("Classic schema objects"; plan with `skills/strategy-data-modeling/SKILL.md`).
 - Subscriptions, schedules, scheduled refresh, History List → `skills/strategy-distribution/SKILL.md`.
 - Users, groups, ACL trustees, security roles, privileges, project row governors → `strategy-admin`. Caches, jobs, monitors, telemetry → `strategy-ops`. Packages, migrations, project duplication → `strategy-migration`. Numbers that must match a reference → `skills/strategy-validation/SKILL.md`.
 
 ## How to work
 
 1. Sign in once (`strategy_auth.py login`), export `MSTR_PROJECT_ID`, and from the repo root `API="python3 skills/strategy-platform/scripts/strategy_api.py"`.
-2. `$API describe <operationId>` before every call. `describe` does not flag operations the spec marks `x-microstrategy.visibility: deprecated` — the `/api/dossier/…` family, `/api/dossierPersonalView`, `/api/dashboards…` (`.mstr` import/export, `createDashboard`), `answerPrompts_1` and `/api/objects/cubes/dataImport`. Avoid them.
+2. `$API describe <operationId>` before every call. `describe` and `call` flag the operations the spec marks deprecated (`"deprecated": true`) — the `/api/dossier/…` family, `/api/dossierPersonalView`, `/api/dashboards…` (`.mstr` import/export, `createDashboard`), `answerPrompts_1` and `/api/objects/cubes/dataImport`. Avoid them.
 3. Classify before every write: `$API call getObject -p id=<id> -p type=<type>`. Types: `3` report/cube/model (subtype 768 grid, 769 graph, 774 grid+graph, 776 classic cube, 779 data-import cube — a Mosaic model when `extType` is 448 — 781 Hyper card), `55` dashboard/document (14081), `8` folder, `18` shortcut, `1` filter, `4` metric, `12` attribute, `34` user/group, `58` security filter.
 4. Reads first. Instances, exports, searches and queries are POSTs: they change nothing, but `call` still needs `--yes`.
 5. Every write: run it without `--yes`, check the printed request, then add `--yes`; read the object back.
@@ -28,16 +28,16 @@ Route elsewhere:
 **One session.** `call` signs in and out per run unless the session is a cached browser one (`strategy_auth.py login --method sso`) or you pass `--reuse-session` (`MSTR_REUSE_SESSION=1`; end it with `strategy_auth.py logout`), so a report / dashboard / cube instance, a metadata `searchId` or a running cube publish dies when that call returns (treat an `X-MSTR-MS-Instance` the same way). Use the cached `sso` session, or chain the steps in one process (needs the 32-hex `MSTR_PROJECT_ID`):
 
 ```python
-import os, sys, requests
+import os, sys
 sys.path.insert(0, "skills/strategy-platform/scripts")
 import strategy_api as api, strategy_auth as sa
 base, pid = os.environ["MSTR_BASE"].rstrip("/"), os.environ["MSTR_PROJECT_ID"]
-spec, s = api.load_spec(base), requests.Session()
+spec, s = api.load_spec(base), sa.SafeSession()
 s.headers.update({"Accept": "application/json", "Content-Type": "application/json"})
 signin = sa.sign_in(s, sa.AuthConfig.from_env(base=base))
 def run(op, *params, body=None):          # one spec-validated call in this session -> requests.Response
     o = api.find_operation(spec, op)
-    return api.call(o, api.build_request(o, list(params), body, pid), base=base, session=s)["response"]
+    return api.call(o, api.build_request(o, list(params), body, pid), base=base, session=s, project=pid)["response"]
 try:
     iid = run("createReportInstance_1", "reportId=<id>", "limit=1000", body={}).json()["instanceId"]
     ...                                   # prompts, pages, exports, delete the instance
@@ -160,7 +160,7 @@ $API call getReport_1 -p cubeId=<cubeId> -p instanceId=<iid> -p offset=100 -p li
 $API call getCubeSqlView -p cubeId=<cubeId>
 ```
 
-- A logout cancels a running publish: under a password or API-token sign-in, publish and wait in one process; under a cached `sso` session the plain call is fine.
+- A logout cancels a running publish: under a password or API-token sign-in, publish and wait in one session (`--reuse-session`, or one process); under a cached `sso` session the plain call is fine.
 - Proof is the execute probe, not the 202: iServerCode `-2147072488` means not published, and after a republish `X-MSTR-CubeStatus` still describes the old cache.
 - Create with `createCube` (`{"name", "folderId", "definition": {"availableObjects": {"attributes": […], "metrics": […]}}}`) or `ms-createCube` (Modeling body with `options.dataRefresh`), then publish. Large cubes can hit the project row governors (`-2147205488`; strategy-admin raises them).
 - `createCubeInstance_1` also reads Mosaic models. `publishCube` (`POST /api/cubes/{id}`) is internal and deprecated — never alongside `publishCube_2`.
@@ -199,14 +199,14 @@ $API call getContentGroupContent -p id=<groupId>
 
 ## Field notes
 
-- `memory/reference_strategy_runtime_analytics.md` — instance flows, prompt grammar, PDF as base64 JSON and the `orientation` enum (verified 2026-08-27). It lists the dashboard `answerPrompts`, whole-dashboard `/csv` and document `…/layouts/…/visualizations/…` reads without noting they are internal, and the deprecated `…/promptsAnswers`.
+- `memory/reference_strategy_runtime_analytics.md` — instance flows, prompt grammar, PDF as base64 JSON and the `orientation` enum (verified 2026-08-27). Its internal (dashboard `answerPrompts`, whole-dashboard `/csv`, document `…/layouts/…/visualizations/…`) and deprecated (`…/promptsAnswers`) paths are marked there (2026-10-05).
 - `memory/reference_strategy_legacy_semantic_admin.md` — verified recipes: report create + `saveAs` and the filter-reference shape, the progressive prompt loop on v2 instances (2026-08-26); classic cube create, publish, status and governors (2026-08-25).
 - `memory/reference_strategy_report_dossier_creation.md`, `memory/reference_strategy_report_authoring_patterns.md` — what REST can author (corrected 2026-10-05: reports and in-memory dashboards yes, visualization CRUD no).
 - `memory/reference_strategy_library_publications.md` — per-object recipients, additive replay, project duplication, the helper (verified 2026-09-28).
 - `memory/reference_strategy_object_cloning.md` — copy vs clone-and-remap per family; object type numbers.
 - `memory/reference_strategy_hyperintelligence.md` — `/api/hyper/*` (all internal in the spec), session-bound card instances.
-- `memory/reference_mosaic_vs_legacy_surfaces.md`, `memory/reference_strategy_surface_matrix.md` ("Cubes and datasets") — cube families and classification. **Differs from the spec:** the matrix's dataset publish / refresh / status paths (`POST /api/datasets/{datasetId}`, `GET /api/datasets/cubes/{id}/status`, `…/instances/{instanceId}/refresh`) are internal, and its "`POST /api/cubes/{cubeId}` on some tenants" (repeated in `memory/reference_strategy_task_catalog.md`) is internal and deprecated.
-- `memory/reference_strategy_admin_platform.md` ("Search, browse, lineage") — **differs from the spec:** its bulk copy / move / delete under `/api/objects` is internal.
+- `memory/reference_mosaic_vs_legacy_surfaces.md`, `memory/reference_strategy_surface_matrix.md` ("Cubes and datasets") — cube families and classification. The matrix and `memory/reference_strategy_task_catalog.md` mark the internal dataset publish / refresh / status paths (`POST /api/datasets/{datasetId}`, `GET /api/datasets/cubes/{id}/status`, `…/instances/{instanceId}/refresh`) and the internal, deprecated `POST /api/cubes/{cubeId}` (2026-10-05).
+- `memory/reference_strategy_admin_platform.md` ("Search, browse, lineage") — its bulk copy / move / delete under `/api/objects` is marked internal (2026-10-05).
 - `memory/reference_strategy_validation_workflows.md` — live probes 2, 5, 6 and 7 (search, report / cube data, prompts, document PDF) run by `strategy_validate.py`.
 - `memory/reference_strategy_automation_coverage.md` ("Proposed skills" #8, folded in here) and `memory/reference_strategy_task_catalog.md` — routing.
 - Official: REST docs `common-workflows/analytics/` (object-discovery incl. data-lineage-analysis-via-rest-apis, use-prompts-objects, manage-reports, manage-dossiers, export-to-pdf, manage-datasets); mstrio-py `project_objects` (`Report`, `Dashboard`, `OlapCube`, `SuperCube`).

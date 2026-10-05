@@ -38,7 +38,7 @@ Verified live 2026-08-28 on a Strategy Cloud tenant (13 cards, "BTC Card" test s
 
 ## Gotchas
 
-- **Instances are session-bound.** A login-per-call helper (e.g. `build_mosaic.py api-call`) kills the instance between calls — run create→read flows in one authenticated session.
+- **Instances are session-bound.** A login-per-call run (e.g. `build_mosaic.py api-call`, or `strategy_api.py call` without `--reuse-session`) kills the instance between calls — run create→read flows in one authenticated session (`MSTR_REUSE_SESSION=1` or one process).
 - **`X-MSTR-ProjectID` is required** on `/api/hyper/*` writes/instances ("Project ID cannot be null or empty" otherwise).
 - Keyword attribute forms: `Keyword` form is universal ID `45C11FA478E745FEA08D781CEA190FE5`; the alternate-keyword form id is card-specific.
 
