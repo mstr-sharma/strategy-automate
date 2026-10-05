@@ -44,7 +44,7 @@ For every column, classify it and assign a business name BEFORE generating paylo
 
 When the same logical entity appears in multiple tables (e.g., `<Entity>` in a dim table + 2–3 fact tables): it is ONE Mosaic attribute with multi-table form expressions, NOT N different attributes with the same name. `build_mosaic.py build` will reject duplicate names (8004e409) — if you hit this, the PATCH pattern in this session (see `memory/reference_strategy_object_cloning.md` + surgery script in tasks) is the fix. Better: pre-compute conformance intent before building and pass via dictionary.
 
-**Case-sensitivity trap** (from `feedback_mosaic_relationship_wiring.md`): `<entity>_id` (lowercase, typical for Postgres) and `<ENTITY>_ID` (uppercase, typical for Snowflake/Oracle) DO NOT auto-conform in `build_mosaic.py`. You must either (a) feed the dictionary with consistent `name` values AND accept that conformance will only pick up same-case columns, then PATCH the attribute afterwards to add the remaining-case tables' expressions; or (b) pass an explicit ERD.
+**Case-sensitivity trap** (from `feedback_mosaic_relationship_wiring.md`): `<entity>_id` (lowercase, typical for Postgres) and `<ENTITY>_ID` (uppercase, typical for Snowflake/Oracle) DO NOT auto-conform in `build_mosaic.py`. You must either (a) feed the dictionary with consistent `name` values AND accept that conformance will only pick up same-case columns, then PATCH the attribute afterwards to add the remaining-case tables' expressions; or (b) pass an explicit ERD that wires a relationship between the two separate attributes. An ERD replaces relationship inference only; it does not conform the columns into one attribute.
 
 ## 3. Fact + metric plan (`reference_data_modeling_foundations.md` → Fact and metric design)
 
@@ -128,7 +128,7 @@ Fast check: run `GET /api/model/dataModels/{id}/tables/{tid}?showColumns=true` a
 
 **Publish routing**: the publish path must match the target surface — subType 779 routes through the Mosaic flow in `reference_mosaic_publish_path.md`, and exactly ONE publish trigger fires per run (`-2147072194` lockout if both fire). Never trust a first-2xx publish heuristic — poll `publishStatus` to per-table `loaded` or run a Trino smoke query before declaring success.
 
-This gate is the difference between "Mosaic accepts the POST" and "the cube actually materializes and Trino can query it." Do not declare a build done until the published cube appears in `get_mosaic_models` for the Shared Studio (or equivalent) catalog.
+This gate is the difference between "Mosaic accepts the POST" and "the cube actually materializes and Trino can query it." Do not declare a build done until the published cube answers a Trino smoke query. It only appears in MCP `get_models` (formerly `get_mosaic_models`) once it is also **certified**. Publish alone is not enough for MCP.
 
 ## 9. Validation plan (`reference_strategy_data_validation.md`)
 

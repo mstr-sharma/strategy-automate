@@ -67,7 +67,7 @@ strategy-automation (this skill — classify)
   This is a generic API hook, not proof that the workflow has a typed wrapper or full validation.
 - **Users and access targets:** use `resolve-users` before ACL/security/user writes; use `create-users` for roster dry-runs and `--yes` only when the user clearly wants creation.
 - **Existing or legacy schema objects:** use `search-objects`, then `get-model-object --show-expression-as tokens|tree`, then `patch-model-object --before-out ... --yes` after reviewing the payload.
-- **Published-model semantic inspection/query:** use the Mosaic MCP tools when available (`get_projects`, `get_mosaic_models`, `get_semantics`, `query`), or Trino notes in memory.
+- **Certified-model semantic inspection/query:** use the Mosaic MCP tools when available (MCP lists and resolves certified models only; for published-but-uncertified models use REST + direct Trino) (`get_projects`, `get_mosaic_models`, `get_semantics`, `query`), or Trino notes in memory.
 - **Admin/read workflows with stable wrappers:** mstrio-py is acceptable for users/groups, security roles, schedules/subscriptions, caches, object search, and settings. Capture the equivalent REST path if it becomes a reusable workflow.
 - **Unknown modeling payload:** `GET` a working object, clone/remap IDs, then `POST`/`PATCH` through Modeling Service.
 

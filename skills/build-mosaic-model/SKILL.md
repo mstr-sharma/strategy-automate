@@ -85,7 +85,7 @@ A committed Mosaic data model containing:
 The skill uses a three-tier fallback for every attribute + metric:
 
 1. **Explicit override** — `--dictionary path.{json,yaml,csv}` entry for `TABLE.COLUMN`.
-2. **ERD relationships** — `--erd path.{json,yaml,dbml,mmd,sql}` (repeatable) overrides shared-column inference.
+2. **ERD relationships** — `--erd path.{json,yaml,dbml,mmd,sql}` (repeatable) replaces relationship inference. Shared-column conformance still runs.
 3. **Inference** — friendly-title-case column name; metric name `Total <Col> (<Short Table>)`; shared-column → `one_to_many` with child table as the join table.
 
 Supported ERD formats (parsed by `load_erd`): JSON/YAML list of `{parent,child,relationship_table,type}`; DBML `Ref:`; Mermaid `erDiagram`; SQL DDL `REFERENCES`.

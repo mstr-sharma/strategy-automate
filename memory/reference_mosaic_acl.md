@@ -42,7 +42,7 @@ GET /api/objects/{objectId}?type={objectType}&showACL=true
 GET /api/model/dataModels/{modelId}/objects/{objectId}/acl?subType={objectSubType}
 ```
 
-- `subType` string values verified: `metric`, `fact_metric`, `attribute`, `logical_table`. Wrong subType does NOT error — the server silently returns a consistent ACL, so always pass the correct one or you'll end up patching the wrong facet.
+- `subType` string values verified: `metric`, `fact_metric`, `attribute`, `logical_table` (contained tables), `report_emma_cube` (model root — see below). Wrong subType on GET does NOT error — the server silently returns a consistent ACL, so always pass the correct one or you'll end up patching the wrong facet.
 - Returns ACL keyed by trusteeId:
   ```json
   {
@@ -98,7 +98,7 @@ Body (verified shape, mirrors the read response):
 
 - Wholesale replacement of the ACL (similar semantics to the relationships PUT — any trustee omitted from the body is removed).
 - Must be wrapped in a changeset (same as attribute/metric edits).
-- `subType` must match the target object's subtype — `metric`, `fact_metric`, `attribute`, `logical_table`, etc.
+- `subType` must match the target object's subtype — `metric`, `fact_metric`, `attribute`, `logical_table` for a contained table, `report_emma_cube` for the model root.
 
 ## Rights mask values observed
 
@@ -122,9 +122,15 @@ The flag decomposition from prior memory `{read:1, write:2, delete:4, control:32
 
 ## Model-root ACL (the model object itself)
 
-Model-level ACL uses the same pattern with `objectId = modelId` and `subType = logical_table` (Mosaic data models carry subtype `report_emma_cube` in their `information` but the ACL endpoint accepts `logical_table` for the root). Verify per tenant — the spec wording differs by version.
+Model-level ACL uses the same pattern with `objectId = modelId` and **`subType = report_emma_cube`** — the subtype the model carries in its `information` (same value `POST /api/model/dataModels` requires). Corrected 2026-10-05 from a teammate's live write test:
 
-Legacy path `GET /api/objects/{modelId}?type=3&showACL=true` also works for the model root.
+- `PATCH .../objects/{modelId}/acl?subType=report_emma_cube` — works.
+- `PATCH .../objects/{modelId}/acl?subType=logical_table` — fails with **`8004e403`**. (An earlier version of this note said the root accepts `logical_table`; it doesn't.)
+- Classic write `POST /api/objects/{modelId}/acl` — **404** for a Mosaic model. There is no legacy write fallback for the root; use the Modeling PATCH.
+
+Legacy path `GET /api/objects/{modelId}?type=3&showACL=true` still works for **reading** the model-root ACL.
+
+`build_mosaic.py` (`build --grant/--deny` and `set-acl`) defaults to `subType=report_emma_cube` for the root (was the unverified `data_model` before 2026-10-05). For a contained object, pass `set-acl --sub-type attribute|metric|fact_metric|logical_table`.
 
 ## Gotchas
 
