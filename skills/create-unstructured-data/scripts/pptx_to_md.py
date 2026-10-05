@@ -29,11 +29,23 @@ MAX_PART_BYTES = 50 * 1024 * 1024
 MAX_TOTAL_BYTES = 500 * 1024 * 1024
 
 
+_BOMS = {b"\xff\xfe": "utf-16", b"\xfe\xff": "utf-16", b"<\x00": "utf-16-le", b"\x00<": "utf-16-be"}
+
+
 def _parse_xml(data: bytes) -> ET.Element:
-    head = data[:4096].lower()
-    if b"<!doctype" in head or b"<!entity" in data.lower():
+    """Parse one Office XML part. The bytes are decoded first (UTF-8 or UTF-16, the only
+    encodings OOXML uses) so the DTD check sees exactly the text the parser will read — a
+    byte-level check misses `<!DOCTYPE` written in UTF-16."""
+    try:
+        text = data.decode(_BOMS.get(data[:2], "utf-8-sig"))
+    except UnicodeDecodeError:
+        raise ValueError("an Office XML part is neither UTF-8 nor UTF-16") from None
+    upper = text.upper()
+    if "<!DOCTYPE" in upper or "<!ENTITY" in upper:
         raise ValueError("refusing an Office XML part that declares a DTD or entities")
-    return ET.fromstring(data)  # nosec B314 - DTD/entity declarations are refused above
+    text = re.sub(r"^\s*<\?xml[^>]*\?>", "", text)   # the declaration names the old byte encoding
+    # Safe: DTD and entity declarations were refused above, on the decoded text.
+    return ET.fromstring(text)  # nosec B314
 
 
 def _read_part(zf: zipfile.ZipFile, name: str) -> bytes:
@@ -154,6 +166,8 @@ def _notes_part_for(zf: zipfile.ZipFile, slide_name: str) -> str | None:
     for rel in root.iter(f"{R_NS}Relationship"):
         if rel.get("Type") == NOTES_REL:
             target = rel.get("Target", "")
+            if target.startswith("/"):   # absolute part name, relative to the package root
+                return target.lstrip("/")
             return os.path.normpath(os.path.join("ppt/slides", target)).replace(os.sep, "/")
     return None
 
@@ -197,7 +211,7 @@ def main():
     args = ap.parse_args()
     try:
         out = convert(args.pptx, args.out, include_notes=args.notes, doc_title=args.title)
-    except (ValueError, OSError, ET.ParseError) as e:
+    except (ValueError, OSError, ET.ParseError, zipfile.BadZipFile) as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
     print(out)

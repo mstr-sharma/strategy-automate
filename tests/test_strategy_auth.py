@@ -1,3 +1,8 @@
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import _hermetic  # noqa: E402,F401  (scrub MSTR_*/proxy env, private secret store)
+
 import json
 import os
 import re
@@ -329,8 +334,9 @@ class TransportSafetyTests(unittest.TestCase):
         try:
             s = sa.SafeSession()
             s.headers["X-MSTR-AuthToken"] = "TOKEN"
-            s.get(f"http://127.0.0.1:{bouncer.server_address[1]}/b", timeout=5)
-            self.assertNotIn("x-mstr-authtoken", seen["/other"])
+            with self.assertRaises(sa.CrossOriginRedirect):
+                s.get(f"http://127.0.0.1:{bouncer.server_address[1]}/b", timeout=5)
+            self.assertNotIn("/other", seen)                      # nothing reached the other origin
             plain = requests.Session()
             plain.headers["X-MSTR-AuthToken"] = "TOKEN"
             plain.get(f"http://127.0.0.1:{bouncer.server_address[1]}/b", timeout=5)

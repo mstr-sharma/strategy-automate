@@ -1,4 +1,10 @@
 """Unit tests for schema_object_translator.py — stdlib-only, no pytest."""
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import _hermetic  # noqa: E402,F401  (scrub MSTR_*/proxy env, private secret store)
+
+import copy
 import os
 import sys
 import unittest
@@ -320,6 +326,32 @@ class TestClassifyMetric(unittest.TestCase):
         m = {"expression": {"type": "operator"},
              "dimty": {"dimensions": [{"objectId": "A1"}]}}
         self.assertEqual(sot.classify_metric(m), "level")
+
+
+
+class TestTranslationNeverAliasesTheClassicDefinition(unittest.TestCase):
+    def test_fact_expressions_are_copied_and_their_columns_normalized(self):
+        fact = {"information": {"name": "Revenue"},
+                "expressions": [{"expression": {"tokens": [{"type": "column_reference", "value": "REV"}]},
+                                 "tables": [{"objectId": "T1", "name": "SALES"}],
+                                 "columns": [{"columnName": "REV",
+                                              "dataType": {"type": "decimal", "precision": 18, "scale": 2}}]}]}
+        before = copy.deepcopy(fact)
+        payload, warns = sot.translate_fact_to_factmetric(fact, {"T1": "M1"})
+        self.assertEqual(warns, [])
+        expr = payload["fact"]["expressions"][0]
+        self.assertEqual(expr["columns"][0]["dataType"], {"type": "double", "precision": 18, "scale": 2})
+        expr["expression"]["tokens"].append({"type": "operator", "value": "+"})   # caller edits the payload...
+        self.assertEqual(fact, before)                                             # ...the classic stays intact
+
+    def test_metric_payloads_do_not_share_conditionality_or_dimty(self):
+        cond = {"conditionality": {"filter": {"objectId": "F1"}}, "expression": {"type": "operator"}}
+        payload, _ = sot.translate_metric(cond, {}, {})
+        self.assertIsNot(payload["conditionality"], cond["conditionality"])
+        level = {"dimty": {"dimensions": [{"objectId": "A1"}]}, "expression": {"type": "operator"}}
+        payload, _ = sot.translate_metric(level, {}, {}, {"A1": "B1"})
+        self.assertEqual(payload["dimty"]["dimensions"][0]["objectId"], "B1")
+        self.assertEqual(level["dimty"]["dimensions"][0]["objectId"], "A1")
 
 
 if __name__ == "__main__":

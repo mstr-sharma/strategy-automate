@@ -30,6 +30,12 @@ store — macOS Keychain, libsecret's secret-tool, else a 0600 file under
 browser's server session, so scripts never log them out. MSTR_SESSION_CACHE=0 turns caching
 off; MSTR_SECRET_STORE=keychain|secret-tool|file|none forces a store. Tokens are never printed.
 
+Every script talks HTTP through SafeSession (below): a default (15 s connect, MSTR_HTTP_TIMEOUT
+read, default 300 s) timeout, MSTR_HTTP_RETRIES (default 2) retries of connection failures and of
+502/503/504 on reads only, and no redirect is ever followed to another origin. A browser sign-in
+is never attempted where nobody can answer it (CI=true, MSTR_NO_BROWSER=1, Linux without a
+display): `auto` fails fast there and names the variables to set.
+
 Run this file directly to see what a tenant supports and to sign in once:
 
   python3 strategy_auth.py methods
@@ -44,6 +50,7 @@ from __future__ import annotations
 import argparse
 import base64
 import calendar
+import contextlib
 import hashlib
 import hmac
 import http.server
@@ -54,6 +61,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -65,6 +73,7 @@ try:
     import requests
 except ImportError:  # file-only consumers import the helpers without requests
     requests = None  # type: ignore[assignment]
+NETWORK_ERRORS: tuple = (requests.RequestException,) if requests is not None else ()
 
 # EnumDSSXMLAuthModes values the REST API accepts or reports (GET /api/config/authModes).
 LOGIN_MODES = {1: "Standard", 8: "Anonymous", 16: "LDAP", 4096: "API token",
@@ -83,34 +92,97 @@ class AuthError(RuntimeError):
 TOKEN_HEADERS = ("X-MSTR-AuthToken", "X-MSTR-IdentityToken")
 
 
-def _same_origin(old_url: str, new_url: str) -> bool:
-    old, new = urllib.parse.urlsplit(old_url), urllib.parse.urlsplit(new_url)
-    ports = {"http": 80, "https": 443}
-    if old.scheme == "https" and new.scheme != "https":
+def same_origin(a: str, b: str) -> bool:
+    """Same scheme, host and port, and no credentials in either URL."""
+    pa, pb = urllib.parse.urlsplit(a), urllib.parse.urlsplit(b)
+    if pa.username or pa.password or pb.username or pb.password or not pa.hostname:
         return False
-    return (old.hostname == new.hostname
-            and (old.port or ports.get(old.scheme)) == (new.port or ports.get(new.scheme, new.port)))
+    ports = {"http": 80, "https": 443}
+    try:
+        return (pa.scheme == pb.scheme and pa.hostname == pb.hostname
+                and (pa.port or ports.get(pa.scheme)) == (pb.port or ports.get(pb.scheme)))
+    except ValueError:   # a port that is not a number
+        return False
+
+
+_same_origin = same_origin   # older name, kept for callers and tests
+
+
+RETRY_STATUS = (502, 503, 504)
+
+
+def http_timeout() -> tuple[float, float]:
+    """(connect, read) seconds for calls that don't pass a timeout; MSTR_HTTP_TIMEOUT sets the read part."""
+    return (15.0, float(os.environ.get("MSTR_HTTP_TIMEOUT") or 300))
 
 
 if requests is not None:
+    class CrossOriginRedirect(requests.exceptions.InvalidURL):
+        """The server redirected a request to another origin; SafeSession refuses to follow."""
+
     class SafeSession(requests.Session):
-        """requests.Session that never forwards Strategy tokens to another origin on a redirect.
-        requests itself strips only `Authorization`; custom headers such as X-MSTR-AuthToken
-        would otherwise follow a redirect to any host."""
+        """requests.Session for talking to a Strategy tenant:
+
+        - never follows a redirect to another origin: a 307/308 would resend the body (passwords,
+          identity and refresh tokens), and cookies passed as a dict have no domain, so they
+          would follow too; requests itself strips only `Authorization`. Same-origin redirects
+          are followed as usual;
+        - a default (connect, read) timeout on every call (requests otherwise waits forever,
+          which can hang a script while it holds a changeset lock);
+        - bounded retries only where repeating is safe: connection failures (nothing reached the
+          server) for any verb, and 502/503/504 for GET/HEAD/OPTIONS. Read timeouts and writes that
+          reached the server are never repeated. `retries` defaults to MSTR_HTTP_RETRIES or 2;
+          pass 0 when the caller runs its own retry loop.
+        """
+
+        def __init__(self, retries: int | None = None) -> None:
+            super().__init__()
+            if retries is None:
+                retries = int(os.environ.get("MSTR_HTTP_RETRIES") or 2)
+            if retries > 0:
+                from urllib3.util.retry import Retry
+                policy = Retry(total=retries, connect=retries, read=False, status=retries, other=0,
+                               allowed_methods=frozenset({"GET", "HEAD", "OPTIONS"}),
+                               status_forcelist=RETRY_STATUS, backoff_factor=0.5,
+                               raise_on_status=False, respect_retry_after_header=False)
+                adapter = requests.adapters.HTTPAdapter(max_retries=policy)
+                self.mount("https://", adapter)
+                self.mount("http://", adapter)
+
+        def request(self, method, url, *args, **kwargs):  # type: ignore[override]
+            if len(args) < 7 and kwargs.get("timeout") is None:   # timeout = 7th argument after url
+                kwargs["timeout"] = http_timeout()
+            return super().request(method, url, *args, **kwargs)
 
         def rebuild_auth(self, prepared_request, response):  # type: ignore[override]
-            super().rebuild_auth(prepared_request, response)
-            if not _same_origin(response.request.url or "", prepared_request.url or ""):
-                for name in TOKEN_HEADERS:
+            if not same_origin(response.request.url or "", prepared_request.url or ""):
+                for name in TOKEN_HEADERS:          # belt and braces: nothing is sent anyway
                     prepared_request.headers.pop(name, None)
+                old = urllib.parse.urlsplit(response.request.url or "")
+                new = urllib.parse.urlsplit(prepared_request.url or "")
+                raise CrossOriginRedirect(
+                    f"{response.request.method} {old.scheme}://{old.netloc}{old.path} was redirected to "
+                    f"{new.scheme}://{new.netloc}{new.path}; not following it with credentials. If that host "
+                    f"is the real tenant, point MSTR_BASE at it.")
+            super().rebuild_auth(prepared_request, response)
 else:  # pragma: no cover
     SafeSession = None  # type: ignore[assignment,misc]
+    CrossOriginRedirect = None  # type: ignore[assignment,misc]
+
+
+_HOST = re.compile(r"[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?(\.[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?)*|\[?[0-9a-f:.]+\]?")
 
 
 def check_base(base: str) -> None:
-    """Refuse to send credentials to a cleartext http:// tenant (localhost aside)."""
+    """Refuse to send credentials to a cleartext http:// tenant (localhost aside), and refuse
+    base URLs that are not plain host names (they end up in headers and the consent page's CSP)."""
     parts = urllib.parse.urlsplit(base)
-    if parts.scheme not in ("https", "http") or not parts.hostname:
+    try:
+        parts.port   # raises on a non-numeric port
+    except ValueError:
+        raise AuthError("MSTR_BASE has an invalid port") from None
+    if (parts.scheme not in ("https", "http") or not parts.hostname or not _HOST.fullmatch(parts.hostname)
+            or any(c.isspace() or c in "\"'<>;\\" for c in base)):
         raise AuthError("MSTR_BASE must be the Library URL, e.g. https://<host>/MicroStrategyLibrary")
     if parts.username or parts.password:
         raise AuthError("MSTR_BASE must not carry credentials in the URL")
@@ -180,8 +252,15 @@ class SignIn:
 # ── Public API ───────────────────────────────────────────────────────────────
 
 def _reuse_account(cfg: AuthConfig, method: str) -> str:
-    """Cache slot for a reused password / API-token session (one per tenant and identity)."""
-    who = cfg.username.lower() if method in ("password", "ldap") and cfg.username else method
+    """Cache slot for a reused password / API-token session: one per tenant and identity, so a
+    different user or a different API token never picks up someone else's session."""
+    if method in ("password", "ldap") and cfg.username:
+        who = cfg.username.lower()
+    elif method == "api-token":
+        token = cfg.api_token or _saved_api_token(cfg.base)
+        who = "api-token:" + hashlib.sha256(token.encode()).hexdigest()[:16] if token else method
+    else:
+        who = method
     return f"session:{cfg.base}|{who}"
 
 
@@ -215,6 +294,10 @@ def _sign_in(session: "requests.Session", cfg: AuthConfig) -> SignIn:
             if cached is not None:
                 return SignIn("cached:" + str(cached.get("method", "")), False, str(cached.get("user", "")))
             method = "api-token" if _saved_api_token(cfg.base) else "sso"
+        if method == "sso" and not _browser_possible():
+            # auto would wait minutes for a browser nobody can open; say what to set instead
+            raise AuthError(f"no credentials for {cfg.base}: set MSTR_API_TOKEN (or MSTR_USER + MSTR_PASSWORD), "
+                            "or sign in once from a desktop with `strategy_auth.py login`")
     if method == "password":
         if not (cfg.username and cfg.password):
             raise AuthError("password sign-in needs MSTR_USER and MSTR_PASSWORD (or --user/--password); "
@@ -226,7 +309,8 @@ def _sign_in(session: "requests.Session", cfg: AuthConfig) -> SignIn:
         _login(session, cfg.base, {"loginMode": 8})
         return SignIn("anonymous", True)
     if method == "api-token":
-        token = cfg.api_token or _saved_api_token(cfg.base)
+        # MSTR_LOGIN_MODE=4096 with the token in MSTR_USER is the older way to pass one
+        token = cfg.api_token or (cfg.username if cfg.login_mode == 4096 else "") or _saved_api_token(cfg.base)
         if not token:
             raise AuthError("api-token sign-in needs MSTR_API_TOKEN or a token saved with "
                             "`strategy_auth.py login --save-api-token`")
@@ -312,6 +396,16 @@ def _delegate(session: "requests.Session", base: str, identity_token: str, code_
     if r.status_code not in (200, 204) or not token:
         raise AuthError(f"identity-token sign-in (POST /api/auth/delegate) failed: {describe(r)}")
     session.headers["X-MSTR-AuthToken"] = token
+
+
+def _browser_possible() -> bool:
+    """False where a browser sign-in cannot finish: CI runners, MSTR_NO_BROWSER=1, and Linux
+    without a display (the loopback page is reachable from this machine only)."""
+    if os.environ.get("CI") or os.environ.get("MSTR_NO_BROWSER") == "1":
+        return False
+    if sys.platform.startswith("linux") and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        return False
+    return True
 
 
 def _auto_method(cfg: AuthConfig) -> str:
@@ -498,8 +592,12 @@ def oidc_native_sign_in(session: "requests.Session", cfg: AuthConfig) -> None:
     if not iam or not iam.get("issuer"):
         raise AuthError("the tenant returned no OIDC configuration for native clients")
     client_id = iam.get("nativeClientId") or iam.get("clientId")
-    meta = requests.get(iam["issuer"].rstrip("/") + "/.well-known/openid-configuration",
-                        timeout=TIMEOUT, verify=session.verify).json()
+    idp = SafeSession()          # no tenant headers or cookies go to the identity provider
+    idp.verify = session.verify
+    try:
+        meta = idp.get(iam["issuer"].rstrip("/") + "/.well-known/openid-configuration", timeout=TIMEOUT).json()
+    except ValueError:
+        raise AuthError("the identity provider's OpenID configuration is not JSON") from None
     verifier, challenge = pkce_pair()
     state = secrets.token_urlsafe(24)
     server = _bind_loopback(cfg, state, None, "")
@@ -513,9 +611,10 @@ def oidc_native_sign_in(session: "requests.Session", cfg: AuthConfig) -> None:
     if "error" in result or not result.get("code"):
         raise AuthError(f"the identity provider refused sign-in: {result.get('error', 'no code')} "
                         f"{result.get('error_description', '')[:200]}")
-    tok = requests.post(meta["token_endpoint"], timeout=TIMEOUT, verify=session.verify, data={
+    tok = idp.post(meta["token_endpoint"], timeout=TIMEOUT, data={
         "grant_type": "authorization_code", "code": result["code"], "redirect_uri": redirect,
         "client_id": client_id, "code_verifier": verifier})
+    idp.close()
     if not tok.ok:
         raise AuthError(f"the identity provider's token endpoint answered HTTP {tok.status_code}")
     tokens = tok.json()
@@ -682,11 +781,32 @@ def _read_file_store() -> dict:
 def _write_file_store(data: dict) -> None:
     path = _secrets_file()
     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
-    tmp = f"{path}.{os.getpid()}.tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(data, f)
-    os.replace(tmp, path)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".secrets-", suffix=".tmp")  # 0600
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        raise
+
+
+@contextlib.contextmanager
+def _file_store_lock():
+    """Exclusive lock around a read-modify-write of the file store (POSIX; no-op elsewhere)."""
+    path = _secrets_file() + ".lock"
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        try:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except ImportError:  # pragma: no cover - Windows
+            pass
+        yield
+    finally:
+        os.close(fd)   # closing releases the lock
 
 
 def secret_get(account: str) -> str | None:
@@ -726,9 +846,10 @@ def secret_set(account: str, value: str) -> bool:
                                 "account", account], input=value, capture_output=True, text=True, timeout=20)
             return r.returncode == 0
         if kind == "file":
-            data = _read_file_store()
-            data[account] = value
-            _write_file_store(data)
+            with _file_store_lock():
+                data = _read_file_store()
+                data[account] = value
+                _write_file_store(data)
             return True
     except (OSError, subprocess.SubprocessError):
         return False
@@ -745,9 +866,10 @@ def secret_delete(account: str) -> None:
             subprocess.run(["secret-tool", "clear", "service", SERVICE, "account", account],
                            capture_output=True, timeout=20)
         elif kind == "file":
-            data = _read_file_store()
-            if data.pop(account, None) is not None:
-                _write_file_store(data)
+            with _file_store_lock():
+                data = _read_file_store()
+                if data.pop(account, None) is not None:
+                    _write_file_store(data)
     except (OSError, subprocess.SubprocessError):
         pass
 
@@ -780,14 +902,15 @@ def load_cached_session(session: "requests.Session", base: str, account: str = "
     for c in cookies:
         session.cookies.set(c["name"], c["value"], domain=c.get("domain", ""), path=c.get("path", "/"))
     try:
-        alive = session.get(f"{base.rstrip('/')}/api/sessions", timeout=30).status_code == 200
+        status = session.get(f"{base.rstrip('/')}/api/sessions", timeout=30).status_code
     except Exception:
-        alive = False
-    if alive:
+        status = 0
+    if status == 200:
         return data
     session.headers.pop("X-MSTR-AuthToken", None)
     session.cookies.clear()
-    secret_delete(account)
+    if status in (401, 403):   # expired or ended; a 5xx or network blip keeps the cache for next time
+        secret_delete(account)
     return None
 
 
@@ -833,10 +956,21 @@ def _session() -> "requests.Session":
 
 def cmd_methods(cfg: AuthConfig) -> dict:
     """What the tenant offers and what this machine can use — no credentials needed."""
-    s = SafeSession()
+    with SafeSession() as s:
+        return _methods(cfg, s)
+
+
+def _methods(cfg: AuthConfig, s: "requests.Session") -> dict:
     out: dict[str, Any] = {"base": cfg.base, "warnings": []}
     r = s.get(f"{cfg.base}/api/config/authModes", timeout=30)
-    modes = (r.json() or {}).get("modes", []) if r.ok else []
+    if r.status_code == 404:
+        raise AuthError(f"{cfg.base}/api/config/authModes answered 404; check MSTR_BASE is the Library URL "
+                        "(…/MicroStrategyLibrary)")
+    try:
+        modes = (r.json() or {}).get("modes", []) if r.ok else []
+    except ValueError:
+        raise AuthError(f"{cfg.base} did not answer like a Strategy Library (GET /api/config/authModes: "
+                        f"HTTP {r.status_code}, not JSON); check MSTR_BASE ends in /MicroStrategyLibrary") from None
     out["tenant_login_modes"] = [f"{m} {LOGIN_MODES.get(m, '(unknown)')}" for m in modes]
     origin = f"http://{cfg.sso_host}:{cfg.sso_port}"
     pre = s.options(f"{cfg.base}/api/v2/auth/identityToken", timeout=30, headers={
@@ -865,6 +999,7 @@ def cmd_methods(cfg: AuthConfig) -> dict:
         meta = pr.json()
         out["mcp_oauth"] = {"resource": meta.get("resource"), "authorization_servers": meta.get("authorization_servers")}
     out["this_machine"] = {
+        "http_stack": http_stack(out["warnings"]),
         "MSTR_USER+MSTR_PASSWORD": bool(cfg.username and cfg.password),
         "MSTR_API_TOKEN": bool(cfg.api_token),
         "saved_api_token": bool(_saved_api_token(cfg.base)),
@@ -875,8 +1010,35 @@ def cmd_methods(cfg: AuthConfig) -> dict:
     return out
 
 
+# Oldest versions without known advisories that matter here (see tests/tools/osv_audit.py).
+HTTP_FLOORS = {"requests": (2, 32, 5), "urllib3": (2, 6, 3)}
+
+
+def _version(text: str) -> tuple:
+    return tuple(int(x) for x in re.findall(r"\d+", text)[:3])
+
+
+def http_stack(warnings: list) -> dict:
+    """Versions of the pieces every request goes through; warns when one is below its floor."""
+    import ssl
+    import urllib3
+    found = {"python": sys.version.split()[0], "requests": requests.__version__,
+             "urllib3": urllib3.__version__, "tls": ssl.OPENSSL_VERSION}
+    old = [f"{name} {found[name]}" for name, floor in HTTP_FLOORS.items() if _version(found[name]) < floor]
+    if old:
+        warnings.append(f"Outdated HTTP libraries in this Python: {', '.join(old)} (known security fixes "
+                        "missing). Use the locked versions (`uv sync`, then `uv run python3 ...`) or upgrade them "
+                        "in a virtual environment.")
+    return found
+
+
 def cmd_login(cfg: AuthConfig, save_api_token: bool, lifetime: int | None, replace: bool) -> dict:
-    s = _session()
+    with _session() as s:
+        return _login_cmd(cfg, s, save_api_token, lifetime, replace)
+
+
+def _login_cmd(cfg: AuthConfig, s: "requests.Session", save_api_token: bool, lifetime: int | None,
+               replace: bool) -> dict:
     result = sign_in(s, cfg)
     out: dict[str, Any] = {"ok": True, "base": cfg.base, "method": result.method,
                            "user": result.user or whoami(s, cfg.base),
@@ -907,8 +1069,8 @@ def cmd_login(cfg: AuthConfig, save_api_token: bool, lifetime: int | None, repla
 
 def cmd_status(cfg: AuthConfig) -> dict:
     out: dict[str, Any] = {"base": cfg.base, "secret_store": _store_kind()}
-    s = _session()
-    cached = load_cached_session(s, cfg.base)
+    with _session() as s:
+        cached = load_cached_session(s, cfg.base)
     out["cached_session"] = ({"valid": True, "method": cached.get("method"), "user": cached.get("user"),
                               "saved": time.strftime("%Y-%m-%d %H:%M", time.localtime(cached.get("saved", 0)))}
                              if cached else {"valid": False})
@@ -924,36 +1086,39 @@ def cmd_status(cfg: AuthConfig) -> dict:
 
 def cmd_logout(cfg: AuthConfig, forget_api_token: bool) -> dict:
     out: dict[str, Any] = {"base": cfg.base}
-    s = _session()
-    if load_cached_session(s, cfg.base) is not None:
-        s.post(f"{cfg.base}/api/auth/logout", timeout=20)
-        out["session"] = "ended (this also ends the browser session it was handed from)"
-    else:
-        out["session"] = "none cached"
-    secret_delete(f"session:{cfg.base}")
-    reused = []
-    for method in ("password", "api-token"):   # sessions kept by MSTR_REUSE_SESSION=1
-        account = _reuse_account(cfg, method)
-        t = _session()
-        if load_cached_session(t, cfg.base, account=account) is not None:
-            t.post(f"{cfg.base}/api/auth/logout", timeout=20)
-            reused.append(method)
-        secret_delete(account)
+    out["session"] = ("ended (this also ends the browser session it was handed from)"
+                      if _end_cached(cfg.base, f"session:{cfg.base}") else "none cached")
+    reused = [method for method in ("password", "api-token")   # sessions kept by MSTR_REUSE_SESSION=1
+              if _end_cached(cfg.base, _reuse_account(cfg, method))]
+    if _end_cached(cfg.base, f"session:{cfg.base}|api-token"):   # slot name used before 2026-10
+        reused.append("api-token")
     if reused:
-        out["reused_sessions_ended"] = reused
+        out["reused_sessions_ended"] = sorted(set(reused))
     if forget_api_token:
         token = _saved_api_token(cfg.base)
         if token:
-            t = _session()
-            try:
-                _login(t, cfg.base, {"loginMode": 4096, "username": token})
-                r = t.delete(f"{cfg.base}/api/auth/apiTokens", timeout=30)
-                out["api_token"] = "revoked" if r.status_code in (200, 204) else f"not revoked: {describe(r)}"
-            except AuthError as e:
-                out["api_token"] = f"not revoked: {e}"
+            with _session() as t:
+                try:
+                    _login(t, cfg.base, {"loginMode": 4096, "username": token})
+                    r = t.delete(f"{cfg.base}/api/auth/apiTokens", timeout=30)
+                    out["api_token"] = "revoked" if r.status_code in (200, 204) else f"not revoked: {describe(r)}"
+                    sign_out(t, cfg.base, SignIn("api-token", True))   # the revocation's own session
+                except AuthError as e:
+                    out["api_token"] = f"not revoked: {e}"
         secret_delete(f"api-token:{cfg.base}")
         out.setdefault("api_token", "forgotten")
     return out
+
+
+def _end_cached(base: str, account: str) -> bool:
+    """Log out and forget the session cached under `account`; True if one was live."""
+    with _session() as s:
+        live = load_cached_session(s, base, account=account) is not None
+        if live:
+            with contextlib.suppress(Exception):
+                s.post(f"{base}/api/auth/logout", timeout=20)
+    secret_delete(account)
+    return live
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -987,6 +1152,9 @@ def main(argv: list[str] | None = None) -> int:
             out = cmd_logout(cfg, args.forget_api_token)
     except AuthError as e:
         print(f"FATAL: {e}", file=sys.stderr)
+        return 2
+    except NETWORK_ERRORS as e:
+        print(f"FATAL: network error: {type(e).__name__}: {e}", file=sys.stderr)
         return 2
     print(json.dumps(out, indent=2))
     return 0

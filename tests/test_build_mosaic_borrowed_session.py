@@ -4,12 +4,17 @@ When the caller supplies --auth-token (+ cookies) on the CLI, MSTR.login() must:
   - Skip POST /api/auth/login entirely (the caller's session was minted elsewhere).
   - Set X-MSTR-AuthToken on the session.
   - Set the JSESSIONID and library-ingress cookies on the session.
-  - Skip DELETE /api/auth/login on logout — that would log the human's UI out.
+  - Never log out on exit (no POST /api/auth/logout) — that would log the human's UI out.
   - Honor --identity-token verbatim when present; only attempt to mint when asked.
 
 These tests stub out requests.Session so they assert on side effects without
 hitting the network.
 """
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import _hermetic  # noqa: E402,F401  (scrub MSTR_*/proxy env, private secret store)
+
 import contextlib
 import io
 import os
@@ -91,16 +96,16 @@ class BorrowedSessionAuthTests(unittest.TestCase):
         self.assertTrue(m.borrowed_session)
         self.assertTrue(m.logged_in)
 
-    def test_logout_does_not_call_delete_for_borrowed_session(self):
+    def test_logout_leaves_a_borrowed_session_alone(self):
         m = bm.MSTR(_args(auth_token="TOK123"))
         m.s = _FakeSession()
         m.login(identity=False)
         m.logout()
-        # No /api/auth/login DELETE.
+        # Neither the real logout (POST /api/auth/logout) nor the old, non-existent
+        # DELETE /api/auth/login may be sent for a session someone else owns.
         self.assertFalse(
-            any(method == "DELETE" and "/api/auth/login" in url
-                for method, url, _ in m.s.calls),
-            "borrowed-session logout must NOT call DELETE /api/auth/login "
+            any(url.endswith(("/api/auth/logout", "/api/auth/login")) for method, url, _ in m.s.calls),
+            "borrowed-session logout must not end the session "
             "— it would log the external session owner out of their UI",
         )
 

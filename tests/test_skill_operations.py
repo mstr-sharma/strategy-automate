@@ -1,5 +1,10 @@
 """Every operation a SKILL.md tells an agent to run (`strategy_api.py call|describe <op>`) must
 exist in the spec index — so skills can't drift onto endpoints the platform doesn't have."""
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import _hermetic  # noqa: E402,F401  (scrub MSTR_*/proxy env, private secret store)
+
 import pathlib
 import re
 import unittest

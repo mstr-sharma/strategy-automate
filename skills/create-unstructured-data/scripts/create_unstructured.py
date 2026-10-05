@@ -21,8 +21,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
+import tempfile
 import time
+import zipfile
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _PLATFORM = os.path.normpath(os.path.join(_HERE, "..", "..", "strategy-platform", "scripts"))
@@ -39,11 +42,23 @@ FILE_TYPES = {".pdf": "0", ".docx": "1", ".md": "3", ".markdown": "3",
 CONVERTIBLE = {".pptx", ".potx"}
 
 
-def resolve_upload_file(path: str, *, include_notes: bool, title: str | None) -> str:
+def private_copy(src: str, dest: str) -> None:
+    """Copy `src` to `dest` readable only by this user (0600), also when `dest` already existed."""
+    fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    if hasattr(os, "fchmod"):   # POSIX; O_CREAT's mode only applies to a new file
+        os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "wb") as out, open(src, "rb") as inp:
+        shutil.copyfileobj(inp, out)
+
+
+def resolve_upload_file(path: str, *, include_notes: bool, title: str | None, workdir: str) -> str:
+    """The file to upload: `path` itself, or for a deck its Markdown conversion written inside
+    `workdir` (a private temporary directory), never next to the deck."""
     ext = os.path.splitext(path)[1].lower()
     if ext in CONVERTIBLE:
-        out = pptx_to_md.convert(path, include_notes=include_notes, doc_title=title)
-        print(f"[convert] {path} -> {out}", file=sys.stderr)
+        out = os.path.join(workdir, os.path.splitext(os.path.basename(path))[0] + ".md")
+        pptx_to_md.convert(path, out, include_notes=include_notes, doc_title=title)
+        print(f"[convert] {path} -> Markdown ({os.path.getsize(out)} bytes)", file=sys.stderr)
         return out
     if ext not in FILE_TYPES:
         raise ValueError(f"unsupported extension '{ext}'. Accepted: "
@@ -102,7 +117,7 @@ def poll_status(m: BaseMSTR, nugget_id: str, *, timeout: int = 120,
     return observations
 
 
-def main():
+def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("file", help="source file: pdf/docx/md/txt/eml, or pptx/potx (auto-converted)")
     ap.add_argument("--name", help="display file name for the nugget (default: basename)")
@@ -110,6 +125,9 @@ def main():
                     help="destination folder ID (default: MSTR_DEST_FOLDER_ID)")
     ap.add_argument("--notes", action="store_true", help="include PPT speaker notes in the conversion")
     ap.add_argument("--title", help="document title used when converting a deck")
+    ap.add_argument("--save-markdown", metavar="PATH",
+                    help="also keep the converted Markdown at PATH (0600); by default it is "
+                         "converted in a private temporary directory and removed after the upload")
     ap.add_argument("--no-poll", action="store_true", help="skip the status poll after upload")
     ap.add_argument("--poll-timeout", type=int, default=120)
     ap.add_argument("--base", default=os.environ.get("MSTR_BASE", ""))
@@ -122,7 +140,7 @@ def main():
     ap.add_argument("--auth-method", default=os.environ.get("MSTR_AUTH_METHOD", "auto"),
                     help="auto (default), password, ldap, api-token, sso (browser single sign-on), ... "
                          "— see skills/strategy-platform/scripts/strategy_auth.py")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     for flag, value in (("--base", args.base), ("--project", args.project)):
         if not value:
@@ -132,24 +150,37 @@ def main():
     if not os.path.isfile(args.file):
         sys.exit(f"error: no such file: {args.file}")
 
-    upload_path = resolve_upload_file(args.file, include_notes=args.notes, title=args.title)
+    with tempfile.TemporaryDirectory(prefix="strategy-unstructured-") as workdir:
+        try:   # a refused or corrupt deck (DTD, size cap, bad zip, bad XML) is a clean error
+            upload_path = resolve_upload_file(args.file, include_notes=args.notes, title=args.title,
+                                              workdir=workdir)
+        except (ValueError, OSError, SyntaxError, zipfile.BadZipFile) as e:
+            sys.exit(f"error: {e}")
+        if args.save_markdown and upload_path != args.file:
+            private_copy(upload_path, args.save_markdown)
 
-    m = BaseMSTR(args.base, args.user, args.password, args.login_mode, args.project,
-                 auth_method=args.auth_method)
-    try:
-        m.login()
-    except RuntimeError as e:
-        sys.exit(f"error: {e}")
-    try:
-        m.resolve_project()
-        nugget_id = create_nugget(m, upload_path, args.folder_id, name=args.name)
-        result = {"ok": True, "nuggetId": nugget_id,
-                  "uploadedFile": upload_path, "folderId": args.folder_id}
-        if not args.no_poll:
-            result["status"] = poll_status(m, nugget_id, timeout=args.poll_timeout)
-        print(json.dumps(result, indent=2))
-    finally:
-        m.logout()
+        m = BaseMSTR(args.base, args.user, args.password, args.login_mode, args.project,
+                     auth_method=args.auth_method)
+        try:
+            m.login()
+        except RuntimeError as e:
+            sys.exit(f"error: {e}")
+        try:
+            m.resolve_project()
+            nugget_id = create_nugget(m, upload_path, args.folder_id, name=args.name)
+            result = {"ok": True, "nuggetId": nugget_id, "source": args.file,
+                      "uploadedFile": args.name or os.path.basename(upload_path), "folderId": args.folder_id}
+            if not args.no_poll:
+                result["status"] = poll_status(m, nugget_id, timeout=args.poll_timeout)
+                if not result["status"]:   # every poll failed: the upload's fate is unknown
+                    result["ok"] = False
+                    result["note"] = (f"uploaded, but no status reply within {args.poll_timeout} s; "
+                                      "the nugget may still be processing — check it before relying on it")
+            print(json.dumps(result, indent=2))
+            if not result["ok"]:
+                sys.exit(3)
+        finally:
+            m.logout()
 
 
 if __name__ == "__main__":

@@ -222,27 +222,60 @@ def check_relationships(columns_by_table: dict[str,list[ColumnInfo]], findings: 
                 "Either drop from scope or manually declare its parent dimension."))
 
 
+def validate_blueprint(blueprint) -> dict:
+    """The blueprint shape check (see BLUEPRINT_SCHEMA); raises SystemExit, so it can run before
+    any sign-in. Returns the blueprint."""
+    if not isinstance(blueprint, dict) or not isinstance(blueprint.get("attributes", {}), dict) \
+            or not isinstance(blueprint.get("metrics", {}), dict) \
+            or not all(isinstance(v, dict) for v in blueprint.get("attributes", {}).values()):
+        raise SystemExit("--blueprint must be a JSON object whose `attributes` and `metrics` are objects "
+                         "keyed by name (see this script's docstring); refusing to report checks that "
+                         "would silently do nothing")
+    return blueprint
+
+
+def load_blueprint(path: str) -> dict:
+    """Read and validate --blueprint up front: a bad file fails before any REST call."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return validate_blueprint(json.load(f))
+    except OSError as e:
+        raise SystemExit(f"--blueprint {path}: {e}") from None
+    except ValueError as e:
+        raise SystemExit(f"--blueprint {path}: not valid JSON ({e})") from None
+
+
+def blueprint_columns(name: str, attr: dict) -> list[str]:
+    """Warehouse columns a blueprint attribute maps to: its forms' `col` values (the documented
+    shape), or the attribute name itself when no form names a column."""
+    cols = [str(f["col"]).upper() for f in (attr.get("forms") or []) if isinstance(f, dict) and f.get("col")]
+    return cols or [name.upper()]
+
+
 def check_contextual_fit(columns_by_table: dict[str,list[ColumnInfo]],
                           blueprint: dict | None, findings: list[Finding]):
     """Compare planned model vs a legacy-blueprint JSON (schema below)."""
     if not blueprint: return
-    if not isinstance(blueprint, dict) or not isinstance(blueprint.get("attributes", {}), dict) \
-            or not isinstance(blueprint.get("metrics", {}), dict):
-        raise SystemExit("--blueprint must be a JSON object whose `attributes` and `metrics` are objects "
-                         "keyed by name (see this script's docstring); refusing to report checks that "
-                         "would silently do nothing")
-    bp_attrs = blueprint.get("attributes", {})
-    planned_attrs = set()
-    for t, cols in columns_by_table.items():
-        for c in cols:
-            if predict_role(c) == "attribute" and not c.locale_suffix and not c.is_audit:
-                planned_attrs.add(c.name.upper())
-    bp_names = {a.upper() for a in bp_attrs.keys()}
-    missing_from_target = bp_names - planned_attrs
-    for name in sorted(missing_from_target):
-        findings.append(Finding("ERROR","BLUEPRINT_ATTR_MISSING",
-            name,"Legacy attribute has no corresponding column in target warehouse tables.",
-            "Source the missing table OR accept the scope reduction explicitly."))
+    bp_attrs = validate_blueprint(blueprint).get("attributes", {})
+    by_name = {c.name.upper(): c for cols in columns_by_table.values() for c in cols if not c.is_audit}
+    for name in sorted(bp_attrs):
+        wanted = blueprint_columns(name, bp_attrs[name])
+        found = [by_name[c] for c in wanted if c in by_name]
+        if not found:
+            findings.append(Finding("ERROR","BLUEPRINT_ATTR_MISSING",
+                name,f"Legacy attribute has no corresponding column ({', '.join(wanted)}) in target warehouse tables.",
+                "Source the missing table OR accept the scope reduction explicitly."))
+            continue
+        missing = [c for c in wanted if c not in by_name]
+        if missing:
+            findings.append(Finding("WARN","BLUEPRINT_FORM_MISSING",
+                name,f"Form column(s) {', '.join(missing)} not found in the target tables.",
+                "Source them, or drop those forms from the blueprint deliberately."))
+        for c in found:
+            if not c.locale_suffix and predict_role(c) == "metric":
+                findings.append(Finding("WARN","BLUEPRINT_ATTR_AS_METRIC",
+                    f"{name} ({c.table}.{c.name})","Blueprint attribute column will be classified as a metric by the auto-builder.",
+                    "Force it to an attribute (--attr-cols) or fix its datatype."))
     # form count
     for name, bp in bp_attrs.items():
         form_count = len(bp.get("forms", []))
@@ -292,7 +325,7 @@ Expected blueprint JSON (produced by strategy_semantic_mine.py or hand-authored)
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def main():
+def main(argv=None):
     p = argparse.ArgumentParser()
     add_auth_args(p, project_name=False, project_id=True)
     p.add_argument("--instance", required=True)
@@ -303,7 +336,10 @@ def main():
     p.add_argument("--fail-on", choices=["ERROR","WARN","INFO"], default="ERROR",
                    help="Exit non-zero if any finding at this severity or higher.")
     p.add_argument("-v","--verbose", action="store_true")
-    args = p.parse_args()
+    args = p.parse_args(argv)
+
+    # Blueprint first: a missing or malformed file must fail before anyone signs in.
+    blueprint = load_blueprint(args.blueprint) if args.blueprint else None
 
     ns = argparse.Namespace(base=args.base, project_id=args.project_id,
         user=args.user, password=args.password, login_mode=args.login_mode,
@@ -323,11 +359,6 @@ def main():
             flat.extend(infos)
     finally:
         m.logout()
-
-    # Load blueprint if any
-    blueprint = None
-    if args.blueprint:
-        with open(args.blueprint) as f: blueprint = json.load(f)
 
     findings: list[Finding] = []
     check_naming(flat, findings)
@@ -349,6 +380,8 @@ def main():
         },
         "findings": [f.as_dict() for f in findings],
     }
+    if args.out and os.path.isfile(args.out):
+        os.chmod(args.out, 0o600)   # write_private_json's 0600 only applies to a file it creates
     args.out = write_private_json(report, args.out, prefix="preflight")
 
     # Human-readable

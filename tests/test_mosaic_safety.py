@@ -1,4 +1,9 @@
 """Tests for skills/build-mosaic-model/scripts/mosaic_safety.py — stdlib unittest only."""
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import _hermetic  # noqa: E402,F401  (scrub MSTR_*/proxy env, private secret store)
+
 import json
 import os
 import sys

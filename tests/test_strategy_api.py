@@ -1,3 +1,8 @@
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import _hermetic  # noqa: E402,F401  (scrub MSTR_*/proxy env, private secret store)
+
 import io
 import json
 import os
@@ -258,7 +263,8 @@ class SpecContractTests(unittest.TestCase):
 
     def test_index_areas_are_all_assigned(self):
         index = os.path.join(ROOT, "tests", "fixtures", "strategy_rest_operations.tsv")
-        areas = {line.split("\t")[2] for line in open(index, encoding="utf-8") if line.strip()}
+        with open(index, encoding="utf-8") as f:
+            areas = {line.split("\t")[2] for line in f if line.strip()}
         self.assertGreater(len(areas), 100)
         self.assertEqual(sorted(a for a in areas if api.skill_for_tag(a) == "unassigned"), [])
 

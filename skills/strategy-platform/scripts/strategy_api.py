@@ -40,6 +40,7 @@ try:
     import requests
 except ImportError:  # pragma: no cover
     requests = None  # type: ignore[assignment]
+NETWORK_ERRORS: tuple = (requests.RequestException,) if requests is not None else ()
 
 VERBS = ("get", "post", "put", "patch", "delete", "head")
 READ_VERBS = ("GET", "HEAD")
@@ -151,15 +152,16 @@ def _resolve(spec: dict, node: Any) -> Any:
     return node
 
 
-def _merged_object(spec: dict, schema: dict) -> dict:
-    """allOf parts merged into one object schema (properties + required)."""
+def _merged_object(spec: dict, schema: dict, depth: int = 0) -> dict:
+    """allOf parts merged into one object schema (properties + required). Depth-bounded: a
+    schema that includes itself through allOf stops merging instead of recursing forever."""
     schema = _resolve(spec, schema)
-    if not isinstance(schema, dict) or "allOf" not in schema:
+    if not isinstance(schema, dict) or "allOf" not in schema or depth > 12:
         return schema if isinstance(schema, dict) else {}
     merged: dict = {"type": "object", "properties": dict(schema.get("properties") or {}),
                     "required": list(schema.get("required") or [])}
     for part in schema["allOf"]:
-        part = _merged_object(spec, part)
+        part = _merged_object(spec, part, depth + 1)
         merged["properties"].update(part.get("properties") or {})
         merged["required"] += part.get("required") or []
     return merged
@@ -253,7 +255,7 @@ def body_skeleton(spec: dict, schema: Any, depth: int = 0) -> Any:
     schema = _merged_object(spec, schema)
     for key in ("oneOf", "anyOf"):
         if schema.get(key):
-            return body_skeleton(spec, schema[key][0], depth)
+            return body_skeleton(spec, schema[key][0], depth + 1)
     if "enum" in schema:
         return "|".join(str(v) for v in schema["enum"][:40])
     kind = schema.get("type") or ("object" if "properties" in schema else "")
@@ -314,6 +316,11 @@ def build_request(op: Operation, pairs: list[str], body: Any, project: str | Non
             problems.append(f"{real}={value!r} is not one of {spec_p['enum']}")
             continue
         if spec_p["in"] == "path":
+            if value in ("", ".", ".."):
+                # an empty or dot segment is normalised away and would land on another endpoint
+                # (e.g. DELETE /api/explorer/chats/. -> DELETE /api/explorer/chats/)
+                problems.append(f"path parameter '{real}' cannot be {value!r}")
+                continue
             path_vals[real] = value
         elif spec_p["in"] == "query":
             if real in query:   # repeat a query parameter for arrays: -p type=3 -p type=4
@@ -344,7 +351,7 @@ def build_request(op: Operation, pairs: list[str], body: Any, project: str | Non
         if body is None and spec_body["required"]:
             problems.append(f"this operation needs a request body ({spec_body['content_type']}); see `describe`")
         if body is not None and "json" not in spec_body["content_type"]:
-            problems.append(f"the body must be {spec_body['content_type']}; use build_mosaic.py api-call --file/--form")
+            problems.append(f"the body must be {spec_body['content_type']}; pass --file FIELD=PATH / --form NAME=VALUE")
         schema = spec_body["schema"]
         if isinstance(body, dict) and isinstance(schema, dict):
             missing = [k for k in (schema.get("required") or []) if k not in body]
@@ -355,12 +362,40 @@ def build_request(op: Operation, pairs: list[str], body: Any, project: str | Non
     path = op.path
     for name, value in path_vals.items():
         path = path.replace("{" + name + "}", urllib.parse.quote(value, safe=""))
+    if not _template_matches(op.path, path):
+        raise ApiError(f"{op.key()} — the parameters produce {path}, which is not this operation's path")
     return {"path": path, "query": query, "headers": headers, "json": body}
 
 
 def _redact(headers: dict) -> dict:
     hidden = {"x-mstr-authtoken", "x-mstr-identitytoken", "set-cookie", "cookie", "authorization"}
     return {k: ("<redacted>" if k.lower() in hidden else v) for k, v in headers.items()}
+
+
+SECRET_KEY = re.compile(r"(?i)(password|passwd|secret|private_?key|credentials?$|api_?key$|authorization$|token$)")
+
+
+def redact_body(data: Any) -> tuple[Any, list[str]]:
+    """A copy of a JSON value with secret-looking string fields (password, clientSecret, apiToken,
+    refreshToken, identityToken, ...) replaced by "<redacted>", and the paths that were hidden."""
+    found: list[str] = []
+
+    def walk(node: Any, where: str) -> Any:
+        if isinstance(node, dict):
+            out = {}
+            for key, value in node.items():
+                here = f"{where}.{key}" if where else str(key)
+                if isinstance(value, str) and value and SECRET_KEY.search(str(key)):
+                    out[key] = "<redacted>"
+                    found.append(here)
+                else:
+                    out[key] = walk(value, here)
+            return out
+        if isinstance(node, list):
+            return [walk(v, f"{where}[{i}]") for i, v in enumerate(node)]
+        return node
+
+    return walk(data, ""), found
 
 
 def _load_body(value: str | None) -> Any:
@@ -420,9 +455,8 @@ def call(op: Operation, req: dict, *, base: str, session: Any, changeset: str = 
     elif cs_param and cs_param["required"]:
         if changeset == "none":
             raise ApiError(f"{op.key()} needs a Modeling changeset; drop --changeset none or pass an id")
-        q = "?schemaEdit=true" if schema_edit else ""
-        r = session.post(f"{base}/api/model/changesets{q}", json={"schemaEdit": True} if schema_edit else {},
-                         headers=cs_headers, timeout=60)
+        r = session.post(f"{base}/api/model/changesets", params={"schemaEdit": "true"} if schema_edit else None,
+                         json={"schemaEdit": True} if schema_edit else {}, headers=cs_headers, timeout=60)
         if not r.ok:
             raise ApiError(f"could not open a changeset: {sa.describe(r)}")
         opened = (r.json() or {}).get("id")
@@ -436,20 +470,33 @@ def call(op: Operation, req: dict, *, base: str, session: Any, changeset: str = 
         else:
             r = session.request(op.verb, f"{base}{req['path']}", params=req["query"] or None, headers=headers,
                                 json=req["json"], timeout=300)
-    except BaseException:
         if opened:
-            session.delete(f"{base}/api/model/changesets/{opened}", headers=cs_headers, timeout=60)
-        raise
-    if opened:
-        if r.ok and op.verb not in READ_VERBS:
-            c = session.post(f"{base}/api/model/changesets/{opened}/commit", headers=cs_headers, timeout=300)
-            outcome = "committed" if c.ok else f"commit failed ({sa.describe(c)}); discarded"
-            if not c.ok:
-                session.delete(f"{base}/api/model/changesets/{opened}", headers=cs_headers, timeout=60)
-        else:
-            session.delete(f"{base}/api/model/changesets/{opened}", headers=cs_headers, timeout=60)
-            outcome = "discarded"
+            if r.ok and op.verb not in READ_VERBS:
+                c = session.post(f"{base}/api/model/changesets/{opened}/commit", headers=cs_headers, timeout=300)
+                if c.ok:
+                    outcome, opened = "committed", None
+                else:
+                    outcome = f"commit failed ({sa.describe(c)}); discarded"
+            else:
+                outcome = "discarded"
+    finally:
+        if opened:
+            _discard_changeset(session, base, opened, cs_headers)
     return {"response": r, "changeset": outcome}
+
+
+def _discard_changeset(session: Any, base: str, changeset: str, headers: dict) -> None:
+    """Best effort: a failed discard must not hide the error that got us here, but an open
+    changeset holds a lock, so say which one to release."""
+    try:
+        r = session.delete(f"{base}/api/model/changesets/{changeset}", headers=headers, timeout=60)
+        if r.ok or r.status_code == 404:
+            return
+        why = sa.describe(r)
+    except Exception as e:  # network trouble while already failing
+        why = type(e).__name__
+    print(f"[api] could not discard changeset {changeset} ({why}); it holds a lock until it expires — "
+          f"release it with DELETE /api/model/changesets/{changeset}", file=sys.stderr)
 
 
 # ── Commands ─────────────────────────────────────────────────────────────────
@@ -488,7 +535,9 @@ def cmd_describe(op: Operation) -> dict:
         "parameters": [{k: v for k, v in p.items() if v not in (None, "", False) or k == "required"}
                        for p in op.params if (p.get("name") or "").lower() != "x-mstr-authtoken"],
         "filled_in_by_call": sorted({p["name"] for p in op.params
-                                     if (p.get("name") or "").lower() in AUTO_HEADERS - {"x-mstr-authtoken"}}),
+                                     if (p.get("name") or "").lower() == "x-mstr-projectid"
+                                     or ((p.get("name") or "").lower() in ("x-mstr-ms-changeset", "prefer")
+                                         and p["required"])}),
         "body": None if body is None else {"required": body["required"], "content_type": body["content_type"],
                                            "skeleton": body_skeleton(op.spec, body["schema"])},
         "responses": {code: (r.get("description") or "")[:120]
@@ -654,6 +703,12 @@ def main(argv: list[str] | None = None) -> int:
     except (ApiError, sa.AuthError) as e:
         print(f"FATAL: {e}", file=sys.stderr)
         return 2
+    except RecursionError:
+        print("FATAL: the spec's schemas nest without end; re-run `strategy_api.py sync`", file=sys.stderr)
+        return 2
+    except NETWORK_ERRORS as e:
+        print(f"FATAL: network error: {type(e).__name__}: {e}", file=sys.stderr)
+        return 2
     print(json.dumps(out, indent=2, ensure_ascii=False))
     return 0
 
@@ -681,7 +736,7 @@ def _cmd_call(args: argparse.Namespace, spec: dict, base: str) -> int:
                                               if args.changeset == "auto" else args.changeset)
         print(json.dumps({"dry_run": True, "operation": op.id, "request": f"{op.verb} {base}{req['path']}",
                           "query": req["query"], "headers": _redact({**planned, **req["headers"]}),
-                          "body": req["json"], "multipart": {"files": sorted(files), "form": form} if files or form
+                          "body": redact_body(req["json"])[0], "multipart": {"files": sorted(files), "form": form} if files or form
                           else None, "note": "writes need --yes"}, indent=2))
         for handle in files.values():
             handle[1].close()
@@ -701,6 +756,7 @@ def _cmd_call(args: argparse.Namespace, spec: dict, base: str) -> int:
         for handle in files.values():
             handle[1].close()
         sa.sign_out(session, base, signin)
+        session.close()
     r = result["response"]
     out: dict[str, Any] = {"ok": r.ok, "status": r.status_code, "operation": op.id, "request": f"{op.verb} {req['path']}",
                            "headers": _redact({k: v for k, v in r.headers.items()
@@ -735,9 +791,19 @@ def _cmd_call(args: argparse.Namespace, spec: dict, base: str) -> int:
             out["body_preview"] = None if binary else r.text[:300]
     else:
         try:
-            out["body"] = r.json()
+            data = r.json()
         except ValueError:
+            data = None
             out["body"] = r.text
+        if data is not None:
+            out["body"], hidden = redact_body(data)
+            if hidden:   # the full body still matters (a new API token, say): keep it, privately
+                fd, private = tempfile.mkstemp(prefix=f"strategy-api-{re.sub(r'[^A-Za-z0-9_-]', '_', op.id)}-",
+                                               suffix=".json")
+                with os.fdopen(fd, "wb") as f:
+                    f.write(r.content)
+                out["secret_fields_redacted"] = hidden[:20]
+                out["full_body_written_to"] = private
     print(json.dumps(out, indent=2, ensure_ascii=False, default=str))
     return 0 if r.ok else 1
 

@@ -352,8 +352,11 @@ def translate_fact_to_factmetric(
                     f"'{ttype}' — manual review required"
                 )
 
-        new_expr = dict(expr)
+        new_expr = copy.deepcopy(expr)   # never mutate the caller's classic definition
         new_expr["tables"] = mapped_tables
+        for col in (new_expr.get("columns") or []):   # same publishable types as attribute forms
+            if isinstance(col, dict) and "dataType" in col:
+                col["dataType"] = normalize_datatype(col["dataType"])
         new_exprs.append(new_expr)
 
     return ({
@@ -459,7 +462,7 @@ def translate_metric(
         }, warnings)
 
     if mtype == "conditional":
-        cond = metric_def.get("conditionality") or {}
+        cond = copy.deepcopy(metric_def.get("conditionality") or {})
         flt = (cond.get("filter") or {}).get("objectId")
         if flt:
             warnings.append(
@@ -474,7 +477,7 @@ def translate_metric(
         }, warnings)
 
     if mtype == "level":
-        dimty = dict(metric_def.get("dimty") or {})
+        dimty = copy.deepcopy(metric_def.get("dimty") or {})
         if attr_id_to_mosaic_id:
             new_dims = []
             for dim in dimty.get("dimensions") or []:
@@ -505,7 +508,7 @@ def translate_metric(
     )
     return ({
         "information": {"name": name},
-        "expression": metric_def.get("expression"),
+        "expression": copy.deepcopy(metric_def.get("expression")),
         "format": {"header": [], "values": []},
     }, warnings)
 
