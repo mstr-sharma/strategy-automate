@@ -8,6 +8,7 @@ applied here.
 """
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 
@@ -256,7 +257,7 @@ def translate_attribute(
                 })
             if unmapped:
                 continue
-            new_expr = dict(expr)
+            new_expr = copy.deepcopy(expr)   # never mutate the caller's classic definition
             new_expr["tables"] = mapped_tables
             for col in (new_expr.get("columns") or []):
                 if isinstance(col, dict) and "dataType" in col:

@@ -61,7 +61,7 @@ Canonical rule, the why (silently disabled auto-hierarchy detection, blank Libra
 
 ## R10 — Populate the model description field; it is a first-class AI/Mosaic surface.
 
-**Why:** the model description is consumed by the Mosaic AI agent (Auto), the MCP `get_mosaic_models` tool, the Workstation catalog, and any downstream governance report. Blank descriptions materially hurt discoverability and AI-grounded QA. The script-built model had an empty description; the hand-built one had a one-sentence business summary.
+**Why:** the model description is consumed by the Mosaic AI agent (Auto), the MCP `get_models` tool, the Workstation catalog, and any downstream governance report. Blank descriptions materially hurt discoverability and AI-grounded QA. The script-built model had an empty description; the hand-built one had a one-sentence business summary.
 
 **How to apply:** in the build helper, generate a 1–2 sentence business summary from the table list and fact-metric names at build time (`"Analyzes <grains> across <facts>, with <dimensions> hierarchy"`) — keep it under the ~250-char cap. Require non-empty before commit. Blank attribute/metric descriptions fail the ship bar — see `feedback_mosaic_ship_bar.md` § Descriptions.
 

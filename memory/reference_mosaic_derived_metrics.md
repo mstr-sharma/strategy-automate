@@ -29,7 +29,7 @@ Node shapes (discriminator = `type`):
 Rules that bit us:
 - **`dimty` must be `null`** for a compound expression (anything not a bare aggMetric object-reference) → else `8004d711 "...dimty should be null"`. Bare fact/aggMetrics DO take the `report_base_level` dimty.
 - Changeset goes in the **`X-MSTR-MS-Changeset` header**, not `?changesetId=` (→ `8004cc03`).
-- No top-level `function` on a compound metric. identity-token OFF on studio ([[feedback_mosaic_identity_token_privilege_downgrade]]).
+- No top-level `function` on a compound metric. identity-token OFF on studio (`feedback_mosaic_identity_token_privilege_downgrade.md`).
 
 Worked example — cross-source ratio `MktCap / ((OutputSat/1e8) * Close)`:
 ```json

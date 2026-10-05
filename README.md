@@ -1,10 +1,16 @@
 # strategy-automate
 
-A **Strategy** (formerly MicroStrategy) automation brain for AI coding assistants — every part of the platform that exposes an API, SDK, MCP, CLI, or reproducible hook. Covers Mosaic data-model creation and modification, classic semantic-layer inspection and migration, runtime analytics, cubes and datasets, security and governance, platform admin, AI agents, and data validation.
+Skills, field-verified notes and Python helpers that let AI coding agents automate **Strategy** (formerly MicroStrategy) through its REST API and Mosaic MCP server.
 
-**Kimball-first by default.** Strategy's SQL engine is built for star / snowflake / galaxy schemas with conformed dimensions. Every modeling workflow in this repo declares topology (`star | snowflake | galaxy | bridge-heavy | non-Kimball`) and classifies each input table (`fact | dim | bridge | snowflake_parent_dim | degenerate_dim | noise`) before writing any payload. Non-Kimball shapes stop-and-confirm with the user.
+- **Build Mosaic semantic models** from warehouse tables: plan a star schema, create tables, attributes and metrics, wire relationships, set ACLs and security filters, then publish and certify (`build_mosaic.py`).
+- **Check the result** with a structural gate (`validate-model`) and paired queries against a trusted reference (`strategy_validate_models.py`).
+- **Migrate and administer classic projects**: inventory schema objects, trace reports to tables, convert classic objects to Mosaic, replay Library publications, upload documents for AI agents.
+- **Sign in the way your tenant does**: single sign-on through the browser (SAML, OIDC, any IdP), API tokens, LDAP or standard passwords — no password needed for SSO accounts (`strategy_auth.py`, `strategy_mcp.py`).
+- **Reuse what was learned**: dated, tenant-verified notes on endpoints, payloads and error codes, indexed in [`memory/MEMORY.md`](memory/MEMORY.md).
 
-Tested with **Claude Code** and **Codex CLI**. Every other harness (Gemini CLI, Grok, Ollama, Cursor / Cline / Continue / Aider, MCP-aware chat apps) is supported by design — skills + memory are plain Markdown + Python, and every per-LLM shim at the repo root points at [`AGENTS.md`](AGENTS.md).
+Tested with **Claude Code** and **Codex CLI**; any harness that reads Markdown can use it — every per-LLM shim at the repo root points at [`AGENTS.md`](AGENTS.md).
+
+**Kimball-first by default.** Strategy's SQL engine is built for star / snowflake / galaxy schemas with conformed dimensions. Every modeling workflow declares the topology (`star | snowflake | galaxy | bridge-heavy | non-Kimball`) and classifies each input table (`fact | dim | bridge | snowflake_parent_dim | degenerate_dim | noise`) before writing any payload; non-Kimball shapes stop and ask.
 
 ## How agents route work
 
@@ -16,10 +22,11 @@ The cold-start routing tree, the strict skill-precedence chain, and all operatin
 strategy-automate/
 ├── AGENTS.md                      # canonical LLM-agnostic entry point
 ├── CLAUDE.md CODEX.md GEMINI.md   # thin per-LLM shims (all point to AGENTS.md)
-├── GROK.md OLLAMA.md CURSOR.md    # additional harness shims
+├── GROK.md OLLAMA.md CURSOR.md    # additional harness shims (+ .cursor/rules/)
 ├── README.md .env.example         # human setup + env-var template
 ├── memory/                        # durable knowledge, indexed by MEMORY.md
 │   ├── MEMORY.md                  # flat index — grep or scan to find the right file
+│   ├── reference_strategy_authentication.md # every sign-in method, incl. SSO without passwords
 │   ├── reference_strategy_error_codes.md    # error code → memory with the fix
 │   ├── reference_data_modeling_foundations.md  # Kimball foundations (all design sections)
 │   ├── reference_mosaic_*.md                # Mosaic payload shapes, publish, ACL, SF
@@ -29,25 +36,29 @@ strategy-automate/
 ├── skills/
 │   ├── build-mosaic-model/        # the execution skill
 │   │   ├── SKILL.md
-│   │   ├── examples/              # model_plan / attribute_plan / relationship_plan / validation_suite templates
+│   │   ├── examples/              # model / attribute / relationship / validation plan templates
 │   │   └── scripts/
+│   │       ├── strategy_auth.py         # shared sign-in: password, LDAP, API token, browser SSO, identity token, OIDC
+│   │       ├── strategy_mcp.py          # Mosaic MCP client with the MCP connector's OAuth sign-in
 │   │       ├── _client.py               # shared BaseMSTR, auth args, search, inventory helpers
-│   │       ├── build_mosaic.py          # subcommands for auth, catalog, build, publish, wire-relationships, SF, ACL, translate, validate-model, … (see --help)
-│   │       ├── mosaic_safety.py         # stateless defensive helpers (error parsing, expression builders, merge-aware relationship PUT)
+│   │       ├── build_mosaic.py          # CLI: catalog, build, publish, relationships, SF, ACL, certify, validate, … (see --help)
+│   │       ├── mosaic_safety.py         # stateless defensive helpers (error parsing, expression builders, merge-aware PUT)
 │   │       ├── preflight_model_check.py
-│   │       ├── schema_object_translator.py    # classic schema objects → Mosaic payload translation
+│   │       ├── schema_object_translator.py    # classic schema objects → Mosaic payloads
 │   │       ├── strategy_mosaic_inventory.py   # walk every Mosaic data model (subType 779)
 │   │       ├── strategy_semantic_inventory.py # walk classic attrs / facts / metrics / filters / hierarchies
 │   │       ├── strategy_semantic_mine.py      # top-down / reverse lineage for legacy → Mosaic
+│   │       ├── strategy_library_publications{,_mstrio}.py # export + replay Library publications
 │   │       ├── strategy_validate_models.py    # file-adapter + live Mosaic-to-Mosaic Trino diff
 │   │       └── strategy_validate.py           # live-tenant runtime-workflow validator
+│   ├── create-unstructured-data/  # upload documents / decks as AI-agent knowledge
 │   ├── strategy-data-modeling/SKILL.md   # Kimball-first planning layer
 │   ├── strategy-automation/SKILL.md      # NLQ router + surface classifier
 │   └── strategy-validation/SKILL.md      # paired-query numeric-correctness validator
 ├── tests/                         # hermetic unit tests (run in CI)
 ├── captures/                      # dated tenant transcripts; raw payloads stay local
-├── pyproject.toml LICENSE         # deps + lint config; MIT
-└── .github/workflows/tests.yml   # CI: unittest + ruff
+├── pyproject.toml uv.lock LICENSE # deps + lint config; MIT
+└── .github/workflows/tests.yml    # CI: unittest (3.9 / 3.11 / 3.13) + ruff
 ```
 
 ## Setup
@@ -58,11 +69,22 @@ strategy-automate/
 git clone <this-repo> strategy-automate
 cd strategy-automate
 cp .env.example .env
-# edit .env with your Library URL, username, password, project name/ID, dest folder
+# edit .env with your Library URL, project name/ID, dest folder (and credentials, if you use a password)
 set -a; source .env; set +a
 ```
 
-Required: `MSTR_BASE`, `MSTR_USER`, `MSTR_PASSWORD`, and either `MSTR_PROJECT_ID` or `MSTR_PROJECT_NAME`. For building new Mosaic models, also set `MSTR_DEST_FOLDER_ID`. Full env-var list in [`memory/reference_strategy_env.md`](memory/reference_strategy_env.md).
+Required: `MSTR_BASE` and either `MSTR_PROJECT_ID` or `MSTR_PROJECT_NAME`. For building new Mosaic models, also set `MSTR_DEST_FOLDER_ID`. Full env-var list in [`memory/reference_strategy_env.md`](memory/reference_strategy_env.md).
+
+**Sign-in.** Every script takes `--auth-method` (env `MSTR_AUTH_METHOD`, default `auto`):
+
+| Your account | What to set |
+|---|---|
+| Single sign-on (SAML / OIDC / any IdP), no Strategy password | nothing — run `python3 skills/build-mosaic-model/scripts/strategy_auth.py login` once; it opens your browser, you click **Allow**, and later commands reuse the session from the OS keychain |
+| SSO, but runs must not open a browser | `strategy_auth.py login --save-api-token --lifetime-minutes 480` |
+| Standard or LDAP account | `MSTR_USER` + `MSTR_PASSWORD` (+ `MSTR_LOGIN_MODE=16` for LDAP) |
+| CI / service account | `MSTR_API_TOKEN` |
+
+`strategy_auth.py methods` shows what your tenant enables and what this machine would use. Details, the exact REST contracts and the tenant settings each method needs: [`memory/reference_strategy_authentication.md`](memory/reference_strategy_authentication.md).
 
 ### 2. Install Python deps
 
@@ -75,6 +97,7 @@ python3 -m pip install --user requests
 ### 3. Verify tenant connectivity
 
 ```bash
+python3 skills/build-mosaic-model/scripts/strategy_auth.py methods
 python3 skills/build-mosaic-model/scripts/build_mosaic.py auth-probe
 python3 skills/build-mosaic-model/scripts/build_mosaic.py list-datasources
 ```
@@ -93,7 +116,7 @@ The repo is **LLM-agnostic**. [`AGENTS.md`](AGENTS.md) is the canonical entry po
 | Cursor / Cline / Continue / Aider / Windsurf | [`CURSOR.md`](CURSOR.md) | Point IDE agent at `AGENTS.md` as the rules file. |
 | Any other LLM | [`AGENTS.md`](AGENTS.md) | No configuration needed — read the file + memory index and proceed. |
 
-**MCP-aware chat apps** — connect the Strategy Mosaic MCP server (per your vendor's connector). The memory and skills reference MCP tools by standard name: `get_projects`, `get_mosaic_models`, `get_semantics`, `query`. Without MCP, every tool has a REST fallback documented in [`AGENTS.md`](AGENTS.md).
+**MCP-aware chat apps** — connect the Strategy Mosaic MCP server (per your vendor's connector). The memory and skills reference MCP tools by standard name: `get_projects`, `get_models` (older servers: `get_mosaic_models`), `get_semantics`, `query`; the server lists and resolves **certified** models only. Scripts can call the same server with the same single sign-on through [`strategy_mcp.py`](skills/build-mosaic-model/scripts/strategy_mcp.py). Without MCP, every tool has a REST fallback documented in [`AGENTS.md`](AGENTS.md).
 
 ## Typical tasks
 
@@ -170,7 +193,7 @@ See [`skills/strategy-validation/SKILL.md`](skills/strategy-validation/SKILL.md)
 python3 skills/build-mosaic-model/scripts/strategy_mosaic_inventory.py --workers 12
 ```
 
-Writes structured JSON to `/tmp`. Portfolio rollups + per-model attributes, metrics, relationships, security filters, external-data-model links.
+Writes structured JSON to a new private (0600) temp file unless `--out` is given. Portfolio rollups + per-model attributes, metrics, relationships, security filters, external-data-model links.
 
 ### Mine a classic project for Mosaic candidates
 
@@ -194,7 +217,7 @@ Generic REST reachability is part of platform-hook coverage. Promote to a typed 
 
 Durable knowledge lives in `memory/` — [`memory/MEMORY.md`](memory/MEMORY.md) is the one-line-per-file index, and each file carries `type:` frontmatter (`user` / `project` / `reference` / `feedback`). The operating rules agents follow — Kimball-first planning, changesets as the unit of write, one-session-one-process, error-code-grep-first, the consumer-grade-naming ship bar, and the generalization/scrub rules — are maintained in [`AGENTS.md`](AGENTS.md) → "Operating rules", not here.
 
-Security posture for humans: no hardcoded credentials, tenant IDs, or industry-specific content anywhere in durable text (`.env` is gitignored, `.env.example` is the template); raw tenant payloads go to `/tmp` or `captures/<date>-<topic>/`, never into memory files. See [`memory/feedback_generalize_durable_artifacts.md`](memory/feedback_generalize_durable_artifacts.md) for the scrub checklist.
+Security posture for humans: no hardcoded credentials, tenant IDs, real company or person names, or industry-specific content anywhere in durable text (`.env` is gitignored, `.env.example` is the template); raw tenant payloads go to private temp files or `captures/<date>-<topic>/`, never into memory files. Secrets come from environment variables or the OS keychain — never command-line flags, which other local processes can read. See [`memory/feedback_generalize_durable_artifacts.md`](memory/feedback_generalize_durable_artifacts.md) for the scrub checklist.
 
 ## Contributing
 

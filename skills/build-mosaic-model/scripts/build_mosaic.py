@@ -56,13 +56,14 @@ rejects a path with 404, use `discover` to find the current variant on this
 tenant's API and update ENDPOINT_CANDIDATES below.
 """
 from __future__ import annotations
-import argparse, csv, json, os, shutil, subprocess, sys, time, uuid
+import argparse, csv, json, os, shutil, subprocess, sys, time, urllib.parse, uuid
 from typing import Any
 import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import schema_object_translator as sot  # noqa: E402
 import mosaic_safety as ms  # noqa: E402
+import strategy_auth  # noqa: E402
 
 # ── Configuration: all tenant values come from env vars or CLI flags ──────────
 # No hardcoded tenant defaults. Required: MSTR_BASE, MSTR_USER, MSTR_PASSWORD.
@@ -100,7 +101,6 @@ ENDPOINT_CANDIDATES = {
     ],
     # tb_id is base64(json({"tbn":"<tableName>","ns":"<schemaName>"}))
     "describe_table": [
-        "/api/datasources/{id}/catalog/tables/{tb_id}",
         "/api/datasources/{id}/catalog/namespaces/{ns_id}/tables/{tb_id}",
     ],
 }
@@ -145,7 +145,9 @@ def _load_yaml(path: str) -> Any:
             die(f"{path}: YAML requires PyYAML or ruby. Convert the file to JSON or install PyYAML.")
         try:
             proc = subprocess.run(
-                [ruby, "-ryaml", "-rjson", "-e", "puts JSON.generate(YAML.load_file(ARGV[0]))", path],
+                [ruby, "-ryaml", "-rjson", "-rdate", "-e",
+                 "puts JSON.generate(YAML.safe_load(File.read(ARGV[0]), permitted_classes: [Date, Time], aliases: true))",
+                 path],
                 check=True, capture_output=True, text=True,
             )
         except subprocess.CalledProcessError as exc:
@@ -217,6 +219,17 @@ def friendly_table(tname: str) -> str:
 
 
 # ── Session helpers ───────────────────────────────────────────────────────────
+class _TimeoutSession(requests.Session):
+    """requests.Session with a default (connect, read) timeout — requests waits forever
+    otherwise, which can hang a build while it holds a changeset lock. Override per call
+    with timeout=..., or for all calls with MSTR_HTTP_TIMEOUT (read seconds)."""
+    default_timeout = (15, float(os.environ.get("MSTR_HTTP_TIMEOUT") or 300))
+
+    def request(self, method, url, **kw):
+        kw.setdefault("timeout", self.default_timeout)
+        return super().request(method, url, **kw)
+
+
 class MSTR:
     def __init__(self, args):
         self.base    = (args.base or "").rstrip("/")
@@ -230,6 +243,8 @@ class MSTR:
         self.user    = args.user
         self.pw      = args.password
         self.mode    = args.login_mode
+        self.auth_method = getattr(args, "auth_method", None)
+        self.signin: strategy_auth.SignIn | None = None
         # Borrowed-session inputs: when set, MSTR will reuse an externally-held
         # session (e.g. tokens + cookies copied out of a logged-in browser) and
         # skip /auth/login and /auth/logout so the human's UI session is left
@@ -239,9 +254,11 @@ class MSTR:
         self.preset_identity_token = getattr(args, "identity_token", "") or ""
         self.preset_session_cookie = getattr(args, "session_cookie", "") or ""
         self.preset_ingress_cookie = getattr(args, "ingress_cookie", "") or ""
-        self.s       = requests.Session()
+        self.s       = _TimeoutSession()
         self.s.headers.update({"Content-Type":"application/json","Accept":"application/json"})
-        host = self.base.replace("https://","").replace("http://","").split("/")[0]
+        # Changesets opened and not yet committed/discarded; main() discards leftovers.
+        self.open_changesets: set[str] = set()
+        host = urllib.parse.urlsplit(self.base).hostname or ""
         if self.preset_session_cookie:
             self.s.cookies.set("JSESSIONID", self.preset_session_cookie, domain=host)
         if self.preset_ingress_cookie:
@@ -284,19 +301,15 @@ class MSTR:
             self.borrowed_session = True
             if self.verbose:
                 has_id = "X-MSTR-IdentityToken" in self.s.headers
-                print(f"[auth] borrowed token={self.preset_auth_token[:12]}…  identity={'yes' if has_id else 'no'}",
+                print(f"[auth] borrowed session in use; identity={'yes' if has_id else 'no'}",
                       file=sys.stderr)
             return
-        if not self.pw:
-            die("missing password. Set MSTR_PASSWORD or pass --password; do not store secrets in skill/memory files. "
-                "(Studio Cloud users: pass --auth-token + --session-cookie + --ingress-cookie from a browser session.)")
-        r = self.s.post(f"{self.base}/api/auth/login",
-                        json={"username": self.user, "password": self.pw, "loginMode": self.mode})
-        r.raise_for_status()
-        tok = r.headers.get("X-Mstr-Authtoken") or r.headers.get("X-MSTR-AuthToken","")
-        if not tok:
-            die(f"login: no auth token in response headers: {dict(r.headers)}")
-        self.s.headers["X-MSTR-AuthToken"] = tok
+        try:
+            self.signin = strategy_auth.sign_in(self.s, strategy_auth.AuthConfig.from_env(
+                base=self.base, method=self.auth_method, username=self.user, password=self.pw,
+                login_mode=self.mode))
+        except strategy_auth.AuthError as e:
+            die(f"{e}. Single sign-on tenants: --auth-method sso (see strategy_auth.py).")
         self.s.headers["X-MSTR-ProjectID"] = self.project
         self.logged_in = True
         if identity:
@@ -314,7 +327,9 @@ class MSTR:
                 print(f"[auth] WARN: identity-token mint failed ({r2.status_code} {r2.text[:120]}). "
                       "Modeling Service changesets will fail.", file=sys.stderr)
         if self.verbose:
-            print(f"[auth] token={tok[:12]}…  identity={'yes' if 'X-MSTR-IdentityToken' in self.s.headers else 'no'}", file=sys.stderr)
+            print(f"[auth] signed in via {self.signin.method}"
+                  f"{' as ' + self.signin.user if self.signin.user else ''}; "
+                  f"identity={'yes' if 'X-MSTR-IdentityToken' in self.s.headers else 'no'}", file=sys.stderr)
 
     # raw helpers
     def get(self, path, **kw):  return self.s.get(f"{self.base}{path}", **kw)
@@ -328,16 +343,14 @@ class MSTR:
             return
         if self.borrowed_session:
             # The session belongs to whoever lent us the token (typically a
-            # human's browser tab). DELETE /api/auth/login here would log them
-            # out of their UI mid-task — never do that.
+            # human's browser tab). Logging it out would end their UI session
+            # mid-task — never do that.
             self.logged_in = False
             return
-        try:
-            self.delete("/api/auth/login")
-        except requests.RequestException:
-            pass
-        finally:
-            self.logged_in = False
+        # POST /api/auth/logout for sessions this process created; sessions
+        # shared with a browser or cached for later commands stay open.
+        strategy_auth.sign_out(self.s, self.base, self.signin)
+        self.logged_in = False
 
     def try_candidates(self, kind, **fmt) -> tuple[str, Any]:
         """Walk ENDPOINT_CANDIDATES[kind]; return (path_used, json_body) on first 2xx."""
@@ -376,7 +389,8 @@ def cmd_auth_probe(m: MSTR, args):
         "ok": True,
         "base": m.base,
         "project_id": m.project,
-        "user": m.user,
+        "user": (m.signin.user if m.signin and m.signin.user else m.user),
+        "auth_method": (m.signin.method if m.signin else "borrowed"),
         "has_auth_token": "X-MSTR-AuthToken" in m.s.headers,
         "has_identity_token": "X-MSTR-IdentityToken" in m.s.headers,
     }
@@ -447,14 +461,21 @@ def cmd_list_namespaces(m: MSTR, args):
     print(json.dumps(rows, indent=2))
 
 
+_NAMESPACE_IDS: dict[tuple[str, str], str] = {}
+
+
 def resolve_namespace_id(m: MSTR, ds_id: str, ns_name: str) -> str:
-    """Look up namespaceId via catalog/namespaces, fall back to b64 encoding."""
-    r = m.get(f"/api/datasources/{ds_id}/catalog/namespaces")
-    if r.ok:
-        for ns in (r.json().get("namespaces") or []):
-            if ns.get("name","").lower() == ns_name.lower():
-                return ns["id"]
-    return encode_ns_id(ns_name)
+    """Look up namespaceId via catalog/namespaces (once per datasource+name), fall back to b64."""
+    key = (ds_id, ns_name.lower())
+    if key not in _NAMESPACE_IDS:
+        _NAMESPACE_IDS[key] = encode_ns_id(ns_name)
+        r = m.get(f"/api/datasources/{ds_id}/catalog/namespaces")
+        if r.ok:
+            for ns in (r.json().get("namespaces") or []):
+                if ns.get("name","").lower() == ns_name.lower():
+                    _NAMESPACE_IDS[key] = ns["id"]
+                    break
+    return _NAMESPACE_IDS[key]
 
 def cmd_list_tables(m: MSTR, args):
     m.login()
@@ -504,24 +525,52 @@ def cmd_describe_tables(m: MSTR, args):
 
 
 def cmd_kill_sessions(m: MSTR, args):
-    """Best-effort: login + immediate DELETE, repeated, to reap stale auth tokens owned by this user.
-
-    Does not affect interactive project sessions already opened by other processes; those reap on the
-    iServer side (~30 min). Use as a low-risk first response when you hit iServerCode -2147072486.
+    """List this user's open Intelligence Server connections and, with --yes, disconnect
+    them — the way out of the per-project session cap (8004cb0a / -2147072486) without
+    waiting for the ~30-minute idle timer. Uses the user-connection monitor
+    (GET /api/monitors/userConnections, DELETE /api/monitors/userConnections/{id}),
+    which needs a monitoring/administration privilege; without it the server answers
+    403 and stale sessions only end on the idle timer. Your browser sessions are user
+    connections too: filter with --project / --idle-minutes before --yes.
     """
-    killed = 0
-    for _ in range(int(args.count)):
-        r = m.s.post(f"{m.base}/api/auth/login",
-                     json={"username": m.user, "password": m.pw, "loginMode": m.mode})
+    m.login()
+    me = (m.get("/api/sessions/userInfo").json() or {}).get("username", "")
+    nodes_r = m.get("/api/monitors/iServer/nodes")
+    if nodes_r.status_code in (401, 403):
+        die("listing user connections needs a monitoring privilege on this tenant; stale sessions "
+            "will end on the idle timer (~30 min)")
+    nodes = [n.get("name") for n in ((nodes_r.json() or {}).get("nodes") or []) if n.get("name")] or [None]
+    conns = []
+    for node in nodes:
+        params = {"username": me, "limit": 1000}
+        if node:
+            params["clusterNode"] = node
+        r = m.get("/api/monitors/userConnections", params=params)
+        if r.status_code in (401, 403):
+            die("listing user connections needs a monitoring privilege on this tenant")
         if not r.ok:
-            break
-        tok = r.headers.get("X-MSTR-AuthToken") or r.headers.get("X-Mstr-Authtoken","")
-        if not tok:
-            break
-        d = m.s.delete(f"{m.base}/api/auth/login", headers={"X-MSTR-AuthToken": tok})
-        if d.status_code in (200, 204):
-            killed += 1
-    print(json.dumps({"attempted": int(args.count), "killed": killed}))
+            die(f"list user connections: {format_mstr_error(r)}")
+        conns.extend((r.json() or {}).get("userConnections") or [])
+    now = time.time()
+
+    def idle_minutes(c: dict) -> float | None:
+        last = c.get("dateLastJobSubmitted") or c.get("dateConnectionCreated") or ""
+        stamp = strategy_auth._epoch(str(last)[:19] + "Z") if last else None
+        return (now - stamp) / 60 if stamp else None
+
+    picked = [c for c in conns if (c.get("username") or "").lower() == me.lower()
+              and (not args.project or args.project in (c.get("projectName"), c.get("projectId")))
+              and (idle_minutes(c) or 0) >= args.idle_minutes]
+    rows = [{"id": c.get("id"), "project": c.get("projectName"), "application": c.get("applicationType"),
+             "created": c.get("dateConnectionCreated"), "idle_minutes": round(idle_minutes(c) or 0),
+             "open_jobs": c.get("openJobsCount")} for c in picked]
+    disconnected = 0
+    if args.yes:
+        for c in picked:
+            if m.delete(f"/api/monitors/userConnections/{c.get('id')}").status_code in (200, 204):
+                disconnected += 1
+    print(json.dumps({"user": me, "connections": rows, "disconnected": disconnected,
+                      "dry_run": not args.yes}, indent=2))
 
 
 def cmd_release_locks(m: MSTR, args):
@@ -699,7 +748,7 @@ def cmd_openapi_search(m: MSTR, args):
 def cmd_api_call(m: MSTR, args):
     """Generic Strategy REST call for workflows not yet wrapped by a subcommand."""
     if not args.no_auth:
-        m.login(identity=args.identity_token)
+        m.login(identity=args.with_identity_token)
     method = args.method.upper()
     if method == "DELETE" and not args.yes:
         die("DELETE requires --yes")
@@ -725,15 +774,20 @@ def cmd_api_call(m: MSTR, args):
         # The session default Content-Type: application/json must not override
         # the multipart boundary; a None value tells requests to drop the header.
         headers["Content-Type"] = None
-        r = request(f"{m.base}{path}", params=params or None, headers=headers,
-                    data=form or None, files=files or None)
+        try:
+            r = request(f"{m.base}{path}", params=params or None, headers=headers,
+                        data=form or None, files=files or None)
+        finally:
+            for _name, handle in files.values():
+                handle.close()
     else:
         r = request(f"{m.base}{path}", params=params or None, headers=headers or None, json=body)
     out = {
         "ok": r.ok,
         "status": r.status_code,
         "url": r.url,
-        "headers": {k: v for k, v in r.headers.items()
+        "headers": {k: ("<redacted>" if k.lower() in {"x-mstr-authtoken", "x-mstr-identitytoken"} else v)
+                    for k, v in r.headers.items()
                     if k.lower().startswith("x-mstr") or k.lower() in {"content-type", "location"}},
     }
     try:
@@ -844,9 +898,16 @@ def load_erd(path: str) -> list[dict]:
     # DBML:  Ref: "posts"."user_id" > "users"."id"   or  Ref: posts.user_id > users.id
     for m in _re.finditer(r'Ref:?\s*"?([^".\s]+)"?\."?([^".\s]+)"?\s*([<>\-]+)\s*"?([^".\s]+)"?\."?([^".\s]+)"?', txt):
         src_t, src_c, op, dst_t, dst_c = m.groups()
-        # src > dst means src is many, dst is one. So parent=dst, child=src.
-        rels.append({"parent": f"{dst_t}.{dst_c}", "child": f"{src_t}.{src_c}",
-                     "relationship_table": src_t, "type": "one_to_many"})
+        if op == "<":     # src is the one side, dst the many side
+            rels.append({"parent": f"{src_t}.{src_c}", "child": f"{dst_t}.{dst_c}",
+                         "relationship_table": dst_t, "type": "one_to_many"})
+        elif op == "<>":
+            rels.append({"parent": f"{src_t}.{src_c}", "child": f"{dst_t}.{dst_c}",
+                         "relationship_table": src_t, "type": "many_to_many"})
+        else:             # ">" src many → dst one;  "-" one-to-one
+            rels.append({"parent": f"{dst_t}.{dst_c}", "child": f"{src_t}.{src_c}",
+                         "relationship_table": src_t,
+                         "type": "one_to_one" if op == "-" else "one_to_many"})
     # Mermaid: TABLE1 ||--o{ TABLE2 : label   (one-to-many)
     for m in _re.finditer(r'(\w+)\s*\|\|--o\{\s*(\w+)\s*:\s*"?([\w_]+)"?', txt):
         parent_t, child_t, col = m.groups()
@@ -1090,7 +1151,7 @@ def open_cs(m: MSTR, *, schema_edit: bool = False, release_self_locks: bool = Fa
             err_body = None
         if release_self_locks:
             lockid = _extract_lockid_from_error(err_body)
-            my_uid = (err_body or {}).get("errors", [{}])[0].get("additionalProperties", {}).get("userId")
+            my_uid = (((err_body or {}).get("errors") or [{}])[0].get("additionalProperties") or {}).get("userId")
             if lockid and _lock_owned_by_self(err_body, my_uid):
                 print(f"[open_cs] releasing self-owned stale lock {lockid}", file=sys.stderr)
                 try:
@@ -1111,6 +1172,8 @@ def open_cs(m: MSTR, *, schema_edit: bool = False, release_self_locks: bool = Fa
     if not cs:
         die(f"open_cs: {d}")
     m.s.headers["X-MSTR-MS-Changeset"] = cs
+    if isinstance(getattr(m, "open_changesets", None), set):
+        m.open_changesets.add(cs)
     return cs
 
 
@@ -1118,7 +1181,10 @@ def commit_cs(m: MSTR, cs: str):
     r = m.post(f"/api/model/changesets/{cs}/commit")
     m.s.headers.pop("X-MSTR-MS-Changeset", None)
     if not r.ok:
+        discard_cs(m, cs)   # a failed commit leaves the changeset (and any schema lock) open
         die(f"commit {cs}: {format_mstr_error(r)}")
+    if isinstance(getattr(m, "open_changesets", None), set):
+        m.open_changesets.discard(cs)
 
 
 def format_mstr_error(response, prefix: str = "") -> str:
@@ -1140,6 +1206,8 @@ def discard_cs(m: MSTR, cs: str) -> None:
     except Exception:
         pass
     m.s.headers.pop("X-MSTR-MS-Changeset", None)
+    if isinstance(getattr(m, "open_changesets", None), set):
+        m.open_changesets.discard(cs)
 
 
 # ── Relationship safety: merge-aware PUT + join-table preflight ──────────────
@@ -1152,15 +1220,15 @@ def discard_cs(m: MSTR, cs: str) -> None:
 
 def get_attribute_relationships(
     m: MSTR, model_id: str, attr_id: str,
-) -> list[dict]:
+) -> list[dict] | None:
     """Read the current set of relationships on a Mosaic attribute. Returns []
-    when the attribute exists but has none, and on read failures (caller can
-    decide whether absence is fatal)."""
+    when the attribute has none and None when the read fails — callers must not
+    treat a failed read as "no relationships" before a destructive PUT."""
     r = m.get(f"/api/model/dataModels/{model_id}/attributes/{attr_id}")
     if not r.ok:
         if m.verbose:
             print(f"[rel-merge] read {attr_id}: {format_mstr_error(r)}", file=sys.stderr)
-        return []
+        return None
     body = r.json() if r.text else {}
     rels = body.get("relationships") or []
     return rels if isinstance(rels, list) else []
@@ -1208,6 +1276,9 @@ def put_relationships_merged(
         added = len(new_rels)
     else:
         existing = get_attribute_relationships(m, model_id, attr_id)
+        if existing is None:
+            return (False, 0, 0, f"could not read {attr_id}'s current relationships; refusing a PUT "
+                                 "that would replace them")
         existing_keys = {_rel_key(r) for r in existing}
         merged = list(existing)
         added = 0
@@ -1444,7 +1515,12 @@ def batch_call(
         raise RuntimeError(f"batch_call HTTP {r.status_code}: {r.text[:400]}")
     body = r.json() if r.text else {}
     results = body.get("results") or body.get("operations") or body.get("ops") or []
-    passed = [res for res in results if 200 <= res.get("status", 500) < 300]
+    if r.status_code == 400 and not results:   # atomic batch rejected as a whole
+        return [], [{"_index": i, "op": op, "status": 400, "error": str(body)[:400]} for i, op in enumerate(ops)]
+    for i, res in enumerate(results):          # results come back in op order; keep the index
+        if isinstance(res, dict):
+            res.setdefault("_index", i)
+    passed = [res for res in results if isinstance(res, dict) and 200 <= res.get("status", 500) < 300]
     failed = [res for res in results if res not in passed]
     return passed, failed
 
@@ -1463,16 +1539,16 @@ def _batch_fallback(
         "/facts":       f"/api/model/dataModels/{model_id}/facts",
     }
     passed, failed = [], []
-    for op in ops:
+    for index, op in enumerate(ops):
         path_suffix = op.get("path", "")
         endpoint = PATH_MAP.get(path_suffix)
         if not endpoint:
-            failed.append({"op": op, "status": 400,
+            failed.append({"_index": index, "op": op, "status": 400,
                            "error": f"unknown path {path_suffix}"})
             continue
         r = m.post(endpoint, json=op.get("value", {}),
                    headers={"X-MSTR-MS-Changeset": changeset_id})
-        result = {"op": op, "status": r.status_code}
+        result = {"_index": index, "op": op, "status": r.status_code}
         if r.ok:
             result["response"] = r.json() if r.text else {}
             passed.append(result)
@@ -1782,9 +1858,11 @@ def cmd_build(m: MSTR, args):
 
     # ── Create model ──
     print(f"→ Creating model '{args.name}'…", file=sys.stderr)
+    dest_folder_id = resolve_dest_folder(m, args.dest_folder)   # may die(); before any changeset
+    failures = {"tables": 0, "attributes": 0, "metrics": 0, "relationships": 0, "post_build": 0}
     cs = open_cs(m)
     r = m.post("/api/model/dataModels", json={
-        "information": {"name": args.name, "destinationFolderId": resolve_dest_folder(m, args.dest_folder)},
+        "information": {"name": args.name, "destinationFolderId": dest_folder_id},
         "dataServeMode": args.data_serve_mode,
     })
     if not r.ok: die(f"create model: {r.status_code} {r.text[:400]}")
@@ -1851,6 +1929,7 @@ def cmd_build(m: MSTR, args):
         r = m.post(f"/api/model/dataModels/{model_id}/tables", json=body)
         if not r.ok:
             print(f"  WARN add table {h['table']}: {r.status_code} {r.text[:400]}", file=sys.stderr)
+            failures["tables"] += 1
             continue
         new_tid = r.json()["information"]["objectId"]
         key = (h["instance_id"], h["schema"], h["table"])
@@ -1990,6 +2069,7 @@ def cmd_build(m: MSTR, args):
         r = m.post(f"/api/model/dataModels/{model_id}/attributes", json=attr_body)
         if not r.ok:
             print(f"    WARN entity attr {name}: {r.status_code} {r.text[:200]}", file=sys.stderr)
+            failures["attributes"] += 1
             continue
         resp = r.json(); aid = resp["information"]["objectId"]
         # displays PATCH
@@ -2032,6 +2112,7 @@ def cmd_build(m: MSTR, args):
         r = m.post(f"/api/model/dataModels/{model_id}/attributes", json=attr_body)
         if not r.ok:
             print(f"    WARN conformed {name}: {r.status_code} {r.text[:200]}", file=sys.stderr)
+            failures["attributes"] += 1
             continue
         resp = r.json(); aid = resp["information"]["objectId"]
         fids = [f["id"] for f in resp.get("forms",[]) if f.get("id")]
@@ -2122,6 +2203,7 @@ def cmd_build(m: MSTR, args):
             r = m.post(f"/api/model/dataModels/{model_id}/attributes", json=attr_body)
             if not r.ok:
                 print(f"    WARN attr {tname}.{cname}: {r.status_code} {r.text[:200]}", file=sys.stderr)
+                failures["attributes"] += 1
                 continue
             resp = r.json(); aid = resp["information"]["objectId"]
             fids = [f["id"] for f in resp.get("forms",[]) if f.get("id")]
@@ -2175,14 +2257,17 @@ def cmd_build(m: MSTR, args):
                 "format": {"header":[], "values": metric_fmt},
             }
             r = m.post(f"/api/model/dataModels/{model_id}/factMetrics", json=metric_body)
-            if not r.ok:
-                # Format tokens are cosmetic; never lose the metric over them.
+            if r.status_code == 400:
+                # Format tokens are cosmetic; never lose the metric over them. Only a 400
+                # (request rejected, nothing created) is safe to retry — a 5xx or timeout
+                # may have created the metric already.
                 print(f"    WARN metric {metric_name}: create with format failed ({r.status_code}); "
                       f"retrying without format", file=sys.stderr)
                 metric_body["format"]["values"] = []
                 r = m.post(f"/api/model/dataModels/{model_id}/factMetrics", json=metric_body)
             if not r.ok:
                 print(f"    WARN metric {metric_name}: {r.status_code} {r.text[:200]}", file=sys.stderr)
+                failures["metrics"] += 1
                 continue
             total_metrics += 1
 
@@ -2289,20 +2374,27 @@ def cmd_build(m: MSTR, args):
     if inferred_rels and not args.skip_relationships:
         print(f"→ Setting {len(inferred_rels)} relationships…", file=sys.stderr)
         cs2 = open_cs(m)
+        # The relationships PUT replaces the child's whole relationship set (both
+        # directions), so one PUT per relationship keeps only the last one. Group by
+        # child and write each child once, merged with what is already there.
+        by_child: dict[str, list] = {}
         for parent, child, label, rtbl_id, rtype in inferred_rels:
-            body = {"relationships":[{
+            by_child.setdefault(child["id"], []).append((parent, child, label, {
                 "parent":{"objectId":parent["id"],"subType":"attribute"},
                 "child":{"objectId":child["id"],"subType":"attribute"},
                 "relationshipType": rtype,
                 "relationshipTable":{"objectId": rtbl_id,"subType":"logical_table"},
-            }]}
-            r = m.put(f"/api/model/dataModels/{model_id}/attributes/{child['id']}/relationships?changesetId={cs2}",
-                      json=body)
-            if r.ok:
-                rels_ok += 1
-                print(f"  {parent['table']}→{child['table']} [{label}]", file=sys.stderr)
+            }))
+        for child_id, items in by_child.items():
+            ok, _added, _total, err = put_relationships_merged(
+                m, model_id, child_id, [rel for *_, rel in items], cs2)
+            if ok:
+                rels_ok += len(items)
+                for parent, child, label, _ in items:
+                    print(f"  {parent['table']}→{child['table']} [{label}]", file=sys.stderr)
             else:
-                print(f"  WARN rel {label}: {r.status_code} {r.text[:200]}", file=sys.stderr)
+                failures["relationships"] += len(items)
+                print(f"  WARN rels into {items[0][1]['name']}: {err}", file=sys.stderr)
         commit_cs(m, cs2)
 
     # Auto-create a hierarchy object for the longest dim chain (snowflake drill path)
@@ -2331,6 +2423,7 @@ def cmd_build(m: MSTR, args):
     summary = {
         "ok": True,
         "model_id": model_id,
+        "failures": failures,
         "url": f"{m.base}/app/library#/model/{model_id}",
         "tables": len(table_id_map),
         "attributes": total_attrs,
@@ -2358,14 +2451,18 @@ def cmd_build(m: MSTR, args):
     if args.translate:
         _apply_translations(m, model_id, args.translate)
     # ── Certify ──
-    if args.certify:
-        _certify(m, model_id)
+    if args.certify and not _certify(m, model_id):
+        failures["post_build"] += 1
     # ── Publish (for in_memory) ──
     if args.data_serve_mode == "in_memory" and args.publish:
-        _publish(m, model_id)
+        _publish(m, model_id, skip_classify=True)   # just created: known Mosaic model
         summary["published"] = True
 
+    summary["ok"] = not any(failures.values())
     print(json.dumps(summary, indent=2))
+    if not summary["ok"]:
+        print(f"[build] finished with failures: {failures} — see the WARN lines above.", file=sys.stderr)
+        sys.exit(1)
 
 
 # ── Lifecycle / governance ops ────────────────────────────────────────────────
@@ -2473,18 +2570,41 @@ def _resolve_member_candidates(m: MSTR, name_or_id: str, limit: int = 10) -> lis
     return _dedupe_by_id(candidates)
 
 
+def _exact_member_matches(candidates: list[dict], raw: str) -> list[dict]:
+    needle = raw.strip().lower()
+    return _dedupe_by_id([c for c in candidates if c.get("id") and any(
+        str(c.get(k) or "").strip().lower() == needle for k in ("id", "username", "name", "fullName", "email"))])
+
+
 def _resolve_member_ids(m: MSTR, names_or_ids: list[str]) -> list[str]:
-    """Resolve user/user-group names to IDs, with the tenant-specific search fallback."""
-    ids = []
+    """Resolve user / user-group names to IDs. A security filter bound to the wrong
+    account leaves the intended one unrestricted, so only an exact, unique match on
+    id / login / full name / email counts; anything else stops the run."""
+    ids, problems = [], []
     for raw in names_or_ids:
         name = raw.strip()
         if not name:
             continue
-        candidates = _resolve_member_candidates(m, name, limit=10)
-        if candidates:
-            cand_id = candidates[0].get("id")
-            if cand_id:
-                ids.append(cand_id)
+        if _is_mstr_id(name):
+            ids.append(name.upper())
+            continue
+        candidates = _resolve_member_candidates(m, name, limit=25)
+        exact = _exact_member_matches(candidates, name)
+        if not exact:
+            r = m.get("/api/usergroups", params={"nameBegins": name, "limit": 25})
+            groups = _items_from_response(r.json(), "usergroups") if r.ok else []
+            exact = [{"id": g.get("id"), "name": g.get("name")} for g in groups
+                     if (g.get("name") or "").strip().lower() == name.lower() and g.get("id")]
+        if len(exact) == 1:
+            ids.append(exact[0]["id"])
+        elif exact:
+            problems.append(f"'{name}' matches {len(exact)} accounts ({', '.join(c['id'] for c in exact[:5])}); pass the ID")
+        else:
+            near = ", ".join(str(c.get("username") or c.get("name") or c.get("id")) for c in candidates[:5])
+            problems.append(f"'{name}' has no exact user or group match" + (f" (similar: {near})" if near else ""))
+    if problems:
+        die("security-filter members not resolved — refusing to bind a filter to a guessed account: "
+            + "; ".join(problems))
     return list(dict.fromkeys(ids))
 
 
@@ -2604,8 +2724,10 @@ def _apply_security_filter(m: MSTR, model_id: str, spec: str):
     print(f"  ✓ security filter '{name}' -> {sf_id}", file=sys.stderr)
 
 
-_RIGHT_FLAGS = {"read":1,"write":2,"delete":4,"control":32,"execute":128,"browse":64,
-                "use":512,"inherit":1024,"full":255}
+# EnumDSSXMLAccessRightFlags (the bit order of the spec's ms-EnumAccessRight). The usual
+# bundles: view = browse+read+use+execute (197), modify = view+write+delete (221), full = 255.
+_RIGHT_FLAGS = {"browse":1, "use_execute":2, "read":4, "write":8, "delete":16, "control":32,
+                "use":64, "execute":128, "view":197, "modify":221, "full":255, "full_control":255}
 
 def _rights_mask(rights: str) -> int:
     mask = 0
@@ -2615,8 +2737,10 @@ def _rights_mask(rights: str) -> int:
             continue
         if right.isdigit():
             mask |= int(right)
+        elif right in _RIGHT_FLAGS:
+            mask |= _RIGHT_FLAGS[right]
         else:
-            mask |= _RIGHT_FLAGS.get(right, 0)
+            die(f"unknown access right '{right}'. use {', '.join(_RIGHT_FLAGS)} or a number")
     return mask
 
 
@@ -2667,8 +2791,17 @@ def _apply_acl(m: MSTR, object_id: str, grants: list[str], model_id=None,
 
     if model_id:
         cs = open_cs(m)
-        r = m.patch(f"/api/model/dataModels/{model_id}/objects/{object_id}/acl?subType={sub_type}",
-                    json={"acl": acl})
+        # The PATCH body is the whole ACL (trustees left out are removed), so start
+        # from the current ACL and change only the trustees named on the command line.
+        acl_path = f"/api/model/dataModels/{model_id}/objects/{object_id}/acl?subType={sub_type}"
+        cur = m.get(acl_path)
+        if not cur.ok:
+            discard_cs(m, cs)
+            die(f"read current ACL of {object_id}: {format_mstr_error(cur)}")
+        merged = dict((cur.json() or {}).get("acl") or {})
+        merged.update(acl)
+        acl = merged
+        r = m.patch(acl_path, json={"acl": acl})
         if not r.ok:
             m.delete(f"/api/model/changesets/{cs}")
             die(f"data model ACL on {object_id}: {r.status_code} {r.text[:300]}")
@@ -2740,11 +2873,19 @@ def _apply_translations(m: MSTR, model_id: str, entries: list[str], default_sub_
     print("  WARN translate: --model-id is required for data model object translations", file=sys.stderr)
 
 
-def _certify(m: MSTR, object_id: str):
-    r = m.s.patch(f"{m.base}/api/objects/{object_id}",
-                  json={"certifiedInfo":{"certified": True}})
-    if r.ok: print(f"  ✓ certified {object_id}", file=sys.stderr)
-    else: print(f"  WARN certify: {r.status_code} {r.text[:200]}", file=sys.stderr)
+def _certify(m: MSTR, object_id: str, obj_type: int = 3) -> bool:
+    """PUT /api/objects/{id}/certify?type=3&certify=true (the documented call; a Mosaic
+    model is type 3). Falls back to the older certifiedInfo PATCH on tenants without it.
+    The Mosaic MCP server lists and resolves certified models only."""
+    r = m.put(f"/api/objects/{object_id}/certify", params={"type": obj_type, "certify": "true"})
+    if r.status_code in (404, 405):
+        r = m.patch(f"/api/objects/{object_id}", params={"type": obj_type},
+                    json={"certifiedInfo": {"certified": True}})
+    if r.ok:
+        print(f"  ✓ certified {object_id}", file=sys.stderr)
+        return True
+    print(f"  WARN certify {object_id}: {format_mstr_error(r)}", file=sys.stderr)
+    return False
 
 
 def classify_object_surface(m: MSTR, object_id: str) -> dict:
@@ -2822,7 +2963,10 @@ def _mosaic_publish_verified(m: MSTR, model_id: str, *, poll_seconds: int = 180,
             die(f"_mosaic_publish_verified: terminal error status={st} body={json.dumps(js)[:400]}")
         if isinstance(js, dict) and js.get("code"):
             die(f"_mosaic_publish_verified: server error {js.get('code')}: {js.get('message','')[:300]}")
-        if tbl and all((t.get("status") or "") == "loaded" for t in tbl):
+        failed_tables = [t for t in tbl if (t.get("status") or "").lower() == "error"]
+        if failed_tables:
+            die(f"_mosaic_publish_verified: table(s) failed to load: {json.dumps(failed_tables)[:400]}")
+        if tbl and all((t.get("status") or "").lower() in ("loaded", "completed") for t in tbl):
             print(f"  ✓ mosaic publish COMPLETE: {len(tbl)} tables loaded.", file=sys.stderr)
             return
         time.sleep(poll_interval)
@@ -2889,10 +3033,11 @@ def cmd_publish(m: MSTR, args):
     _publish(m, args.model_id, poll_seconds=args.poll_seconds,
              skip_classify=getattr(args, "skip_classify", False))
 def cmd_refresh(m: MSTR, args):
+    """Re-publish (reload) a model's data. The REST API has no separate refresh call:
+    a Mosaic refresh is a publish (POST /api/dataModels/{id}/publish), so this routes
+    through the same verified publish path as `publish`."""
     m.login()
-    r = m.post(f"/api/cubes/{args.model_id}/refresh",
-               params={"refreshType": args.refresh_type})
-    print(f"HTTP {r.status_code}: {r.text[:300]}")
+    _publish(m, args.model_id)
 
 
 # ── wire-relationships ─────────────────────────────────────────────────────────
@@ -2902,7 +3047,8 @@ def cmd_refresh(m: MSTR, args):
 # join table).
 
 def _fetch_attribute(m: MSTR, model_id: str, attr_id: str) -> dict:
-    r = m.s.get(f"{m.base}/api/model/dataModels/{model_id}/attributes/{attr_id}")
+    r = m.s.get(f"{m.base}/api/model/dataModels/{model_id}/attributes/{attr_id}",
+                params={"showExpressionAs": "tokens"})
     if not r.ok:
         die(f"wire-relationships: GET attribute {attr_id}: {r.status_code} {r.text[:200]}")
     return r.json()
@@ -3528,9 +3674,10 @@ def cmd_build_from_schema_objects(m: MSTR, args):
             passed, failed = batch_call(m, model_id, cs1, attr_ops, atomic=False)
             for f in failed:
                 all_warnings.append(f"[batch attr] failed op: {json.dumps(f)[:200]}")
-            for i, result in enumerate(passed):
-                if i >= len(attr_id_order):
-                    break
+            for result in passed:
+                i = result.get("_index")
+                if not isinstance(i, int) or i >= len(attr_id_order):
+                    continue
                 response = result.get("response") or result
                 obj_id = (response.get("information") or {}).get("objectId")
                 if obj_id:
@@ -3552,9 +3699,10 @@ def cmd_build_from_schema_objects(m: MSTR, args):
             passed, failed = batch_call(m, model_id, cs1, fact_ops, atomic=False)
             for f in failed:
                 all_warnings.append(f"[batch fact] failed op: {json.dumps(f)[:200]}")
-            for i, result in enumerate(passed):
-                if i >= len(fact_id_order):
-                    break
+            for result in passed:
+                i = result.get("_index")
+                if not isinstance(i, int) or i >= len(fact_id_order):
+                    continue
                 response = result.get("response") or result
                 obj_id = (response.get("information") or {}).get("objectId")
                 if obj_id:
@@ -3577,6 +3725,7 @@ def cmd_build_from_schema_objects(m: MSTR, args):
             mosaic_child_id = attr_id_to_mosaic.get(classic_child_id)
             if not mosaic_child_id:
                 continue
+            child_rels: list[dict] = []   # one merged PUT per child — the PUT replaces the set
             for rel in (adef.get("relationships") or []):
                 parent_classic_id = (rel.get("parent") or {}).get("objectId")
                 if not parent_classic_id:
@@ -3603,18 +3752,13 @@ def cmd_build_from_schema_objects(m: MSTR, args):
                     rel_body["relationships"][0]["relationshipTable"] = {
                         "objectId": rel_table_mosaic, "subType": "logical_table",
                     }
-                rr = m.put(
-                    f"/api/model/dataModels/{model_id}/attributes/"
-                    f"{mosaic_child_id}/relationships?changesetId={cs2}",
-                    json=rel_body,
-                )
-                if not rr.ok:
-                    all_warnings.append(
-                        f"[rel] {classic_child_id}→{parent_classic_id}: "
-                        f"{rr.status_code} {rr.text[:200]}"
-                    )
+                child_rels.extend(rel_body["relationships"])
+            if child_rels:
+                ok, _added, _total, err = put_relationships_merged(m, model_id, mosaic_child_id, child_rels, cs2)
+                if ok:
+                    rel_count += len(child_rels)
                 else:
-                    rel_count += 1
+                    all_warnings.append(f"[rel] into {classic_child_id}: {err}")
         commit_cs(m, cs2)
         cs2 = None
         print(f"  CS2 committed ({rel_count} relationships)", file=sys.stderr)
@@ -3723,7 +3867,9 @@ def cmd_add_security_filter(m: MSTR, args):
 def cmd_translate(m: MSTR, args):
     m.login(identity=True); _apply_translations(m, args.model_id, args.entry, default_sub_type=args.sub_type)
 def cmd_certify(m: MSTR, args):
-    m.login(); _certify(m, args.object_id)
+    m.login()
+    if not _certify(m, args.object_id):
+        die(f"certify {args.object_id} failed")
 
 
 def _load_records_file(path: str, list_keys=("users", "items", "rows", "members")) -> list:
@@ -3783,7 +3929,7 @@ def _user_identifier_from_record(row) -> str:
 def cmd_resolve_users(m: MSTR, args):
     """Resolve user IDs from names, usernames, emails, or files before security/admin writes."""
     m.login()
-    inputs = list(args.user or [])
+    inputs = list(args.lookup_user or [])
     for path in args.file or []:
         inputs.extend(_user_identifier_from_record(row) for row in _load_records_file(path))
     inputs = [i.strip() for i in inputs if str(i).strip()]
@@ -4706,7 +4852,9 @@ def build_parser():
     p.add_argument("--project-id",  default=DEFAULT_PROJECT_ID)
     p.add_argument("--user",        default=DEFAULT_USER)
     p.add_argument("--password",    default=DEFAULT_PASSWORD)
-    p.add_argument("--login-mode",  type=int, default=DEFAULT_LOGIN_MODE)
+    p.add_argument("--login-mode",  type=int, default=DEFAULT_LOGIN_MODE,
+                   help="1 Standard (default), 16 LDAP, 8 Anonymous, 4096 API token. Env: MSTR_LOGIN_MODE.")
+    strategy_auth.add_auth_method_arg(p)
     # Borrowed-session auth (Studio Cloud / SSO tenants). When --auth-token is
     # provided, MSTR.login() skips /auth/login and /auth/logout so the external
     # owner's session is left intact. See README.md → "Borrowed-session auth".
@@ -4748,13 +4896,13 @@ def build_parser():
                     help="Repeatable: instanceId:namespace:table")
 
     sp = sub.add_parser("kill-sessions",
-                        help="Reap stale AUTH TOKENS via login/logout loop. "
-                             "Does NOT reap iServer project-interactive sessions — those "
-                             "are the ones that trip the 8004cb0a cap and they can only "
-                             "time out (~30 min). Run this only to clean up orphaned auth "
-                             "tokens; it cannot rescue a capped-state. See "
-                             "memory/feedback_build_mosaic_session_leak.md.")
-    sp.add_argument("--count", type=int, default=5)
+                        help="List your open Intelligence Server connections (the per-project "
+                             "session cap, 8004cb0a) and disconnect them with --yes. Needs a "
+                             "monitoring privilege. See memory/feedback_build_mosaic_session_leak.md.")
+    sp.add_argument("--project", default="", help="only connections to this project (name or id)")
+    sp.add_argument("--idle-minutes", type=float, default=5.0,
+                    help="only connections idle at least this long (default 5)")
+    sp.add_argument("--yes", action="store_true", help="disconnect them (default: list only)")
 
     sp = sub.add_parser("describe-table")
     sp.add_argument("--instance"); sp.add_argument("--instance-id")
@@ -4791,12 +4939,13 @@ def build_parser():
     sp.add_argument("--out", help="save response body to file")
     sp.add_argument("--text-limit", type=int, default=8000)
     sp.add_argument("--no-auth", action="store_true", help="do not login first; useful for public OpenAPI paths")
-    sp.add_argument("--identity-token", action="store_true",
+    sp.add_argument("--with-identity-token", action="store_true",
                     help="also request X-MSTR-IdentityToken; use for Mosaic data-model Modeling Service writes, not classic/project Modeling calls")
     sp.add_argument("--yes", action="store_true", help="required for DELETE")
 
     sp = sub.add_parser("resolve-users")
-    sp.add_argument("--user", action="append", default=[], help="user id, username, full name, or email; repeatable")
+    sp.add_argument("--user", dest="lookup_user", action="append", default=[],
+                    help="user id, username, full name, or email; repeatable")
     sp.add_argument("--file", action="append", default=[],
                     help="CSV/JSON/YAML with id, username, email, name/fullName rows; repeatable")
     sp.add_argument("--limit", type=int, default=10)
@@ -4884,9 +5033,10 @@ def build_parser():
     sp.add_argument("--security-filter", action="append", default=[],
                     help="Mosaic data-model SF: 'NAME=ATTR_ID[:FORM_ID]=VALUE|USER,USER' or 'NAME=@qualification.json|USER,USER' (repeatable)")
     sp.add_argument("--grant", action="append", default=[],
-                    help="ACL grant 'trusteeId:right1,right2' (repeatable)")
+                    help="ACL grant 'trusteeId:rights[:user|user_group]' (repeatable). Rights: view, modify, "
+                         "full, or browse,use_execute,read,write,delete,control,use,execute, or a number")
     sp.add_argument("--deny", action="append", default=[],
-                    help="ACL deny 'trusteeId:right1,right2' (repeatable)")
+                    help="ACL deny, same syntax as --grant (repeatable)")
     sp.add_argument("--translate", action="append", default=[],
                     help="'objectId[:subType]:locale[:name|description]=translation' (repeatable)")
     sp.add_argument("--certify", action="store_true")
@@ -5031,13 +5181,18 @@ def build_parser():
 
     sp = sub.add_parser("certify"); sp.add_argument("--object-id", required=True)
 
-    sp = sub.add_parser("create-transformation")
+    sp = sub.add_parser("create-transformation",
+                        help="UNVERIFIED: posts a body the 2026 spec does not define (spec: POST "
+                             "/api/model/transformations with attributes[].forms expressions). "
+                             "Verify live before relying on it.")
     sp.add_argument("--model-id", required=True)
     sp.add_argument("--name", required=True)
     sp.add_argument("--member", action="append", required=True,
                     help="'attributeId=offset' e.g. 'ABC...=-1' for prior period (repeatable)")
 
-    sp = sub.add_parser("create-compound-metric")
+    sp = sub.add_parser("create-compound-metric",
+                        help="UNVERIFIED: uses operator/metric_reference tokens on /factMetrics; the "
+                             "verified derived-metric shapes are in memory/reference_mosaic_derived_metrics.md")
     sp.add_argument("--model-id", required=True)
     sp.add_argument("--name", required=True)
     sp.add_argument("--formula", required=True, help="space-separated: 'METRIC_ID1 - METRIC_ID2'")
@@ -5065,7 +5220,8 @@ def build_parser():
                     help="JSON/YAML: {presets?: {name: [format tokens]}, metrics: [{name, function?, format?}]}")
     sp.add_argument("--dry-run", action="store_true", help="print the diff plan; open no changeset")
 
-    sp = sub.add_parser("attach-transformation")
+    sp = sub.add_parser("attach-transformation",
+                        help="UNVERIFIED against the 2026 spec; see create-transformation")
     sp.add_argument("--model-id", required=True)
     sp.add_argument("--name", required=True)
     sp.add_argument("--source-metric", required=True)
@@ -5074,8 +5230,15 @@ def build_parser():
     return p
 
 
+_SECRET_FLAGS = ("--password", "--auth-token", "--identity-token", "--session-cookie", "--ingress-cookie")
+
+
 def main():
     args = build_parser().parse_args()
+    if any(a.split("=", 1)[0] in _SECRET_FLAGS for a in sys.argv[1:]):
+        print("[auth] WARN: secrets passed as command-line flags are visible to other processes (ps) and "
+              "shell history; use the MSTR_* environment variables or --auth-method sso instead.",
+              file=sys.stderr)
     m = MSTR(args)
     t0 = time.monotonic()
     try:
@@ -5121,6 +5284,11 @@ def main():
     except requests.HTTPError as e:
         die(f"{e.response.status_code} {e.response.text[:500]}")
     finally:
+        # die() raises SystemExit, which `except Exception` cleanup blocks don't catch:
+        # discard whatever changeset is still open so no schema lock outlives the run.
+        for cs in list(m.open_changesets):
+            print(f"[cleanup] discarding open changeset {cs}", file=sys.stderr)
+            discard_cs(m, cs)
         m.logout()
         if args.verbose:
             print(f"[wall] {int((time.monotonic()-t0)*1000)}ms", file=sys.stderr)

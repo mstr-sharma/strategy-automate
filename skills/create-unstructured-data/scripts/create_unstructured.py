@@ -119,10 +119,12 @@ def main():
                     or os.environ.get("MSTR_PROJECT_NAME", ""),
                     help="project ID or name (default: MSTR_PROJECT_ID / MSTR_PROJECT_NAME)")
     ap.add_argument("--login-mode", type=int, default=int(os.environ.get("MSTR_LOGIN_MODE", "1")))
+    ap.add_argument("--auth-method", default=os.environ.get("MSTR_AUTH_METHOD", "auto"),
+                    help="auto (default), password, ldap, api-token, sso (browser single sign-on), ... "
+                         "— see skills/build-mosaic-model/scripts/strategy_auth.py")
     args = ap.parse_args()
 
-    for flag, value in (("--base", args.base), ("--user", args.user),
-                        ("--password", args.password), ("--project", args.project)):
+    for flag, value in (("--base", args.base), ("--project", args.project)):
         if not value:
             sys.exit(f"error: {flag} missing (set the MSTR_* env vars or pass flags)")
     if not args.folder_id:
@@ -132,8 +134,12 @@ def main():
 
     upload_path = resolve_upload_file(args.file, include_notes=args.notes, title=args.title)
 
-    m = BaseMSTR(args.base, args.user, args.password, args.login_mode, args.project)
-    m.login()
+    m = BaseMSTR(args.base, args.user, args.password, args.login_mode, args.project,
+                 auth_method=args.auth_method)
+    try:
+        m.login()
+    except RuntimeError as e:
+        sys.exit(f"error: {e}")
     try:
         m.resolve_project()
         nugget_id = create_nugget(m, upload_path, args.folder_id, name=args.name)

@@ -5,7 +5,9 @@
 [project]
 name = "strategy-automate"
 version = "0.1.0"
-description = "A Strategy (formerly MicroStrategy) automation brain for AI coding assistants — every part of the platform that exposes an API, SDK, MCP, CLI, or reproducible hook. Covers Mosaic data-model creation and modification, classic semantic-layer inspection and migration, runtime analytics, cubes and datasets, security and governance, platform admin, AI agents, and data validation."
+description = "Agent skills, field-verified notes and Python REST helpers for automating Strategy (formerly MicroStrategy): build, secure, publish and validate Mosaic semantic models, migrate classic projects, and sign in with SSO, API tokens or passwords."
+readme = "README.md"
+keywords = ["microstrategy", "strategy-one", "mosaic", "semantic-layer", "semantic-model", "dimensional-modeling", "rest-api", "sso", "ai-agents", "agent-skills"]
 requires-python = ">=3.9"
 dependencies = ["requests"]
 
@@ -23,6 +25,5 @@ select = ["F", "E9"]
 
 [tool.ruff.lint.per-file-ignores]
 # Pre-existing F541 (f-string without placeholders) / F841 (unused variable)
-# findings in these two files; scoped here so `ruff check` is clean repo-wide.
+# findings in build_mosaic.py; scoped here so `ruff check` is clean repo-wide.
 "skills/build-mosaic-model/scripts/build_mosaic.py" = ["F541", "F841"]
-"skills/build-mosaic-model/scripts/preflight_model_check.py" = ["F541", "F841"]

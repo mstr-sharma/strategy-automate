@@ -19,8 +19,9 @@ What it checks
 4. Relationship inferability — shared-column join chains are present?
    Bridge tables detected? Parent-without-child dangling attrs?
 5. Contextual fit vs a reference blueprint — when the user supplies a legacy
-   semantic-model blueprint (JSON produced by
-   `strategy_semantic_mine.py blueprint`), compare attribute set, form counts,
+   semantic-model blueprint (a JSON object with `attributes: {name: {forms: [...]}}`,
+   `metrics: {name: {function, expression}}` and `relationships: [...]` — hand-built
+   or adapted from `strategy_semantic_mine.py` output), compare attribute set, form counts,
    relationship topology, and metric functions. Missing attributes, absent
    relationships, or the classic "one attribute per locale column" anti-pattern
    are flagged.
@@ -48,12 +49,12 @@ Auth env: MSTR_BASE, MSTR_USER, MSTR_PASSWORD, MSTR_LOGIN_MODE, MSTR_PROJECT_ID
 (same as build_mosaic.py).
 """
 from __future__ import annotations
-import argparse, json, os, re, sys, tempfile
+import argparse, json, os, re, sys
 from dataclasses import dataclass, asdict
 
 sys.path.insert(0, os.path.dirname(__file__))
 import build_mosaic as bm  # reuse session, discovery, and classification heuristics
-from _client import add_auth_args  # noqa: E402
+from _client import add_auth_args, write_private_json  # noqa: E402
 
 SEVERITY = {"ERROR": 3, "WARN": 2, "INFO": 1}
 
@@ -149,7 +150,7 @@ def check_naming(cols: list[ColumnInfo], findings: list[Finding]):
             findings.append(Finding("ERROR","LOCALE_COLUMN_EXPLOSION",
                 f"{base}_* has locale variants {sorted(locs)}",
                 "Auto-builder will create N separate descriptor attributes instead of one multilingual form.",
-                f"Fold into one attribute form with isMultilingual:true; set the blueprint to skip the locale variants or explicitly treat them as translations."))
+                "Fold into one attribute form with isMultilingual:true; set the blueprint to skip the locale variants or explicitly treat them as translations."))
     for c in cols:
         if c.is_audit:
             findings.append(Finding("INFO","AUDIT_COLUMN",
@@ -223,6 +224,11 @@ def check_contextual_fit(columns_by_table: dict[str,list[ColumnInfo]],
                           blueprint: dict | None, findings: list[Finding]):
     """Compare planned model vs a legacy-blueprint JSON (schema below)."""
     if not blueprint: return
+    if not isinstance(blueprint, dict) or not isinstance(blueprint.get("attributes", {}), dict) \
+            or not isinstance(blueprint.get("metrics", {}), dict):
+        raise SystemExit("--blueprint must be a JSON object whose `attributes` and `metrics` are objects "
+                         "keyed by name (see this script's docstring); refusing to report checks that "
+                         "would silently do nothing")
     bp_attrs = blueprint.get("attributes", {})
     planned_attrs = set()
     for t, cols in columns_by_table.items():
@@ -250,7 +256,6 @@ def check_contextual_fit(columns_by_table: dict[str,list[ColumnInfo]],
             "Convert to dictionary/ERD and attach to build."))
     bp_metrics = blueprint.get("metrics", {})
     for name, meta in bp_metrics.items():
-        fn = meta.get("function", "sum")
         expr = meta.get("expression") or ""
         if expr and any(op in expr for op in ("*", "-", "/")):
             findings.append(Finding("WARN","METRIC_NEEDS_FORMULA",
@@ -292,26 +297,30 @@ def main():
     p.add_argument("--schema", required=True)
     p.add_argument("--tables", nargs="+", required=True)
     p.add_argument("--blueprint", help="JSON blueprint from the legacy semantic layer (see schema).")
-    p.add_argument("--out", default=os.path.join(tempfile.gettempdir(), "preflight.json"))
+    p.add_argument("--out", default="", help="report path (default: a new private temp file)")
     p.add_argument("--fail-on", choices=["ERROR","WARN","INFO"], default="ERROR",
                    help="Exit non-zero if any finding at this severity or higher.")
     p.add_argument("-v","--verbose", action="store_true")
     args = p.parse_args()
 
     ns = argparse.Namespace(base=args.base, project_id=args.project_id,
-        user=args.user, password=args.password, login_mode=args.login_mode, verbose=args.verbose)
+        user=args.user, password=args.password, login_mode=args.login_mode,
+        auth_method=args.auth_method, verbose=args.verbose)
     m = bm.MSTR(ns); m.login()
 
-    # Resolve instance + discover columns
-    inst_id = bm.resolve_instance_id(m, args.instance)
+    # Resolve instance + discover columns (the only REST calls; log out right after)
     columns_by_table: dict[str,list[ColumnInfo]] = {}
     flat: list[ColumnInfo] = []
-    for t in args.tables:
-        raw = bm.fetch_table_metadata(m, inst_id, args.schema, t)
-        cols = raw.get("columns") or raw.get("fields") or []
-        infos = [classify_column(t, c) for c in cols]
-        columns_by_table[t] = infos
-        flat.extend(infos)
+    try:
+        inst_id = bm.resolve_instance_id(m, args.instance)
+        for t in args.tables:
+            raw = bm.fetch_table_metadata(m, inst_id, args.schema, t)
+            cols = raw.get("columns") or raw.get("fields") or []
+            infos = [classify_column(t, c) for c in cols]
+            columns_by_table[t] = infos
+            flat.extend(infos)
+    finally:
+        m.logout()
 
     # Load blueprint if any
     blueprint = None
@@ -338,7 +347,7 @@ def main():
         },
         "findings": [f.as_dict() for f in findings],
     }
-    with open(args.out,"w") as f: json.dump(report, f, indent=2)
+    args.out = write_private_json(report, args.out, prefix="preflight")
 
     # Human-readable
     lines = []

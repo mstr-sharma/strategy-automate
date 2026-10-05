@@ -29,3 +29,21 @@ captures/**/*.har
 captures/**/*.csv
 captures/**/*.parquet
 captures/**/*.py
+
+# Tool caches and virtualenvs
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Backups, keys and certificates (history bundles belong under ignore/ only)
+*.bundle
+*.pem
+*.key
+*.p12
+
+# Script outputs that carry recipient names, owners or tenant URLs
+library_publications*.csv
+library_publications*.json
+*.replicate_report.csv
+*.by_recipient.csv
+*.errors.csv

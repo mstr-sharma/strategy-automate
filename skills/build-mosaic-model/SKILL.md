@@ -56,10 +56,10 @@ A committed Mosaic data model containing:
 
 **Always use `scripts/build_mosaic.py`**. Do not re-implement REST calls inline. Chain the pipeline in one Python process — see `memory/feedback_build_mosaic_session_leak.md`.
 
-1. **Confirm env.** Credentials must come from `MSTR_PASSWORD` or `--password`; no hardcoding.
-2. **Auth (handled by script).** `POST /api/auth/login` for `X-MSTR-AuthToken`; `POST /api/auth/identityToken` for `X-MSTR-IdentityToken` (required for Modeling Service writes on Mosaic data models; do NOT add to classic/project workflows).
+1. **Confirm env.** `MSTR_BASE` + project + a sign-in method: `MSTR_API_TOKEN`, `MSTR_USER`+`MSTR_PASSWORD`, or none at all for single sign-on (`--auth-method sso`; the human clicks **Allow** once in their browser and later runs reuse the cached session). Never hardcode or print secrets, and never pass them as flags. See `memory/reference_strategy_authentication.md`.
+2. **Auth (handled by script).** `strategy_auth.py` signs in (`POST /api/auth/login`, or `/api/auth/delegate` for SSO); scripts log out with `POST /api/auth/logout` unless the session is shared with a browser. The Modeling identity token (`X-MSTR-IdentityToken`) is grant-dependent: some tenants need it for Mosaic writes, on others it downgrades privileges (`8004cb09`) — see `memory/feedback_mosaic_identity_token_privilege_downgrade.md`. Never add it to classic/project workflows.
 3. **Resolve DB instance.** `list-datasources --name <substr>`; fail loud on ambiguity.
-4. **Discover warehouse tables.** `describe-tables` (plural — one login per run). Endpoints are `GET /api/datasources/{id}/catalog/namespaces/{namespaceId}/tables` and `GET /api/datasources/{id}/catalog/tables/{tableId}` with base64 namespace/table IDs. Use `discover` for live path variants if on an unfamiliar iServer build.
+4. **Discover warehouse tables.** `describe-tables` (plural — one login per run). Endpoints are `GET /api/datasources/{id}/catalog/namespaces/{namespaceId}/tables` and `GET /api/datasources/{id}/catalog/namespaces/{namespaceId}/tables/{tableId}` with base64 namespace/table IDs. Use `discover` for live path variants if on an unfamiliar iServer build.
 5. **Translate business logic → build plan.** Produce the artifact described in `memory/reference_mosaic_business_logic_translation.md`: topology declaration, table-role classification (fact/dim/bridge/etc.), grain per fact, conformed-dim enumeration, attribute plan, metric plan (with additivity), relationships, assumptions log. Mandatory even with no supplied context — inspection-only inference is still a pass, not a skip.
 6. **Preflight gate (ERROR-severity = stop).**
    ```bash
@@ -123,7 +123,7 @@ Modeling Service `PATCH` replaces top-level fields — start from a current `GET
 Single source:
 
 ```bash
-python3 scripts/build_mosaic.py \
+python3 scripts/build_mosaic.py build \
   --instance "Snowflake Prod" --schema SALES \
   --tables CUSTOMER ORDER LINEITEM \
   --name "Sales Mosaic"
@@ -132,7 +132,7 @@ python3 scripts/build_mosaic.py \
 Multi-source (forces `in_memory`; see `feedback_mosaic_multi_db_connect_live.md`):
 
 ```bash
-python3 scripts/build_mosaic.py \
+python3 scripts/build_mosaic.py build \
   --source "Snowflake Prod:SALES:CUSTOMER,ORDER" \
   --source "Postgres Billing:FIN:INVOICE" \
   --name "Customer 360" \

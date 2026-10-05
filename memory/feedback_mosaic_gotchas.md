@@ -8,14 +8,14 @@ tags: [mosaic, build, payload, error-code]
 ## Table of contents
 
 **Auth + changesets + session**
-- [X-MSTR-IdentityToken is mandatory for Mosaic data-model changesets](#x-mstr-identitytoken-is-mandatory-for-mosaic-data-model-changesets)
+- [X-MSTR-IdentityToken for Mosaic data-model changesets is grant-dependent](#x-mstr-identitytoken-for-mosaic-data-model-changesets-is-grant-dependent)
 - [Changesets don't magically cross-reference](#changesets-dont-magically-cross-reference)
 - [Opening too many sessions without logout throws "Maximum interactive sessions per user"](#opening-too-many-sessions-without-logout-throws-maximum-interactive-sessions-per-user)
 
 **Catalog + discovery**
 - [Catalog IDs are base64(JSON), not UUIDs](#catalog-ids-are-base64json-not-uuids)
 - [`/api/datasources` is project-agnostic](#apidatasources-is-project-agnostic)
-- [Raw OpenAPI is at `/MicroStrategyLibrary/api/openapi.yaml`](#raw-openapi-is-at-microstrategylibraryapiopenapi-yaml)
+- [Raw OpenAPI is at `/MicroStrategyLibrary/api/openapi.yaml`](#raw-openapi-is-at-microstrategylibraryapiopenapiyaml)
 
 **Payload shapes**
 - [Table creation requires the "pipeline" shape, not "warehouse_partition_table"](#table-creation-requires-the-pipeline-shape-not-warehouse_partition_table)
@@ -44,10 +44,10 @@ tags: [mosaic, build, payload, error-code]
 
 ## Auth + changesets + session
 
-### X-MSTR-IdentityToken is mandatory for Mosaic data-model changesets
-`POST /api/auth/identityToken` returns the token in a response header. Without it, changeset commits 400 silently.
-**Why:** Early Mosaic build scripts failed commits until the `identityToken` call was added to every Modeling-Service write.
-**How to apply:** fetch identity token immediately after login for Mosaic data-model writes; `MSTR.login(identity=True)` in the Mosaic helper does this. Do not automatically add identity token to classic/project Modeling Service reads/writes such as `/api/model/attributes`, `/api/model/metrics`, `/api/model/facts`, or `/api/model/securityFilters`; on a verified Strategy Cloud tenant it caused false project errors.
+### X-MSTR-IdentityToken for Mosaic data-model changesets is grant-dependent
+`POST /api/auth/identityToken` returns the token in a response header. On some tenants changeset commits fail (400) without it; on others it **downgrades** the write to config-level privileges and the write 403s with `8004cb09` — see `feedback_mosaic_identity_token_privilege_downgrade.md` (and `reference_strategy_authentication.md`). Default to identity-OFF and add it only when a commit fails for lack of it; mint it after `X-MSTR-ProjectID` is set.
+**Why:** Early Mosaic build scripts failed commits until the `identityToken` call was added to every Modeling-Service write; later Strategy ONE Cloud builds ran clean without it.
+**How to apply:** when a tenant needs it, fetch the identity token after login for Mosaic data-model writes; `MSTR.login(identity=True)` in the Mosaic helper does this. Do not automatically add identity token to classic/project Modeling Service reads/writes such as `/api/model/attributes`, `/api/model/metrics`, `/api/model/facts`, or `/api/model/securityFilters`; on a verified Strategy Cloud tenant it caused false project errors.
 
 ### Changesets don't magically cross-reference
 Objects referenced inside a changeset must already exist (committed). Relationships + security filters + translations need a *separate* changeset AFTER the model + tables + attrs + metrics commit.

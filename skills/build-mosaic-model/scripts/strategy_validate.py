@@ -10,16 +10,14 @@ This runner is intentionally conservative:
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
-import tempfile
 from dataclasses import dataclass, field
 from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _client import (  # noqa: E402
-    SEARCH_LIST_KEYS, BaseMSTR, add_auth_args, ancestor_names, client_from_args,
+    SEARCH_LIST_KEYS, BaseMSTR, add_auth_args, ancestor_names, client_from_args, write_private_json,
     compact_json, items_from_payload, normalize_id, normalize_name, now_id,
     response_json,
 )
@@ -81,6 +79,18 @@ def best_named(candidates: list[dict[str, Any]], name: str, preferred_ancestors:
         return None
     scored.sort(key=lambda item: item[0], reverse=True)
     return scored[0][1]
+
+
+def exact_user(users: Any, wanted: str) -> dict[str, Any]:
+    """The one user whose login (`abbreviation`/`username`), full name or id equals `wanted`.
+    A prefix search can return other accounts first — never fall back to the first row."""
+    rows = users if isinstance(users, list) else []
+    needle = (wanted or "").strip().lower()
+    hits = [u for u in rows if needle in {str(u.get(k) or "").strip().lower()
+                                          for k in ("abbreviation", "username", "name", "fullName", "id")}]
+    if len(hits) != 1:
+        raise RuntimeError(f"source user '{wanted}': {len(hits)} exact matches among {len(rows)} search results")
+    return hits[0]
 
 
 @dataclass
@@ -162,9 +172,8 @@ class Runner:
     def write_ledger(self) -> None:
         if not self.created:
             return
-        path = os.path.join(tempfile.gettempdir(), f"strategy-validation-{self.args.run_id}.json")
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump({"runId": self.args.run_id, "created": self.created}, f, indent=2)
+        path = write_private_json({"runId": self.args.run_id, "created": self.created},
+                                  prefix=f"strategy-validation-{self.args.run_id}")
         self.add(0, "cleanup ledger", "info", path)
 
     def workflow_1(self) -> None:
@@ -393,7 +402,7 @@ class Runner:
         users = response_json(self.m.request("GET", "/api/users", project=False, params={"nameBegins": self.args.user, "limit": 20}))
         if not isinstance(users, list) or not users:
             raise RuntimeError("source user not found")
-        user = next((u for u in users if u.get("username") == self.args.user or u.get("name") == self.args.user), users[0])
+        user = exact_user(users, self.args.user)
         user_id = user.get("id")
         self.cache["source_user"] = user
         endpoints = {
@@ -501,7 +510,7 @@ class Runner:
             "username": target,
             "fullName": target,
             "description": f"Validation duplicate of {source_user.get('username') or self.args.user}, run {self.args.run_id}",
-            "enabled": True,
+            "enabled": False,   # never logged into; a disabled clone can't be used if cleanup fails
         }
         resp = self.m.request("POST", "/api/users", project=False, params={"sourceUserId": source_user.get("id")}, json=body, ok=(201,))
         user = response_json(resp)
@@ -533,23 +542,10 @@ class Runner:
             cleanup.append({"target": "duplicateUser", "ok": resp is not None,
                             "status": resp.status_code if resp is not None else "unavailable"})
         if delete_filter:
-            cs = self.m.create_changeset()
-            try:
-                resp = self.m.try_request(
-                    "DELETE",
-                    f"/api/model/securityFilters/{sf_id}",
-                    headers={"X-MSTR-MS-Changeset": cs},
-                    ok=(200, 202, 204),
-                )
-                if resp is not None:
-                    self.m.commit_changeset(cs)
-                    cleanup.append({"target": "securityFilter", "ok": True, "status": resp.status_code})
-                else:
-                    self.m.delete_changeset(cs)
-                    cleanup.append({"target": "securityFilter", "ok": False, "status": "unavailable"})
-            except Exception as exc:
-                self.m.delete_changeset(cs)
-                cleanup.append({"target": "securityFilter", "ok": False, "error": str(exc)[:300]})
+            # /api/model/securityFilters/{id} has no DELETE; the objects API deletes type 58.
+            resp = self.m.try_request("DELETE", f"/api/objects/{sf_id}", params={"type": 58}, ok=(200, 204))
+            cleanup.append({"target": "securityFilter", "ok": resp is not None,
+                            "status": resp.status_code if resp is not None else "unavailable"})
         return cleanup
 
     def workflow_9(self) -> None:
@@ -560,7 +556,7 @@ class Runner:
         source = self.cache.get("source_user")
         if not source:
             users = response_json(self.m.request("GET", "/api/users", project=False, params={"nameBegins": self.args.user, "limit": 20}))
-            source = next((u for u in users if u.get("username") == self.args.user or u.get("name") == self.args.user), users[0])
+            source = exact_user(users, self.args.user)
         sf = self.create_security_filter(attr, books)
         sf_id = sf.get("id") or (sf.get("information") or {}).get("objectId")
         if not sf_id:
@@ -568,27 +564,30 @@ class Runner:
             sf_id = existing and normalize_id(existing)
         if not sf_id:
             raise RuntimeError(f"could not determine security filter id: {compact_json(sf)}")
-        dup = self.ensure_duplicate_user(source)
-        dup_id = dup.get("id")
-        if not dup_id:
-            raise RuntimeError(f"duplicate user id missing: {compact_json(dup)}")
-        members_before = response_json(self.m.request("GET", f"/api/securityFilters/{sf_id}/members", params={"limit": -1}))
-        already_member = payload_contains_value(members_before, dup_id)
-        patch = {"operationList": [{"op": "addElements", "path": "/members", "value": [dup_id]}]}
-        self.m.request("PATCH", f"/api/securityFilters/{sf_id}/members", json=patch, ok=(204,))
-        members = response_json(self.m.request("GET", f"/api/securityFilters/{sf_id}/members", params={"limit": -1}))
-        user_filters = self.m.try_request("GET", f"/api/users/{dup_id}/securityFilters", params={"projects.id": self.m.project_id})
-        cleanup = []
-        if self.args.keep_security_artifacts:
-            cleanup = [{"target": "securityArtifacts", "ok": True, "status": "kept_by_request"}]
-        else:
-            cleanup = self.cleanup_security_workflow(
-                sf_id,
-                dup_id,
-                remove_membership=not already_member,
-                delete_user=self.created_in_this_run("user", object_id=dup_id),
-                delete_filter=self.created_in_this_run("securityFilter", object_id=sf_id, name=VALIDATE_SF_NAME),
-            )
+        dup_id, already_member, cleanup = None, True, []
+        try:
+            dup = self.ensure_duplicate_user(source)
+            dup_id = dup.get("id")
+            if not dup_id:
+                raise RuntimeError(f"duplicate user id missing: {compact_json(dup)}")
+            members_before = response_json(self.m.request("GET", f"/api/securityFilters/{sf_id}/members", params={"limit": -1}))
+            already_member = payload_contains_value(members_before, dup_id)
+            patch = {"operationList": [{"op": "addElements", "path": "/members", "value": [dup_id]}]}
+            self.m.request("PATCH", f"/api/securityFilters/{sf_id}/members", json=patch, ok=(204,))
+            members = response_json(self.m.request("GET", f"/api/securityFilters/{sf_id}/members", params={"limit": -1}))
+            user_filters = self.m.try_request("GET", f"/api/users/{dup_id}/securityFilters", params={"projects.id": self.m.project_id})
+        finally:
+            # Runs on failure too, so a half-finished run doesn't leave a clone or a filter behind.
+            if self.args.keep_security_artifacts:
+                cleanup = [{"target": "securityArtifacts", "ok": True, "status": "kept_by_request"}]
+            else:
+                cleanup = self.cleanup_security_workflow(
+                    sf_id,
+                    dup_id or "",
+                    remove_membership=bool(dup_id) and not already_member,
+                    delete_user=bool(dup_id) and self.created_in_this_run("user", object_id=dup_id),
+                    delete_filter=self.created_in_this_run("securityFilter", object_id=sf_id, name=VALIDATE_SF_NAME),
+                )
         self.add(
             9,
             "classic security filter assignment",
@@ -602,12 +601,18 @@ class Runner:
         )
 
     def workflow_10(self) -> None:
+        nodes = self.m.try_request("GET", "/api/monitors/iServer/nodes", project=False)
+        node_list = ((response_json(nodes) or {}).get("nodes") or []) if nodes is not None else []
+        node = next((n.get("name") for n in node_list if isinstance(n, dict) and n.get("name")), None)
         endpoints = {
             "subscriptions": self.m.try_request("GET", "/api/subscriptions", params={"limit": 10}),
             "schedules": self.m.try_request("GET", "/api/schedules"),
-            "cubeCaches": self.m.try_request("GET", "/api/monitors/caches/cubes", project=False, params={"limit": 10}),
-            "contentCaches": self.m.try_request("GET", "/api/monitors/caches/contents", project=False, params={"limit": 10}),
         }
+        if node:   # both cache monitors require clusterNode
+            endpoints["cubeCaches"] = self.m.try_request("GET", "/api/monitors/caches/cubes", project=False,
+                                                         params={"clusterNode": node, "limit": 10})
+            endpoints["contentCaches"] = self.m.try_request("GET", "/api/monitors/caches/contents", project=False,
+                                                            params={"clusterNode": node, "limit": 10})
         package_status = "not-run"
         if self.args.package_holder and self.args.yes:
             body = {"name": f"validation-{self.args.run_id}", "type": "project"}
@@ -618,8 +623,9 @@ class Runner:
                 pkg_id = payload.get("id") if isinstance(payload, dict) else None
                 if pkg_id:
                     self.created.append({"kind": "package", "id": pkg_id, "name": body["name"]})
-                    self.m.try_request("DELETE", f"/api/packages/{pkg_id}", ok=(204,))
-                    package_status += ":created-deleted"
+                    gone = self.m.try_request("DELETE", f"/api/packages/{pkg_id}", ok=(202, 204),
+                                              headers={"Prefer": "respond-async"})
+                    package_status += ":created-deleted" if gone is not None else ":created-DELETE-FAILED"
             else:
                 package_status = "unavailable"
         self.add(
