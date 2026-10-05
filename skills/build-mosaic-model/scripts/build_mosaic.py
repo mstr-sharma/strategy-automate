@@ -770,7 +770,8 @@ def load_dictionary(path: str) -> dict:
         "<TABLE>.<COLUMN>": {"name": "Friendly Name", "description": "..."}
       },
       "metrics": {
-        "<TABLE>.<COLUMN>": {"name": "...", "description": "...", "function": "sum|avg|..."}
+        "<TABLE>.<COLUMN>": {"name": "...", "description": "...", "function": "sum|avg|...",
+                             "format": "<METRIC_FORMAT_PRESETS key> | [format.values tokens]"}
       },
       "relationships": [
         {"parent":"<TABLE>.<COL>","child":"<TABLE>.<COL>",
@@ -908,6 +909,59 @@ def _normalize_catalog_datatype(dt: dict | None) -> dict | None:
         if sc is None or (isinstance(sc, int) and sc < 0):
             out["scale"] = 0
     return out
+
+
+# Fact-metric number formats as Modeling `format.values[]` tokens. number_category
+# enum verified 2026-09-17 against UI-built metrics: 0=Fixed, 1=Currency, 2=Date,
+# 3=Time, 4=Percentage, 5=Fraction, 6=Scientific, 7=Special, 8=Custom, 9=General
+# (an earlier table used 2 for currency and 7 for scientific, which render as Date
+# and Special). See memory/feedback_mosaic_ship_bar.md "Metric formats".
+def _fmt_tokens(category: int, decimals: int, pattern: str, *extra: dict) -> list[dict]:
+    return [{"type": "number_category", "value": str(category)},
+            {"type": "number_decimal_places", "value": str(decimals)},
+            {"type": "number_format", "value": pattern}, *extra]
+
+
+METRIC_FORMAT_PRESETS: dict[str, list[dict]] = {
+    "currency":      _fmt_tokens(1, 2, '"$"#,##0.00;"$"-#,##0.00',
+                                 {"type": "number_currency_symbol", "value": "$"}),
+    "percent":       _fmt_tokens(4, 1, "0.0%"),         # column holds a 0-1 fraction
+    "percent_0_100": _fmt_tokens(0, 1, '#,##0.0"%"'),   # column holds 0-100; category 4 would show 9444%
+    "integer":       _fmt_tokens(0, 0, "#,##0"),
+    "fixed2":        _fmt_tokens(0, 2, "#,##0.00"),
+    "scientific":    _fmt_tokens(6, 2, "0.00E+00"),
+}
+_CURRENCY_NAME_WORDS = ("revenue", "cost", "price", "amount", "spend", "expense", "profit", "usd", "dollar")
+_INTEGER_DTYPES = {"integer", "int64"}
+
+
+def _resolve_metric_format(value: Any, presets: dict | None = None) -> list[dict]:
+    """Preset name (built-in or caller-defined) or a raw format.values token list."""
+    if isinstance(value, list):
+        return [dict(v) for v in value]
+    table = {**METRIC_FORMAT_PRESETS, **(presets or {})}
+    if value not in table:
+        die(f"unknown format preset '{value}'. known: {sorted(table)}")
+    return [dict(v) for v in table[value]]
+
+
+def _default_metric_format(metric_name: str, dt_obj: dict | None, function: str = "sum") -> list[dict]:
+    """Format for a newly created fact metric so it never ships with the generic
+    default. Percent is deliberately not guessed: a name can't tell a 0-1 column
+    from a 0-100 one. Set it with the dictionary `format` key or patch-fact-metrics."""
+    name = (metric_name or "").lower()
+    if any(w in name for w in _CURRENCY_NAME_WORDS):
+        return _resolve_metric_format("currency")
+    dtype = str((dt_obj or {}).get("type") or "").lower()
+    if dtype in _INTEGER_DTYPES and function in ("sum", "count", "min", "max"):
+        return _resolve_metric_format("integer")
+    return _resolve_metric_format("fixed2")
+
+
+def _format_matches(current: dict | None, want: list[dict]) -> bool:
+    """True when every wanted format token already has the wanted value."""
+    have = {v.get("type"): v.get("value") for v in (current or {}).get("values") or []}
+    return all(have.get(t["type"]) == t["value"] for t in want)
 
 
 def fetch_table_metadata(m: MSTR, ds_id: str, namespace: str, tname: str) -> dict:
@@ -2091,12 +2145,16 @@ def cmd_build(m: MSTR, args):
             metric_name = f"Total {base}"
             metric_desc = f"SUM of {cname} from the {short_table} table."
             metric_func = "sum"
+            metric_fmt = None
             for k,v in dictionary["metrics"].items():
                 if k.lower() == f"{tname}.{cname}".lower():
                     if v.get("name"):        metric_name = v["name"]
                     if v.get("description"): metric_desc = v["description"]
                     if v.get("function"):    metric_func = v["function"].lower()
+                    if v.get("format"):      metric_fmt = _resolve_metric_format(v["format"])
                     break
+            if not metric_fmt:
+                metric_fmt = _default_metric_format(metric_name, dt_obj, metric_func)
             metric_body = {
                 "information": {"name": metric_name, "description": metric_desc},
                 "fact": {
@@ -2114,9 +2172,15 @@ def cmd_build(m: MSTR, args):
                                    "filtering":"apply","groupBy":True}],
                     "excludeAttribute": False, "allowAddingUnit": True,
                 },
-                "format": {"header":[], "values":[]},
+                "format": {"header":[], "values": metric_fmt},
             }
             r = m.post(f"/api/model/dataModels/{model_id}/factMetrics", json=metric_body)
+            if not r.ok:
+                # Format tokens are cosmetic; never lose the metric over them.
+                print(f"    WARN metric {metric_name}: create with format failed ({r.status_code}); "
+                      f"retrying without format", file=sys.stderr)
+                metric_body["format"]["values"] = []
+                r = m.post(f"/api/model/dataModels/{model_id}/factMetrics", json=metric_body)
             if not r.ok:
                 print(f"    WARN metric {metric_name}: {r.status_code} {r.text[:200]}", file=sys.stderr)
                 continue
@@ -4204,6 +4268,82 @@ def cmd_create_conditional_metric(m: MSTR, args):
     print(json.dumps({"ok": True, "metric_id": metric_id, "embedded_filter_id": filter_id}, indent=2))
 
 
+def cmd_patch_fact_metrics(m: MSTR, args):
+    """Set aggregation function and/or number format on many fact metrics in ONE
+    changeset: list → per-metric GET (diff) → PATCH only what differs → commit →
+    re-read verify. One login and one changeset keep it clear of the interactive
+    session cap. Spec (JSON or YAML):
+
+      presets: {"<name>": [<format.values tokens>]}   # optional; adds to METRIC_FORMAT_PRESETS
+      metrics: [{"name": "<fact metric name or id>", "function": "avg", "format": "currency"}]
+
+    Logs in WITHOUT the identity token (memory/feedback_mosaic_identity_token_
+    privilege_downgrade.md). See memory/reference_mosaic_fact_metric_aggregation.md.
+    """
+    spec = (_load_yaml(args.spec) if args.spec.endswith((".yaml", ".yml"))
+            else _load_json_arg(None, args.spec)) or {}
+    presets = spec.get("presets") or {}
+    items = spec.get("metrics") or []
+    if not items: die(f"{args.spec}: no metrics[] entries")
+    m.login()
+    mp = f"/api/model/dataModels/{args.model_id}"
+    r = m.get(f"{mp}/factMetrics")
+    if not r.ok: die(f"list factMetrics: {format_mstr_error(r)}")
+    by_key = {}
+    for o in (r.json() or {}).get("factMetrics", []):
+        info = o.get("information") or {}
+        by_key[(info.get("name") or "").lower()] = info
+        by_key[(info.get("objectId") or "").lower()] = info
+
+    plan, missing = [], []
+    for it in items:
+        info = by_key.get(str(it.get("name") or "").lower())
+        if not info:
+            missing.append(it.get("name")); continue
+        r = m.get(f"{mp}/factMetrics/{info['objectId']}")
+        if not r.ok: die(f"GET factMetric {info['name']}: {format_mstr_error(r)}")
+        cur = r.json() or {}
+        body = {}
+        if it.get("function") and it["function"].lower() != (cur.get("function") or "").lower():
+            body["function"] = it["function"].lower()
+        if it.get("format") is not None:
+            want = _resolve_metric_format(it["format"], presets)
+            if not _format_matches(cur.get("format"), want):
+                body["format"] = {"header": (cur.get("format") or {}).get("header") or [], "values": want}
+        plan.append({"name": info["name"], "id": info["objectId"],
+                     "function": f"{cur.get('function')}→{body['function']}" if "function" in body else cur.get("function"),
+                     "format": "change" if "format" in body else "ok", "body": body})
+    if missing: die(f"spec names not on model: {missing}")
+
+    todo = [p for p in plan if p["body"]]
+    print(f"→ {len(plan)} metric(s) in spec, {len(todo)} need a PATCH", file=sys.stderr)
+    for p in plan:
+        print(f"  {'→' if p['body'] else '·'} {p['name']}: function {p['function']}, format {p['format']}",
+              file=sys.stderr)
+    if args.dry_run or not todo:
+        return
+
+    cs = open_cs(m, release_self_locks=True)
+    try:
+        for p in todo:
+            r = m.patch(f"{mp}/factMetrics/{p['id']}", json=p["body"])
+            if not r.ok: die(f"PATCH {p['name']}: {format_mstr_error(r)}")
+        commit_cs(m, cs)
+    except BaseException:  # die() raises SystemExit; discard on every failure path
+        discard_cs(m, cs)
+        raise
+
+    report = []
+    for p in todo:
+        cur = m.get(f"{mp}/factMetrics/{p['id']}").json() or {}
+        ok = (("function" not in p["body"] or cur.get("function") == p["body"]["function"])
+              and ("format" not in p["body"] or _format_matches(cur.get("format"), p["body"]["format"]["values"])))
+        report.append({"name": p["name"], "ok": ok, "function": cur.get("function")})
+    print(json.dumps({"ok": all(x["ok"] for x in report), "patched": len(todo), "verify": report}, indent=2))
+    if not all(x["ok"] for x in report):
+        die("read-back does not match the spec for at least one metric")
+
+
 def cmd_attach_transformation(m: MSTR, args):
     """Apply a transformation to an existing metric → creates a new time-shifted metric."""
     m.login(identity=True)
@@ -4917,6 +5057,14 @@ def build_parser():
                     help="aggregation wrapped around the source metric (default Sum, the live-verified path)")
     sp.add_argument("--description", default="", help="business description for the new metric")
 
+    sp = sub.add_parser("patch-fact-metrics",
+        help="Set aggregation function and/or number format on many fact metrics in one changeset, "
+             "then verify by read-back (see memory/reference_mosaic_fact_metric_aggregation.md).")
+    sp.add_argument("--model-id", required=True)
+    sp.add_argument("--spec", required=True,
+                    help="JSON/YAML: {presets?: {name: [format tokens]}, metrics: [{name, function?, format?}]}")
+    sp.add_argument("--dry-run", action="store_true", help="print the diff plan; open no changeset")
+
     sp = sub.add_parser("attach-transformation")
     sp.add_argument("--model-id", required=True)
     sp.add_argument("--name", required=True)
@@ -4967,6 +5115,7 @@ def main():
             "create-transformation": cmd_create_transformation,
             "create-compound-metric": cmd_create_compound_metric,
             "create-conditional-metric": cmd_create_conditional_metric,
+            "patch-fact-metrics": cmd_patch_fact_metrics,
             "attach-transformation": cmd_attach_transformation,
         }[args.cmd](m, args)
     except requests.HTTPError as e:
