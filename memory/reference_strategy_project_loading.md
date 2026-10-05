@@ -6,7 +6,7 @@ type: reference
 
 ## Gotcha 1 — `/api/projects` lists unloaded projects
 
-Symptom: `GET /api/projects` returns a project (e.g., `MicroStrategy One U12 Tutorial`, id `08BCDC39B04BC97FCCA626B40C1BCCFF`) with status `0`; every subsequent call against that project ID fails with:
+Symptom: `GET /api/projects` returns a project (e.g., `MicroStrategy One U12 Tutorial`, id `<projectId>`) with status `0`; every subsequent call against that project ID fails with:
 
 ```
 404 ERR001 iServerCode -2147209151

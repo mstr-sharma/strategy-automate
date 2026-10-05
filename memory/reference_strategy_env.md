@@ -11,7 +11,7 @@ Every script and skill in this repo reads tenant + credential values from enviro
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `MSTR_BASE` | yes | Library URL, e.g. `https://your-tenant.example.com/MicroStrategyLibrary` |
+| `MSTR_BASE` | yes | Library URL, e.g. `https://your-tenant.example.com/MicroStrategyLibrary`. Use the final host: clients refuse a redirect to another origin. |
 | `MSTR_AUTH_METHOD` | no | `auto` (default), `password`, `ldap`, `anonymous`, `api-token`, `sso`, `identity-token`, `oidc`. See `reference_strategy_authentication.md`. |
 | `MSTR_USER` | password sign-in | Username for `/api/auth/login` (Standard or LDAP). Not needed for SSO. |
 | `MSTR_PASSWORD` | password sign-in | Password. Never commit. Set in shell, keychain, or CI secret store. |
@@ -21,7 +21,9 @@ Every script and skill in this repo reads tenant + credential values from enviro
 | `MSTR_SSO_PORT` / `MSTR_SSO_HOST` | no | Loopback port (default 8753) and host (`127.0.0.1` or `localhost`) for the SSO consent page and OAuth redirects. |
 | `MSTR_SSO_BROWSER` / `MSTR_SSO_TIMEOUT` | no | Browser to open (a `webbrowser` name, e.g. `chrome`) and seconds to wait (default 300). |
 | `MSTR_SESSION_CACHE` | no | `0` disables caching browser sessions in the OS secret store. |
-| `MSTR_REUSE_SESSION` | no | `1` keeps password / API-token sessions open and cached between commands (one session for a whole chain); end with `strategy_auth.py logout`. |
+| `MSTR_REUSE_SESSION` | no | `1` keeps password / API-token sessions open and cached between commands (one session for a whole chain) in every script that signs in through `strategy_auth.py` (`build_mosaic.py`, the `_client.py` scripts, `strategy_api.py`); end with `strategy_auth.py logout`. |
+| `MSTR_HTTP_TIMEOUT` | no | Read timeout in seconds for every REST call (default 300; the connect timeout is 15 s). Applied by `strategy_auth.SafeSession`, which every client uses; a single call can still pass its own timeout. |
+| `MSTR_HTTP_RETRIES` | no | Retries for connection failures (any verb) and HTTP 502/503/504 on GET/HEAD/OPTIONS (default 2). Read timeouts and writes are never repeated. |
 | `MSTR_SECRET_STORE` | no | Force `keychain`, `secret-tool`, `file` or `none`. |
 | `MSTR_MCP_URL` | no | Mosaic MCP endpoint for `strategy_mcp.py` (found from `MSTR_BASE` when unset). |
 | `MSTR_PROJECT_ID` | one-of | Project UUID (32-hex). |
@@ -54,7 +56,7 @@ Defaults target the MicroStrategy Tutorial project so the live-tenant validator 
 | `MSTR_VALIDATE_DASHBOARD_TERMS` | `Tutorial Home,Dashboard,Sales,Revenue` | Comma-separated terms for the document/dashboard export probe. |
 | `MSTR_VALIDATE_SF_NAME` | `<attr> in <element> — secFilter_validation` | Name for the validation security filter. |
 
-CLI equivalents: every script accepts `--base`, `--user`, `--password`, `--login-mode`, `--auth-method`, `--project-id` / `--project-name`, and build-mosaic also takes `--dest-folder` plus borrowed-session flags (`--auth-token`, `--identity-token`, `--session-cookie`, `--ingress-cookie`). CLI flags win over env vars. Prefer env vars for secrets: a `--password` on the command line is visible to other local processes.
+CLI equivalents: REST scripts take `--base`, `--auth-method` and a project flag (`--project-id`, `--project-name` or `--project` — see each `--help`); password-capable scripts also take `--user` / `--login-mode` (`strategy_library_publications.py`: `--base-url` / `--username`), and build-mosaic also takes `--dest-folder` plus borrowed-session flags (`--auth-token`, `--identity-token`, `--session-cookie`, `--ingress-cookie`). CLI flags win over env vars. Secrets come from env vars or the OS keychain, never flags: a `--password` on the command line is visible to other local processes.
 
 ## MCP connectivity (separate from REST)
 

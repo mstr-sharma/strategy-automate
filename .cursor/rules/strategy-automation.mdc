@@ -9,6 +9,6 @@ This workspace is the **strategy-automate** repo. Read [AGENTS.md](../../AGENTS.
 - Platform goal: complete automation coverage wherever Strategy exposes an API, SDK, MCP, CLI, or reproducible hook. Classify gaps using `memory/reference_strategy_automation_coverage.md`.
 - Skill surfaces and the strict precedence chain (classify → plan → execute → verify) are enumerated in `AGENTS.md` → "Cold-start routing" — that list is authoritative; do not rely on a copy here.
 - Durable knowledge indexed at `memory/MEMORY.md` — load files on demand.
-- Credentials + tenant values come from env vars (`MSTR_BASE`, `MSTR_USER`, `MSTR_PASSWORD`, `MSTR_PROJECT_ID`/`MSTR_PROJECT_NAME`, `MSTR_DEST_FOLDER_ID`). Never hardcode.
+- Tenant values come from env vars (`MSTR_BASE`, `MSTR_PROJECT_ID`/`MSTR_PROJECT_NAME`, `MSTR_DEST_FOLDER_ID`); sign-in from `MSTR_AUTH_METHOD` (`MSTR_USER`/`MSTR_PASSWORD`, `MSTR_API_TOKEN`, or browser `sso`). Never hardcode, and never pass secrets as flags.
 - Consumer-grade naming + paired-query validation are part of the ship bar. Validation is comparator-dependent; if no trusted comparator exists yet, mark it pending instead of calling the build shippable. See `memory/feedback_mosaic_ship_bar.md` and `memory/reference_strategy_data_validation.md`.
 - MCP tools (`get_projects`, `get_models` — older servers `get_mosaic_models` — `get_semantics`, `query`) configured separately through your Cursor MCP settings. This repo references them by name only.

@@ -29,7 +29,7 @@ Node shapes (discriminator = `type`):
 Rules that bit us:
 - **`dimty` must be `null`** for a compound expression (anything not a bare aggMetric object-reference) → else `8004d711 "...dimty should be null"`. Bare fact/aggMetrics DO take the `report_base_level` dimty.
 - Changeset goes in the **`X-MSTR-MS-Changeset` header**, not `?changesetId=` (→ `8004cc03`).
-- No top-level `function` on a compound metric. identity-token OFF on studio (`feedback_mosaic_identity_token_privilege_downgrade.md`).
+- No top-level `function` on a compound metric. identity-token OFF on a Strategy ONE Cloud tenant (`feedback_mosaic_identity_token_privilege_downgrade.md`).
 
 Worked example — cross-source ratio `MktCap / ((OutputSat/1e8) * Close)`:
 ```json
@@ -46,7 +46,7 @@ Worked example — cross-source ratio `MktCap / ((OutputSat/1e8) * Close)`:
 ```
 On GET, the service round-trips `expression.text`, e.g. `{Market Capitalization USD} / (({Output Value Satoshis} / 100000000) * {Closing Price USD})`. The CLI `create-compound-metric` (superseded `{type:operator/metric_reference}` guess, forces identity-on) does NOT produce this shape — POST the tree directly instead.
 
-**Updating a compound metric (verified 2026-07-21):** `PATCH /metrics/{id}` is NOT a registered route (404 8004cc04), and the helper's `patch-model-object --kind metric` wrongly routes to `/factMetrics/{id}` (500 8004d706 subtype mismatch). Use **PUT `/api/model/dataModels/{id}/metrics/{mid}`** with a FULL body `{information, expression:{tree}, dimty: null, format}` in a changeset. GET returns the expression as read-only `text` only — you must supply the `tree` again on PUT (rebuild it; stripping text and sending an empty expression → 400 8004d718 "expression could not be set to empty").
+**Updating a compound metric (verified 2026-07-21):** `PATCH /metrics/{id}` is NOT a registered route (404 8004cc04), and the helper's `patch-model-object --kind metric` used to route to `/factMetrics/{id}` (500 8004d706 subtype mismatch; fixed 2026-10-05: `--kind metric` is now the derived metric's `/metrics/{id}` with PUT, `--kind fact_metric` the fact metric). Use **PUT `/api/model/dataModels/{id}/metrics/{mid}`** with a FULL body `{information, expression:{tree}, dimty: null, format}` in a changeset. GET returns the expression as read-only `text` only — you must supply the `tree` again on PUT (rebuild it; stripping text and sending an empty expression → 400 8004d718 "expression could not be set to empty").
 
 **Format rendering gotcha (verified in dashboard KPI grid):** the `number_currency_symbol` field does NOT render in dashboard grids — only the `number_format` PATTERN does (percent `%` in the pattern renders fine). Put the `$` in the pattern as a quoted literal and keep the category/symbol fields set: category `1` + `"$"#,##0.00;"$"-#,##0.00` + symbol `$` renders everywhere (verified 2026-09-29; see "Format tokens" for the category enum — `2` is Date, not Currency).
 
@@ -130,9 +130,9 @@ shape (`/factMetrics`, `?changesetId=`, an invented `conditionality` block). Run
 `build_mosaic.py create-conditional-metric` (`cmd_create_conditional_metric()` in
 `skills/build-mosaic-model/scripts/build_mosaic.py`).
 
-All three writes go in **ONE changeset** with the identity token ON (`X-MSTR-IdentityToken`;
-the changeset rides the `X-MSTR-MS-Changeset` header). Identity ON is what the verified run
-used; if Modeling writes 403 with `8004cb09`, see `feedback_mosaic_identity_token_privilege_downgrade.md`.
+All three writes go in **ONE changeset** (it rides the `X-MSTR-MS-Changeset` header). The verified
+run had the identity token ON; the general default is OFF (grant-dependent) — if Modeling writes 403
+with `8004cb09`, drop it (`feedback_mosaic_identity_token_privilege_downgrade.md`).
 
 **(a) Create the unfiltered metric** — `POST /api/model/dataModels/{mid}/metrics?showAdvancedProperties=true`,
 tokens for `Sum<UseLookupForAttributes=False>([Fact Metric]){~+}` and a `report_base_level`

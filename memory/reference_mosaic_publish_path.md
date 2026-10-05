@@ -85,7 +85,7 @@ Observed on a Strategy ONE Cloud tenant (2026-06-11 capture): **`GET /api/cubes/
 
 1. **Cube-execute probe**: `POST /api/v2/cubes/{id}/instances?limit=1` body `{}` — 200 with data ⇒ published; `500 iServerCode -2147072488 "Intelligent Cube … is not published"` ⇒ not (yet) materialized. Definitive in both directions.
 2. **3-step `publishStatus`** with the SAME instance that fired the 3-step publish — only valid when the 3-step flow was this run's single trigger.
-3. **Trino/MCP `count(*)`** when an MCP/Trino session is available.
+3. **A scoped Trino/MCP query** (one attribute and one metric, with a `LIMIT`) when an MCP/Trino session is available — not a whole-model `count(*)`, which can hit the job time limit on big models (`reference_mcp_tools.md`).
 
 A `202` from `/api/cubes` or `204` from `/publish` proves only that the job was queued — and **`publishStatus` itself can LIE**. Verified 2026-06-11 (Strategy ONE Cloud family): `publishStatus` polled with the same instance that fired the 3-step publish returned `status=1, tables:[]` continuously for 5 minutes — and 9 seconds after the last poll, a cube-execute probe returned 200 with the full 3000-row cube. The cube had materialized while `publishStatus` still reported "running, no tables". Treat `status=1/tables:[]` as "unknown", never as "stalled": interleave the cube-execute probe (`POST /api/v2/cubes/{id}/instances?limit=1` → 200 = done, `-2147072488` = not yet) into every publish poll loop, and let IT decide.
 
@@ -122,7 +122,7 @@ Strategy ONE Cloud tenant, multi-DB in-memory model (captured run):
 - `GET /api/dataModels/{id}/publishStatus` with the 3-step instance id → **21 consecutive 500 responses over ~5 minutes**, all `iServerCode: -2147072194` "Cube report … is being published by job N". The script never saw a green status.
 - User checked the Library UI: publish had completed **in seconds**. MCP Trino query confirmed the cube had materialized its expected row count.
 
-### Fix pattern — single trigger + MCP/Trino count(*) completion probe
+### Fix pattern — single trigger + independent completion probe
 
 ```python
 # Single trigger = the documented 3-step flow (corrected 2026-10-05; the 2026-04 version of
@@ -140,10 +140,9 @@ while time.time() < deadline:
     st = s.get(f"{BASE}/api/dataModels/{MID}/publishStatus", headers=hdr).json()
     if any(t.get("status") in ("error", "schema_comparison_error") for t in st.get("tables", [])):
         raise RuntimeError(st)
-    probe = s.post(f"{MCP_BASE}/query",
-                   json={"schema": PROJECT_NAME.lower(),
-                         "query": f'SELECT count(*) FROM "{model_name.lower()}"'})
-    if probe.ok and "count" in probe.json(): break
+    probe = s.post(f"{BASE}/api/v2/cubes/{MID}/instances", params={"limit": 1}, json={})
+    if probe.ok: break          # cube-execute probe; 500 iServerCode -2147072488 = not published yet
+    # (or a scoped query: strategy_mcp.py query --project "<project>" --sql '<attribute + metric … LIMIT 1>')
 s.delete(f"{BASE}/api/dataModels/{MID}/instances/{inst}")
 ```
 

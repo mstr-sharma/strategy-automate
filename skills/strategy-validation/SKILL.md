@@ -1,6 +1,6 @@
 ---
 name: strategy-validation
-description: Validate a Strategy Mosaic (or any Strategy) model against a trusted reference — another Mosaic model, a classic/legacy semantic-layer query, a flat file (CSV/Parquet/JSON), a direct warehouse SQL query, or a REST report output. Run a suite of paired queries, compare aggregates row-by-row with numeric tolerance, report matches/mismatches/missing rows.
+description: Validate a Strategy Mosaic (or any Strategy) model against a trusted reference — another Mosaic model, a classic/legacy semantic-layer query, a flat file (CSV/Parquet/JSON), a direct warehouse SQL query, or a REST report output. Run a suite of paired queries, compare aggregates row-by-row with numeric tolerance, report matches/mismatches/missing rows. Also owns Strategy Test Center baseline and comparison tests. Use it for "validate the model", "do the numbers match", "compare with the old report", "Test Center", "baseline test", "regression test" or "compare before and after a migration".
 ---
 
 # Strategy Data Validation
@@ -8,6 +8,10 @@ description: Validate a Strategy Mosaic (or any Strategy) model against a truste
 Use this skill whenever a model (especially a freshly built or modified Mosaic model) needs to be proven data-correct before it's marked shippable. **Every build should close with validation or an explicit validation-pending note.** The reference source can be whatever trusted artifact is closest to ground truth — this skill is not Mosaic-only.
 
 Validation is always comparative. There is no universal "model is correct" check without first selecting what it should match: an existing Mosaic model, a classic/legacy semantic-layer report or model, a raw warehouse query, a flat file, an external system/API, or a saved REST fixture. If no trusted comparator is available yet, say that clearly and mark the build **not shippable pending validation**.
+
+## Scope
+
+Owns the paired-query validator (`skills/build-mosaic-model/scripts/strategy_validate_models.py`) and the Test Center API areas — Baseline Test, Comparison Test, Test Center Settings, Storage Sync File, and the internal Test Center file store and baseline-result files (`python3 skills/strategy-platform/scripts/strategy_api.py ops --tag strategy-validation --internal`). Structural checks are `build_mosaic.py validate-model`; fixing a model is `build-mosaic-model`.
 
 ## When to invoke
 
@@ -33,7 +37,7 @@ Every source adapter reduces to `run_query(q) -> list[dict]`. The skill diffs st
 
 A shippable validation covers these 5 shapes at minimum. Expand to 10+ for critical / production-bound models.
 
-1. **Totals + cardinality** — `SELECT COUNT(*), SUM(<primary measure>) FROM <model>`. Catches empty models, wrong fact table, fact-table double-joins.
+1. **Totals + cardinality** — `SELECT SUM(<primary measure>), COUNT(DISTINCT <key attribute>) FROM <model>`; on big models scope it with a `WHERE` — a whole-model `COUNT(*)` can hit the job time limit (`memory/reference_mcp_tools.md`). Catches empty models, wrong fact table, fact-table double-joins.
 2. **One-dim breakdown** — group by a high-cardinality descriptor (market segment, brand, ship mode). Catches attribute→fact join breaks.
 3. **Two-dim rollup across the relationship chain** — e.g., Region × Nation revenue with hierarchical joins. Catches missing or mis-directed relationships (this is how the TPC-H Line-Number-overwritten bug surfaces).
 4. **Filtered subset** — group by a descriptor inside a narrow filter (e.g., WHERE region = 'EUROPE'). Catches filter semantics + security-filter bleed-through.
@@ -88,7 +92,7 @@ python3 skills/build-mosaic-model/scripts/strategy_validate_models.py \
 
 ### Live Mosaic-to-Mosaic adapter (Trino)
 
-Implemented. Runs the same SQL against two Mosaic models through the Strategy Trino endpoint (host derived from `MSTR_BASE`, schema from `MSTR_PROJECT_NAME`, basic auth with `MSTR_USER` / `MSTR_PASSWORD`). Model name becomes the table name (lowercased, double-quoted). Use `%s` or `{{MODEL}}` as the model placeholder in the SQL:
+Implemented. Runs the same SQL against two Mosaic models through the Strategy Trino endpoint (host derived from `MSTR_BASE`, schema from `MSTR_PROJECT_NAME`, basic auth with `MSTR_USER` / `MSTR_PASSWORD`). Single-sign-on accounts without a Strategy password run the same SQL through the Mosaic MCP server (`python3 skills/strategy-platform/scripts/strategy_mcp.py query --project "<project>" --sql '<SQL>'`), save both row sets and use the file adapter. Model name becomes the table name (lowercased, double-quoted). Use `%s` or `{{MODEL}}` as the model placeholder in the SQL:
 
 ```bash
 python3 skills/build-mosaic-model/scripts/strategy_validate_models.py \
@@ -115,6 +119,26 @@ Warehouse-SQL, classic-report, and REST-fixture adapters are not yet wrapped. Th
 ```
 
 Until those ship, the equivalent ad-hoc flow is: choose the comparator, run each paired query once against the model and once against the reference source, save both row sets, run the file adapter, and report the comparator used.
+
+## Test Center: baseline and comparison tests
+
+Test Center captures a baseline of reports, documents, dashboards and cubes (data, SQL, PDF) and compares two baselines — the before/after gate for migrations and model changes. Mechanics as in every domain skill: `describe` before each call, dry run, then `--yes` (`skills/strategy-platform/SKILL.md`).
+
+```bash
+API="python3 skills/strategy-platform/scripts/strategy_api.py"
+$API call getAllIntegrityTests
+$API call createIntegrityTest --body @test.json --yes          # name, settings.analyzer (what to capture), testObjects
+$API call createIntegrityTestBaseline -p integrityTestId=<T> --body '{}' --yes        # runs the test objects
+$API call queryIntegrityBaselineStatus -p integrityTestId=<T> -p baselineId=<B>       # poll
+$API call createIntegrityComparison --body @cmp.json --yes     # name, source / target {type, testId, baselineId}, settings.compareContent
+$API call createIntegrityComparison_1 -p integrityComparisonId=<C> --body '{}' --yes  # run the comparison
+$API call queryIntegrityComparisonStatus -p integrityComparisonId=<C> -p comparisonId=<R>
+$API call getIntegrityComparisonSummary -p integrityComparisonId=<C> -p comparisonId=<R> -p includeDetails=true
+```
+
+- `settings.compareContent` takes `SQL`, `DATA` and `PDF`; take the other body fields from `describe createIntegrityTest` / `describe createIntegrityComparison`.
+- Creating a baseline runs the test objects on the environment ("Trigger a Baseline Test execution" in the spec): schedule it when that load is acceptable.
+- Delete the tests, baselines and comparisons you created (`deleteIntegrityTestById`, `deleteIntegrityTestBaseline`, `deleteIntegrityComparisonById`) after confirming the ids.
 
 ## Integration with build workflows
 
@@ -150,3 +174,8 @@ A structurally valid model can still be numerically wrong (broken conformance, w
 - `memory/reference_strategy_data_validation.md` — design-time 10-check suite + runnable 5-query suite, reference-source decision matrix, tolerance rules, failure triage mapped to Kimball root causes.
 - `memory/reference_mosaic_build_validation.md` — the structural checklist invoked by `build_mosaic.py validate-model`.
 - `memory/feedback_mosaic_ship_bar.md` checklist item 8 — validation is a ship-bar requirement.
+
+## Status
+
+- **Implemented, hermetic tests:** the file adapter and the Mosaic-to-Mosaic Trino adapter of `strategy_validate_models.py` (`tests/test_strategy_validate_models.py`).
+- **Spec-verified only:** the Test Center workflow — its operation IDs, parameters and required body fields pass `strategy_api.py`'s offline validation; no recorded live run. Record the first one in `memory/reference_strategy_validation_workflows.md`.

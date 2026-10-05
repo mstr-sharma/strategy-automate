@@ -20,13 +20,13 @@ Route elsewhere:
 ## How to work
 
 1. Sign in once (`strategy_auth.py login`), export `MSTR_PROJECT_ID`, and from the repo root `API="python3 skills/strategy-platform/scripts/strategy_api.py"`.
-2. `$API describe <operationId>` before every call. The body skeleton shows at most 8 values of an enum — `delivery.mode` has 11 (workflow 3).
+2. `$API describe <operationId>` before every call. The body skeleton lists up to 40 values of an enum.
 3. Reads first. GETs run directly; POST-based reads (`…/query`, `…/results`) change nothing but still need `--yes`.
 4. Every write: run it without `--yes`, check the printed request (recipients, schedule, content, delivery target), then add `--yes`.
 5. Read back after each write — the server rewrites some fields on save (workflow 3).
 6. Remove the test subscriptions, schedules, events, contacts and History List messages you made; report anything left behind with its id.
 
-`call` signs in and out per run unless the session is a cached browser one (`strategy_auth.py login --method sso`), so an instance id made by one call is gone in the next. Prompted-content sends need one session — strategy-content, "One session".
+`call` signs in and out per run unless the session is a cached browser one (`strategy_auth.py login --method sso`) or you pass `--reuse-session` (`MSTR_REUSE_SESSION=1`; end it with `strategy_auth.py logout`); otherwise an instance id made by one call is gone in the next. Prompted-content sends need one session — strategy-content, "One session".
 
 ## Workflows
 
@@ -72,7 +72,7 @@ $API call createSubscription --body @sub.json --yes   # 201 → id; then getSubs
 
 - `delivery.mode`: `EMAIL HISTORY_LIST CACHE FTP FILE MOBILE ONEDRIVE SHAREPOINT S3 GOOGLEDRIVE GCS`, each with its own block (`email`, `historyList`, `cache`, `ftp`, `file`, `mobile`, `onedrive`, `sharepoint`, `s3`, `googledrive`, `gcs`).
 - `contents[].type`: `report document cube data_model dossier` (a dashboard is `dossier`). `recipients[].type`: `user user_group contact contact_group personal_address dynamic_recipient_list all_consumers`; `includeType`: `TO CC BCC`.
-- `personalization.formatType`: `PLAIN_TEXT EXCEL HTML PDF STREAMING SWF_MHT SWF_HTML CSV`; `email.sendContentAs`: `data data_and_history_list data_and_link_and_history_list link_and_history_list library_snapshot none`.
+- `personalization.formatType`: `PLAIN_TEXT EXCEL HTML PDF STREAMING SWF_MHT SWF_HTML CSV VIEW INTERACTIVE EDITABLE EXPORT_FLASH PHONE TABLET JSON MSTR IMAGE`; `email.sendContentAs`: `data data_and_history_list data_and_link_and_history_list link_and_history_list library_snapshot none`.
 - `sendNow: true` sends during the create and needs the send-now privilege — keep it `false` and send in workflow 4.
 - Read back: a `user` recipient sent with `addressId` returns as `personal_address`; `formatMode` / `viewMode` `DEFAULT` return as `CURRENT_PAGE` / `BOTH`.
 
@@ -160,7 +160,7 @@ Official workflow since Strategy August 2025: a subscription whose content is th
 
 ## Safety rules
 
-- **Sends reach real people.** `sendSubscription`, `sendSubscription_1`, `triggerEvent`, a create or update with `sendNow: true`, and a schedule that fires soon all deliver. Before any of them: expand the recipients (user groups, contact groups, dynamic lists), show the list with the content and delivery target, and get an explicit yes for that send.
+- **Sends reach real people.** `sendSubscription`, `sendSubscription_1`, `triggerEvent`, a create or update with `sendNow: true`, and a schedule that fires soon all deliver. Before any of them: expand the recipients — user groups with `getUserGroupMembers_1 -p id=<G> -p flatMembers=true -p limit=-1`, contact groups with `getContactGroupById -p id=<id>`, dynamic lists with `getDynamicRecipientListById -p id=<id>` plus a run of its `sourceReportId` (strategy-content workflow 4) — then show the list with the content and delivery target, and get an explicit yes for that send.
 - First runs go to `HISTORY_LIST` or to one test recipient the user named (themselves or a test contact) — never a group.
 - `triggerEvent` runs every subscription on every schedule bound to the event; list them first (workflow 6).
 - Never delete subscriptions, schedules, events, contacts, contact groups, dynamic lists, transmitters, devices or History List messages without explicit confirmation of the listed ids. Schedules, events, transmitters and devices are shared: run `getDependentSubscriptions` before removing one. `removeFromHistoryList -p removeOthersMessage=true` deletes other users' messages.
@@ -169,7 +169,7 @@ Official workflow since Strategy August 2025: a subscription whose content is th
 
 ## Field notes
 
-- `memory/reference_strategy_subscriptions_and_schedules.md` — endpoint families, the verified 2026-04-23 report email subscription (`sendNow: true`) with its save-time rewrites, the scheduled-refresh body. **Differs from the spec:** its `mode` list adds `PRINTER`, `SNAPSHOT`, `PERSONAL_VIEW`, `SHARED_LINK` — values of the recipient endpoints' `deliveryType` parameter, not of `delivery.mode` (11 values on create and read; the official docs' sample GET does show `SHARED_LINK`). Its "classic cube refresh = `CACHE` subscription" is unverified.
+- `memory/reference_strategy_subscriptions_and_schedules.md` — endpoint families, the verified 2026-04-23 report email subscription (`sendNow: true`) with its save-time rewrites, the scheduled-refresh body. Its `mode` list matches the spec (11 values on create and read; corrected 2026-10-05 — `PRINTER`, `SNAPSHOT`, `PERSONAL_VIEW`, `SHARED_LINK` belong to the recipient endpoints' `deliveryType`; the official docs' sample GET does show `SHARED_LINK`). Its "classic cube refresh = `CACHE` subscription" is unverified.
 - `memory/reference_strategy_admin_platform.md` ("Distribution services") — endpoint families; matches the spec.
 - `memory/reference_mosaic_publish_path.md`, `memory/reference_mosaic_vs_legacy_surfaces.md` — classify before a refresh; what proves a publish.
 - `memory/reference_strategy_runtime_analytics.md` — prompt-answer grammar for prompted content.

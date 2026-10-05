@@ -1,14 +1,17 @@
 ---
 name: build-mosaic-model
-description: Build a Strategy Mosaic (MicroStrategy) semantic model from scratch against live warehouse tables. Use when the user asks to "build a mosaic model", "create a semantic model in Strategy", or provides a DB instance + schema + tables and wants a model wired up. Handles auth, warehouse-table discovery, model/table/attribute/metric creation, relationships, ACL, security filters, publish, and post-build edits via `scripts/build_mosaic.py` against the Strategy REST API. Kimball-first: expects star / snowflake / galaxy topology with conformed dimensions.
+description: Build a Strategy Mosaic (MicroStrategy) semantic model from scratch against live warehouse tables. Use when the user asks to "build a mosaic model", "create a semantic model in Strategy", or provides a DB instance + schema + tables and wants a model wired up. Handles auth, warehouse-table discovery, model/table/attribute/metric creation, relationships, ACL, security filters, publish, and post-build edits via `scripts/build_mosaic.py` against the Strategy REST API. Kimball-first — expects star / snowflake / galaxy topology with conformed dimensions.
 ---
 
 # Build a Strategy Mosaic model from scratch
 
 This skill is the **execution layer** for Mosaic data-model creation and modification. The **planning layer** is `skills/strategy-data-modeling/SKILL.md` — route through it first unless the user gave you a complete pre-planned build.
 
+## Scope
+
+Owns the Modeling and datasource API areas (`python3 skills/strategy-platform/scripts/strategy_api.py ops --tag build-mosaic-model`): Data Models, Mosaic, Changesets, Workspaces (plus the internal Model Server, Open Semantic Layer and Data Server), the classic schema-object areas (Attributes, Facts, Metrics, Filters, Prompts, Custom Groups, Consolidations, Derived Elements, Transformations, Hierarchies, System Hierarchy, User Hierarchies, Tables, Schema, Base Formulas, Subtotals, Calendars, Drill Maps), Security Filters, and Datasource Management, Drivers and Gateways. Classic objects and datasource administration have their own sections below.
+
 **Out of scope for this skill** — route to `skills/strategy-automation/SKILL.md` and `memory/reference_strategy_surface_matrix.md`:
-- Classic / project semantic-layer objects (legacy attributes, project metrics/facts/filters, project security filters)
 - Runtime analytics (reports, dashboards, documents, prompt answers, exports)
 - AI / Agent / Bot work
 - Non-Mosaic cube / dataset work (Intelligent Cube, OLAP cube, Super Cube, MTDI, Push Data)
@@ -23,11 +26,11 @@ Every one of these owns a piece of the build surface; this skill delegates the d
 - `memory/reference_mosaic_business_logic_translation.md` — intent → build plan; the mandatory pre-build artifact.
 - `memory/feedback_business_logic_pass_mandatory.md` — non-optional rule.
 - `memory/feedback_mosaic_relationship_wiring.md` — conformed-dim recipe + the `8004ccdb` / `8004ccc7` / `8004e409` failure modes + fix pattern.
-- `memory/feedback_build_mosaic_session_leak.md` — one-session-one-process rule; the single most common cause of mid-build failure.
+- `memory/feedback_build_mosaic_session_leak.md` — one session per pipeline (one process or `MSTR_REUSE_SESSION=1`); the session cap was the most common cause of mid-build failure.
 - `memory/reference_mosaic_rest_api.md` — verified endpoint paths (auth, datasources, catalog, data models, changesets, security, translations).
 - `memory/reference_mosaic_modeling_concepts.md` — payload shapes for attributes, metrics (compound / conditional / level / transformation), relationships, filters, transformations.
 - `memory/reference_mosaic_publish_path.md` — the one publish file: 3-step flow, do-not-fire-both rule, dataType publish-readiness gate (prevents iServerCode -2147212544 stalls).
-- `memory/reference_mosaic_vs_legacy_surfaces.md` — subType 779 vs 776 classification before any publish/refresh/execute write.
+- `memory/reference_mosaic_vs_legacy_surfaces.md` — subtype 779 + extType 448 (Mosaic) vs other subtype 779 (data-import cube) vs 776 (classic cube) classification before any publish/refresh/execute write.
 - `memory/reference_strategy_object_cloning.md` — clone-and-remap procedure when a payload shape is unknown.
 - `memory/feedback_mosaic_ship_bar.md` — ship-bar checklist: naming, DESC-form report/browse displays, metric format tokens, description length cap, SF naming.
 
@@ -52,9 +55,9 @@ A committed Mosaic data model containing:
 - Optional publish (for in-memory) or serve-mode switch
 - Model URL: `{BASE}/app/library#/model/{modelId}`
 
-## Execution flow — single process, single session
+## Execution flow — one session
 
-**Always use `scripts/build_mosaic.py`**. Do not re-implement REST calls inline. Chain the pipeline in one Python process — see `memory/feedback_build_mosaic_session_leak.md`.
+**Always use `scripts/build_mosaic.py`**. Do not re-implement REST calls inline. Keep the pipeline in one session — `build-from-config`, one Python process, or separate subcommands under `MSTR_REUSE_SESSION=1` (end it with `strategy_auth.py logout`); see `memory/feedback_build_mosaic_session_leak.md`.
 
 1. **Confirm env.** `MSTR_BASE` + project + a sign-in method: `MSTR_API_TOKEN`, `MSTR_USER`+`MSTR_PASSWORD`, or none at all for single sign-on (`--auth-method sso`; the human clicks **Allow** once in their browser and later runs reuse the cached session). Never hardcode or print secrets, and never pass them as flags. See `memory/reference_strategy_authentication.md`.
 2. **Auth (handled by script).** `strategy_auth.py` signs in (`POST /api/auth/login`, or `/api/auth/delegate` for SSO); scripts log out with `POST /api/auth/logout` unless the session is shared with a browser. The Modeling identity token (`X-MSTR-IdentityToken`) is grant-dependent: some tenants need it for Mosaic writes, on others it downgrades privileges (`8004cb09`) — see `memory/feedback_mosaic_identity_token_privilege_downgrade.md`. Never add it to classic/project workflows.
@@ -118,6 +121,40 @@ python3 scripts/build_mosaic.py patch-model-object \
 
 Modeling Service `PATCH` replaces top-level fields — start from a current `GET`, keep everything that must survive, verify with another `GET`.
 
+## Classic schema objects (project semantic layer)
+
+Attributes, facts, metrics, filters, prompts, hierarchies, transformations and project security filters are top-level Modeling Service objects (`/api/model/...`), not Mosaic data-model objects. Plan changes with `skills/strategy-data-modeling/SKILL.md`. Recipes: `memory/reference_strategy_legacy_semantic_admin.md` (attribute + fact create verified 2026-08-25; security filters) and `memory/reference_strategy_tutorial_semantic_field_study.md`.
+
+- Read and patch existing objects with `get-model-object` / `patch-model-object` ("User + access preflight" above; `--kind project_attribute|project_fact|project_metric|project_table|project_filter|project_hierarchy|project_transformation`, aliases `legacy_attribute|legacy_metric|filter|hierarchy|transformation`). Each kind uses the verb the spec defines (PUT for metrics, facts and filters; PATCH otherwise) and refuses any other; schema-level kinds open a schemaEdit changeset.
+- Create through `strategy_api.py`; the dry run prints the request and the changeset it will open:
+
+```bash
+API="python3 skills/strategy-platform/scripts/strategy_api.py"
+$API call ms-createAttribute --schema-edit --body @attribute.json      # also ms-postFact, ms-postMetric, ms-postFilter, ms-postPrompt
+$API call ms-postSecurityFilter --body @sf.json                         # classic project security filter
+$API call updatePartialSecurityFilter_1 -p id=<sfId> --body '{"operationList":[{"op":"addElements","path":"/members","value":["<user or group id>"]}]}'
+$API call getSecurityFilterUsers_1 -p id=<sfId>                        # read back the members
+```
+
+- Metrics, facts and prompts are replaced whole with PUT (`ms-putMetric`, `ms-putFact`, `ms-putPrompt`); attributes, tables and hierarchies take PATCH. Start from a current GET either way.
+- No identity token on classic Modeling calls (`skills/strategy-automation/SKILL.md`, Operating Rules).
+- The `strategy_api.py` lines here are spec-verified only.
+
+## Datasources and connections
+
+Build discovery is `list-datasources`, `list-namespaces` and `describe-tables`. Datasource administration — connections, logins, mappings, project assignment — goes through `strategy_api.py`; none of it has a recorded live run here yet:
+
+```bash
+$API call getDatasources
+$API call getDatabaseConnections
+$API call getDatasourceLogins
+$API call getProjectDatasources -p id=<projectId>
+$API call testDatabaseConnectionWithBody --body @conn.json --yes     # tests a connection (a POST, so it needs --yes)
+```
+
+- A login body holds a warehouse password: the human writes it, or use a `vaultSecret` login backed by a vault (`skills/strategy-admin/SKILL.md`, workflow 10). Keep `exportDatasourceLogins` output out of the repo.
+- `getDBMSs`, `getDSNs` and `getDrivers` (`/api/dbobjects/...`) are deprecated.
+
 ## Invocation examples
 
 Single source:
@@ -148,18 +185,28 @@ Full subcommand index lives in `memory/reference_mosaic_build_skill.md`. Start t
 The skill auto-classifies topology from column-name patterns. Override with `--dictionary` + `--erd` when needed.
 
 - **Star** — one fact, many dims, no sub-dim chains.
-- **Snowflake** — dim chains naturally emerge when a dim's PK appears in another dim; auto-creates a user-defined hierarchy for the longest chain.
+- **Snowflake** — dim chains naturally emerge when a dim's PK appears in another dim and are wired as attribute relationships (no hierarchy object is created: the spec has no Mosaic hierarchy endpoint).
 - **Galaxy / constellation** — conformed dim (a non-PK descriptor in ≥2 tables) is promoted to one multi-table attribute.
 - **Noise columns** (skipped): `SOURCE_SYSTEM`, `LOAD_TIMESTAMP`, `LAST_UPDATED_AT`, `INGESTION_DATE`, `LOAD_DATE`, `ETL_BATCH_ID`, `DW_CREATED_AT`, `DW_UPDATED_AT` when present in 3+ tables.
 - **Bridge / junction** (all-FK tables) — not auto-wired as `many_to_many`; dictionary/ERD must declare.
 - **Non-Kimball (OBT / EAV / graph)** — stop and confirm with the user; reshape upstream.
 
+## Behaviour worth knowing (2026-10-05 hardening)
+
+- **ACL writes merge.** `--grant` / `--deny` add bits to a trustee's existing entry and keep its type; `--replace-trustee` sets the entry exactly. Granting and denying the same right in one command stops the run. A trustee new to the ACL needs `:user` or `:user_group` when the account can't read users and groups.
+- **Security filters** resolve members before creating anything; a name that is both a user and a group, or an ID that doesn't exist, stops the run. A filter whose members couldn't be bound counts as a failure.
+- **`build` order:** post-build specs are validated before the model is created; the summary (with `model_id`) always prints; publish runs only when tables, attributes, metrics and relationships succeeded; certify runs last and only on a clean build.
+- **Opt-in only:** `--release-locks` (lock release, checked against the lock owner), `--use-batch` (UI-internal batch endpoint), `--unverified-ok` (create-transformation, create-compound-metric, attach-transformation), `--any-type` (delete-model on something that isn't a Mosaic model), `api-call --show-secrets`.
+- **`refresh --refresh-type`** is honoured (`replace` default; `incremental` = upsert); any table status ending in `error` fails fast; the publish instance is kept if the network drops mid-publish.
+- **`patch-model-object --kind metric`** is a derived metric (`/metrics`, PUT); fact metrics are `--kind fact_metric`.
+- Write failures exit non-zero in merge-attributes, wire-relationships, translate, add-security-filter and delete-model.
+
 ## Path drift — when an endpoint 404s
 
 Strategy REST paths drift between versions. If a call 404s:
 
-1. `openapi-summary` to fetch live `{Library}/api/openapi.yaml`.
-2. `openapi-search "<term>"` (with `?visibility=all` if Swagger UI shows more than the default spec).
+1. `python3 skills/strategy-platform/scripts/strategy_api.py sync`, then `ops --search "<term>" --internal` and `describe <operationId>` — the tenant's own spec, public and internal operations.
+2. Older fallback: `openapi-summary` / `openapi-search "<term>"` against `{Library}/api/openapi.yaml?visibility=all`.
 3. `discover` for live catalog variants (`/api/datasources` vs `/api/dbobjects/databaseInstances`, `/catalog/tables` vs `/tables` vs `/namespaces/{ns}/tables`).
 4. Update constants at the top of the helper script; update the corresponding memory file with the tenant-specific finding.
 

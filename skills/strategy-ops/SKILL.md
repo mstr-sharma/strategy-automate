@@ -25,7 +25,7 @@ Route elsewhere:
 3. Who am I: `$API call sessionSessionIdUserInfoGet` gives `id` and `fullName`. The job monitor filters on full name (`user`); the connection monitor on login (`username`) or full name (`name`).
 4. `$API describe <operationId>` before each call; reads first; writes as a dry run, then `--yes` after the user agrees; read back (the job is gone, the cache state changed, the project reached `loaded`).
 5. Many writes answer 202 (cube cache changes, project status, change journal purge): poll until done.
-6. Every `$API call` is its own sign-in, and project operations open a project session (`memory/feedback_build_mosaic_session_leak.md`). For long polling loops use one process, as in `skills/strategy-migration/SKILL.md`.
+6. Every `$API call` is its own sign-in unless you pass `--reuse-session` (`MSTR_REUSE_SESSION=1`) or use a cached `sso` session, and project operations open a project session (`memory/feedback_build_mosaic_session_leak.md`). Use a reused session for polling loops and end it with `strategy_auth.py logout`.
 
 ## Workflows
 
@@ -144,11 +144,11 @@ Internal, so the tool flags them and they are not public contract: `getHangDetec
 
 ## Field notes
 
-- `memory/reference_strategy_monitoring_jobs_alerts.md` — job records carry SQL while running (Monitor Jobs privilege, else ERR014 -2147213784); cube cache `jobExecutionStatistics`. **Contradicts the spec:** `GET /api/monitors/caches`, `POST /api/monitors/caches/{id}?action=…`, `GET /api/monitors/sessions`, `POST /api/alerts`, `GET /api/alerts/{id}/history` and `POST /api/cubes/{id}/refresh` are not in it, and `GET` / `DELETE /api/monitors/jobs` are deprecated in favour of `getJobs_1` / `deleteJob_1`.
+- `memory/reference_strategy_monitoring_jobs_alerts.md` — job records carry SQL while running (Monitor Jobs privilege, else ERR014 -2147213784); cube cache `jobExecutionStatistics`. Rewritten against the spec on 2026-10-05: its old `GET /api/monitors/caches`, `POST /api/monitors/caches/{id}?action=…`, `GET /api/monitors/sessions`, `POST /api/alerts`, `GET /api/alerts/{id}/history` and `POST /api/cubes/{id}/refresh` are not in the spec, and `GET` / `DELETE /api/monitors/jobs` are deprecated in favour of `getJobs_1` / `deleteJob_1`.
 - `memory/reference_strategy_sql_visibility.md` — query profile to per-pass engine SQL (verified 2026-10-01), cube cache monitor SQL, `sqlView` surfaces.
-- `memory/reference_strategy_project_loading.md` — unloaded projects (-2147209151) and the session cap. Its `POST /api/admin/projects/{id}`, `POST /api/monitors/projects/{id}/nodes/{node}/activate`, `DELETE /api/sessions/{sessionId}` and `DELETE /api/auth/login` are not in the spec: use workflow 5, `deleteUserConnection` and `POST /api/auth/logout`.
-- `memory/reference_strategy_environment_probe.md` — preflight order before heavy automation. Its `POST /api/projects/{id}?action=load` is not in the spec, and `GET /api/monitors/jobs?jobTypes=PUBLISH` does not match it (the deprecated v1 takes `jobType` with no publish value; use `getJobs_1 -p objectType=cube`).
-- `memory/reference_strategy_admin_platform.md` — overview of the monitor families. Its purge path `/api/monitors/projects/{projectId}/cache/{cacheType}` copies the REST docs page; the spec and mstrio use `/caches/`, which is what `deleteCache` sends.
+- `memory/reference_strategy_project_loading.md` — unloaded projects (-2147209151) and the session cap. Corrected 2026-10-05: its old `POST /api/admin/projects/{id}`, `POST /api/monitors/projects/{id}/nodes/{node}/activate`, `DELETE /api/sessions/{sessionId}` and `DELETE /api/auth/login` are not in the spec — use workflow 5, `deleteUserConnection` and `POST /api/auth/logout`.
+- `memory/reference_strategy_environment_probe.md` — preflight order before heavy automation. Corrected 2026-10-05: the old `POST /api/projects/{id}?action=load` (not in the spec) is gone, and the publish-job check uses `getJobs_1 -p objectType=cube` (the deprecated v1 has no publish job type).
+- `memory/reference_strategy_admin_platform.md` — overview of the monitor families. Its purge path was corrected to the spec's `/caches/` (2026-10-05), which is what `deleteCache` sends.
 - `memory/feedback_build_mosaic_session_leak.md` — the `8004cb0a` session cap, `kill-sessions`, logout is `POST /api/auth/logout`.
 - `memory/reference_mosaic_publish_path.md` — the cube cache monitor as publish-completion evidence; decoding cache ids.
 - `memory/reference_mosaic_ai_service.md` — usage insights answered 404 on one tenant.

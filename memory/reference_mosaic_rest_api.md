@@ -4,16 +4,16 @@ description: Verified endpoint paths and payload shapes for the {MSTR_BASE host}
 type: reference
 originSessionId: initial-session
 ---
-All paths prefixed with `{BASE} = {MSTR_BASE}`. Unless otherwise noted, send `X-MSTR-AuthToken`, `X-MSTR-ProjectID`, and for Mosaic data-model writes send `X-MSTR-IdentityToken` + `X-MSTR-MS-Changeset`. Do not generalize this identity-token rule to classic/project Modeling Service endpoints.
+All paths prefixed with `{BASE} = {MSTR_BASE}`. Unless otherwise noted, send `X-MSTR-AuthToken`, `X-MSTR-ProjectID`, and for Mosaic data-model writes `X-MSTR-MS-Changeset`. `X-MSTR-IdentityToken` is grant-dependent: default off; add it only when a write fails with a wrong-project / no-changeset error, never to fix `8004cb09` (`feedback_mosaic_identity_token_privilege_downgrade.md`), and never on classic/project Modeling Service endpoints.
 
 ## OpenAPI / docs
 - Raw machine-readable spec: `GET /api/openapi.yaml` (OpenAPI 3.0.1, title `Strategy REST`, version `2026` as of 2026-04-21).
 - Swagger/API Explorer UI: `/api-docs/` is a JavaScript app; use it interactively, not as a scrape target.
-- `api-docs/swagger-config` 404s on {MSTR_BASE host}; use `openapi-summary` in the helper.
+- `api-docs/swagger-config` 404s on {MSTR_BASE host}; use `strategy_api.py sync` / `ops` (or the older `openapi-summary`).
 
 ## Auth
 - `POST /api/auth/login` body `{username,password,loginMode:1}` → response header `X-MSTR-AuthToken` (lowercase `X-Mstr-Authtoken` on some responses).
-- `POST /api/auth/identityToken` → header `X-MSTR-IdentityToken`. Required before Mosaic data-model Modeling Service writes; avoid for classic/project Modeling Service unless a specific endpoint proves it needs it.
+- `POST /api/auth/identityToken` → header `X-MSTR-IdentityToken`. Grant-dependent for Mosaic data-model Modeling Service writes (default off — see above); avoid for classic/project Modeling Service unless a specific endpoint proves it needs it.
 - `POST /api/auth/logout` — logout. (`DELETE /api/auth/login` is not in the spec and answers 404 — corrected 2026-10-05.)
 
 ## Datasources / warehouse catalog (verified 2026-04-20)

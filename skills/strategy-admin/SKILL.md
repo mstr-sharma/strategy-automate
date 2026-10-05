@@ -1,6 +1,6 @@
 ---
 name: strategy-admin
-description: Administer a Strategy (formerly MicroStrategy) environment over REST — users and user groups, security roles, privileges, SCIM provisioning, per-user API tokens, multi-tenant (tenant partitioning), license audit and compliance, vault connections, project settings and load status, and Intelligence Server / Library server settings (CORS and trusted origins, cookies, auth modes). Use it for "create users", "duplicate a user", "add user to group", "disable a user", "offboard", "assign security role", "grant privilege", "revoke privilege", "who has this role", "enable SCIM", "SCIM token", "API token for a service account", "tenant", "license audit", "compliance", "server settings", "project settings", "CORS", "allowed origins", "vault". Every call goes through the spec-validated strategy_api.py: reads first, writes are dry runs until --yes.
+description: Administer a Strategy (formerly MicroStrategy) environment over REST — users and user groups, security roles, privileges, SCIM provisioning, per-user API tokens, multi-tenant (tenant partitioning), license audit and compliance, vault connections, project settings and load status, and Intelligence Server / Library server settings (CORS and trusted origins, cookies, auth modes). Use it for "create users", "duplicate a user", "add user to group", "disable a user", "offboard", "assign security role", "grant privilege", "revoke privilege", "who has this role", "enable SCIM", "SCIM token", "API token for a service account", "tenant", "license audit", "compliance", "server settings", "project settings", "CORS", "allowed origins", "vault". Every call goes through the spec-validated strategy_api.py — reads first, writes are dry runs until --yes.
 ---
 
 # Strategy administration
@@ -113,9 +113,10 @@ $API call setIserverSettings --body '{"<settingKey>":{"value":"<new value>"}}'  
 $API call getRestServerSettings                                  # Library: auth modes, collaboration, AI server, I-Server pool
 $API call getCookieInfo
 $API call getLibraryConfigurations                               # internal: configOverride entries with restartRequired
-$API call updateSecuritySettings --body '{"allowAllOrigins":false,"allowedOrigins":["https://<app origin>"]}'
+$API call getSecurityInfo                                        # current CORS / security settings: read before the PUT
+$API call updateSecuritySettings --body '{"allowAllOrigins":false,"allowedOrigins":["https://<app origin>"],"rememberMeEnabled":<as read>,"disableUrlValidation":<as read>}'
 ```
-- CORS: `strategy_auth.py methods` warns when the Library echoes any `Origin` with `Access-Control-Allow-Credentials: true` (seen on a cloud tenant): any site a signed-in user visits can then read their session. Fix it only on request — `allowAllOrigins: false` plus an explicit allowlist of embedding hosts, and `http://127.0.0.1:8753` only if the team uses the repo's `sso` handoff. Never send `secretKey`. Verify by re-running `methods`. If `restartRequired`, a Library restart (`restartLibraryServer`, internal) interrupts every user — confirm first.
+- CORS: `strategy_auth.py methods` warns when the Library echoes any `Origin` with `Access-Control-Allow-Credentials: true` (seen on a cloud tenant): any site a signed-in user visits can then read their session. Fix it only on request — `allowAllOrigins: false` plus an explicit allowlist of embedding hosts, and `http://127.0.0.1:8753` only if the team uses the repo's `sso` handoff. `updateSecuritySettings` is a PUT: send back `rememberMeEnabled` and `disableUrlValidation` as `getSecurityInfo` returned them, and never send `secretKey`. Verify with `getSecurityInfo` and by re-running `methods`. If `restartRequired`, a Library restart (`restartLibraryServer`, internal) interrupts every user — confirm first.
 - `updateAuthSettings` (login modes) and `updateCookieSettings` can lock users out or break SSO and MCP (MCP needs `SameSite=None` + `Secure`): change them only when asked, keeping a working admin sign-in.
 
 ### 7. SCIM provisioning and API tokens
@@ -170,7 +171,7 @@ $API call createVault --body @vault.json          # {"name","type","authenticati
 
 - Stop and get explicit confirmation, naming the target IDs, before anything irreversible or lockout-prone: enabling multi-tenancy, `deleteTenant`, `deleteUser`, `deleteUserGroup`, `mergeUsersAndGroups`, `deleteSecurityRole`, license key or activation changes, revoking privileges or roles from administrators or from yourself, `updateAuthSettings`, `updateSecuritySettings`, `updateCookieSettings`, `deleteProject`, `deleteUnusedManagedObjects`, a Library restart.
 - Prefer disabling users to deleting them; prefer groups and roles to per-user grants.
-- Never enter, generate, print or log a credential — passwords, API tokens, SCIM bearer tokens, vault secrets, license keys, `secretKey`, client secrets. They come from env vars, the OS keychain or a file the human writes, never from command-line flags.
+- Never enter, print or log a credential — passwords, API tokens, SCIM bearer tokens, vault secrets, license keys, `secretKey`, client secrets. They come from env vars, the OS keychain or a file the human writes, never from command-line flags. Generate an API token or SCIM bearer token only on explicit request, written with `--out` to a new 0600 file (workflow 7).
 - Auth, CORS, cookie, SCIM and identity-provider settings change only when the user asks for that change.
 - Internal operations (`"internal": true` in `describe`; `call` prints a warning) are not part of the public contract: say so when a workflow depends on one, and re-check after upgrades.
 - `sendEmails` and `sendPushNotification` message people: confirm recipients and text first.

@@ -16,8 +16,9 @@ Goal: a user should be able to ask in natural language for nearly any Strategy (
    - If the task requires modeling judgment, classic schema interpretation, or translation from old MicroStrategy project design to the new world, load `reference_strategy_design_transition.md`.
 3. Find the endpoint or wrapper:
    - Known Mosaic build/modeling: `skills/build-mosaic-model/scripts/build_mosaic.py` and `reference_mosaic_modeling_concepts.md`.
-   - Unknown REST: `openapi-search`, then `api-call`.
-   - Published model query/semantics: Mosaic MCP or Trino.
+   - Admin, distribution, content, migration, ops or AI task: the owning domain skill (`strategy_api.py describe <operationId>` names it).
+   - Unknown REST: `strategy_api.py ops --search "<words>"`, then `describe` and `call`.
+   - Certified model query/semantics: Mosaic MCP or Trino.
    - Stable admin wrappers: mstrio-py if faster/cleaner than raw REST.
 4. Probe read-only first whenever possible (`GET`, search, list, or dry-run shape).
 5. For Modeling Service writes: open changeset, create/update objects, commit, verify with `GET`.
@@ -25,31 +26,31 @@ Goal: a user should be able to ask in natural language for nearly any Strategy (
 7. Persist durable tenant-specific lessons in memory.
 
 ## Safety model
-- Never store secrets; use `MSTR_PASSWORD`, user-provided runtime flags, or existing authenticated sessions.
+- Never store secrets; take them from env vars (`MSTR_PASSWORD`, `MSTR_API_TOKEN`), the OS keychain or a cached `sso` session — never command-line flags.
 - Ask before destructive actions unless the user explicitly asked to delete/remove/revoke.
 - Treat ACL, security filters, user/group changes, subscriptions, migrations, and server/project settings as high-impact. Verify target IDs before writing.
 - Prefer committed object IDs over names when modifying existing objects.
-- If docs conflict with tenant behavior, prefer `feedback_mosaic_gotchas.md`, then live `/api/openapi.yaml`, then public docs.
+- If docs conflict with tenant behavior, prefer `feedback_mosaic_gotchas.md`, then the live spec (`strategy_api.py describe`), then public docs.
 
 ## Core command patterns
 ```bash
 cd "$REPO"
-python3 skills/build-mosaic-model/scripts/build_mosaic.py openapi-summary --limit 80
-python3 skills/build-mosaic-model/scripts/build_mosaic.py openapi-search "securityFilters" --context 2
-python3 skills/build-mosaic-model/scripts/build_mosaic.py api-call --method GET --path /api/projects
-python3 skills/build-mosaic-model/scripts/build_mosaic.py api-call --method PATCH --path /api/model/dataModels/ID --json-file /tmp/body.json
+python3 skills/strategy-platform/scripts/strategy_api.py ops --search "security filter"
+python3 skills/strategy-platform/scripts/strategy_api.py describe getSecurityFilters
+python3 skills/strategy-platform/scripts/strategy_api.py call getProjects_1
+python3 skills/strategy-platform/scripts/strategy_api.py call ms-updateDataModel -p dataModelId=ID --body @/tmp/body.json   # dry run; --yes sends
 python3 skills/build-mosaic-model/scripts/build_mosaic.py resolve-users --file users.csv
 python3 skills/build-mosaic-model/scripts/build_mosaic.py search-objects --name "Customer" --limit 20
 python3 skills/build-mosaic-model/scripts/build_mosaic.py get-model-object --kind legacy_attribute --object-id ATTR_ID --show-expression-as tokens
 python3 skills/build-mosaic-model/scripts/strategy_semantic_mine.py --mode top-down --report "Revenue Report"
-python3 skills/build-mosaic-model/scripts/strategy_semantic_mine.py --mode reverse --seed TABLE_ID;15
+python3 skills/build-mosaic-model/scripts/strategy_semantic_mine.py --mode reverse --seed "TABLE_ID;15"
 ```
 
 ## Choosing the automation surface
 - Surface matrix: first stop for ambiguous nouns and product-generation boundaries.
-- REST helper: default for anything in OpenAPI, especially writes. A generic `api-call` path is the baseline hook for every exposed REST endpoint; typed helper commands are added for repeatable, risky, or multi-step workflows.
+- REST: default for anything in OpenAPI, especially writes. `strategy_api.py call` is the baseline hook for every operation (validated against the spec, writes gated behind `--yes`); domain skills record workflows, and typed helper commands are added for repeatable, risky, or multi-step workflows.
 - Mosaic builder: warehouse table discovery through semantic model creation, relationships, metrics, security, publish.
-- MCP: read/query already-published Mosaic models; do not use MCP for Modeling Service writes.
+- MCP: read/query certified content (Mosaic models and classic `Other Model` cubes / reports / datasets); do not use MCP for Modeling Service writes.
 - mstrio-py: admin/read-heavy workflows and stable wrappers; still capture REST if a workflow becomes canonical.
 - Browser automation: only when REST/MCP/mstrio/CLI cannot expose the needed UI-only action; capture the network request if possible and record it as a captured fallback or known gap.
 

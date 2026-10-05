@@ -48,7 +48,7 @@ Runtime/dataset attribute:
 
 Classic/project fact:
 
-- Read/update: `GET/PATCH /api/model/facts/{factId}` with `showExpressionAs=tree|tokens`.
+- Read/update: `GET/PUT /api/model/facts/{factId}` with `showExpressionAs=tree|tokens`.
 - Fact definitions expose all expression/table mappings, entry level, and fact extensions/allocation rules. Use these for table discovery and grain review before modernizing into Mosaic.
 
 Classic/project metric:
@@ -95,7 +95,7 @@ Keep four concepts separate:
 Classic object ACL:
 
 - Read object and ACL: `GET /api/objects/{id}?type=<EnumDSSXMLObjectTypes>`.
-- Update object ACL/name/folder/owner: `PUT /api/objects/{id}?type=<type>` with `acl` entries and optional `propagateACLToChildren`. Each `acl` entry carries `op` (`ADD`, `REPLACE`, etc.), `trustee`, `rights`, `denied`, `inheritable`, and `type`.
+- Update object ACL/name/folder/owner: `PUT /api/objects/{id}?type=<type>` with `acl` entries and optional `propagateACLToChildren`. Each `acl` entry carries `op` (`add`, `replace`, `remove`), `trustee`, `rights`, `denied`, `inheritable`, and `type`.
 - ACL rights are bitmask values: Browse `1`, Use/Execute `2`, Read `4`, Write `8`, Delete `16`, Control `32`, Use `64`, Execute `128`, Full `255`.
 - For folders, `inheritable` and propagation behavior control child object inheritance.
 
@@ -131,7 +131,7 @@ Intelligent Cube / OLAP cube (project cube object; official docs describe "Manag
 - Create definition: `POST /api/model/cubes`
 - Read definition: `GET /api/model/cubes/{cubeId}`
 - Update definition: `PUT /api/model/cubes/{cubeId}`
-- Publish/materialize: `POST /api/v2/cubes/{cubeId}` in current docs; some tenants also support `POST /api/cubes/{cubeId}`.
+- Publish/materialize: `POST /api/v2/cubes/{cubeId}` in current docs (`publishCube_2`); `POST /api/cubes/{cubeId}` is internal and deprecated.
 - Execute/read data: `POST /api/cubes/{cubeId}/instances`, then `GET /api/cubes/{cubeId}/instances/{instanceId}`.
 - Browse cube elements: `/api/cubes/{cubeId}/attributes/{attributeId}/elements` and instance-specific variants.
 - Monitor cache: `/api/monitors/caches/...` and cube cache monitor endpoints.
@@ -141,7 +141,7 @@ Super Cube / MTDI / Push Data dataset (external-data cube created from uploaded 
 
 - Single-table workflow: create and upload in one call with `POST /api/datasets`; update table data with `PATCH /api/datasets/{datasetId}/tables/{tableId}`. Good for small/simple single-table datasets.
 - Multi-table/incremental workflow: create dataset model with `POST /api/datasets/models`, create upload session with `POST /api/datasets/{datasetId}/uploadSessions`, upload chunks with `PUT /api/datasets/{datasetId}/uploadSessions/{uploadSessionId}`, publish with `POST .../uploadSessions/{uploadSessionId}/publish`, poll with `GET .../uploadSessions/{uploadSessionId}/publishStatus`.
-- Dataset publish/refresh/status endpoints include `/api/datasets/{datasetId}`, `/api/datasets/cubes/{id}/status`, `/api/datasets/{datasetId}/instances/{instanceId}/refresh`.
+- Dataset publish/refresh/status endpoints include `/api/datasets/{datasetId}`, `/api/datasets/cubes/{id}/status`, `/api/datasets/{datasetId}/instances/{instanceId}/refresh` — the publish (`POST`), status and refresh calls are internal in the 2026 spec; use the upload-session `publish` / `publishStatus` above.
 - Dataset definitions include tables, column headers, dataset attributes, and dataset metrics. These are not the same as project schema attributes/metrics unless separately modeled.
 
 DDA/MDX cube (runtime retrieval/execution; treat as execution/data-access surfaces first):
@@ -154,7 +154,7 @@ Mosaic data model (not the same thing as a classic cube — created and edited w
 
 - Semantic editing: `/api/model/dataModels/{dataModelId}/tables|attributes|metrics|factMetrics|relationships|securityFilters`.
 - Data serve mode: `connect_live`, `in_memory`, `off_memory` (the spec's enum; earlier notes said `hybrid`, which does not exist).
-- Publish/materialization: see `reference_mosaic_publish_path.md` — the one publish file (UI-verified `/api/cubes/{id}?cubeAction=publish` trigger vs the 3-step `/api/dataModels` flow, single-trigger rule, dataType preconditions).
+- Publish/materialization: see `reference_mosaic_publish_path.md` — the one publish file (the documented 3-step `/api/dataModels` flow, with `/api/cubes/{id}?cubeAction=publish` as an internal, deprecated fallback; single-trigger rule, dataType preconditions).
 - Query/semantic inspection: prefer Mosaic MCP (`get_semantics`, `query`) when connected; otherwise use REST cube/model APIs as available.
 
 ## Runtime analytics

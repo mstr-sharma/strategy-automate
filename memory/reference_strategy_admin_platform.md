@@ -76,7 +76,7 @@ Search variants:
 - Quick search: `/api/searches/results` is fast but may be indexed/stale.
 - Metadata search: `POST /api/metadataSearches/results`, then `GET /api/metadataSearches/results` or `/tree`; better for stored result sets and tree views.
 - Folder browse: `/api/folders`, `/api/folders/{id}`, `/api/folders/preDefined/{folderType}`.
-- Object management/search: `/api/objects`, `/api/objects/{id}`, bulk copy/move/delete, ownership, inspection, recommendations.
+- Object management/search: `/api/objects`, `/api/objects/{id}`, bulk copy/move/delete (`PUT` / `DELETE /api/objects` — internal in the 2026 spec), ownership, inspection, recommendations.
 - Lineage/dependencies: `POST /api/metadataSearches/results?usesObject=<id>;<type>` (or `usedByObject=`) → `GET /api/metadataSearches/results?searchId=<id>`; quick `GET /api/searches/results?usesObjectId=<id>`; counts `POST /api/searches/dependents/count`. There is no `/api/objects/{id}/dependencies|dependents` (corrected 2026-10-05). Verify object type/subtype first.
 
 When modifying existing objects, resolve by ID and type, then read the object before writing. Names are not unique.

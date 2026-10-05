@@ -82,7 +82,7 @@ AI-adjacent surfaces:
 - For questions, capture question IDs and stream/status/result data IDs.
 - Do not persist conversation contents, prompts, answer text, or uploaded images into memory unless the user explicitly asks and the content is non-sensitive.
 
-## Asking agents: MCP connector vs bare /api/questions (verified 2026-08-24, studio)
+## Asking agents: MCP connector vs bare /api/questions (verified 2026-08-24, a Strategy ONE Cloud tenant)
 
 - The **MCP agent connector** (`ask_agent` with id + projectId from `list_agents`) reliably scopes to the bot's
   bound AI-dataset collection and honors its customInstructions. Answers validated against cube totals.

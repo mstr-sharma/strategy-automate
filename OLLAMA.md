@@ -13,8 +13,11 @@ repo at the current working directory. Your entry point is AGENTS.md — its
 (classify via skills/strategy-automation/SKILL.md → plan via skills/strategy-data-modeling/SKILL.md
 → execute via skills/build-mosaic-model/SKILL.md → verify via skills/strategy-validation/SKILL.md). Memory lives
 in memory/MEMORY.md (each line is a one-liner pointing to a typed memory file).
-Helper CLI scripts are in skills/build-mosaic-model/scripts/ and run with python3. Credentials come from
-env vars (MSTR_BASE, MSTR_USER, MSTR_PASSWORD, MSTR_PROJECT_ID, MSTR_DEST_FOLDER_ID).
+Admin, distribution, content, migration, ops and AI work goes to its domain skill under skills/.
+Helper CLI scripts are in skills/strategy-platform/scripts/ (strategy_api.py reaches any REST
+operation) and skills/build-mosaic-model/scripts/, and run with python3. Configuration comes from
+env vars (MSTR_BASE, MSTR_PROJECT_ID, MSTR_DEST_FOLDER_ID) plus a sign-in method (MSTR_AUTH_METHOD:
+MSTR_USER/MSTR_PASSWORD, MSTR_API_TOKEN, or browser sso); never pass secrets as flags.
 Before writing, check memory/reference_strategy_surface_matrix.md and the
 relevant memory file for the object family you're touching.
 ```

@@ -116,7 +116,7 @@ $API call deleteServer -p name=<name> --yes           # cleanup
 - `getConfig` / `updateConfig` hold shared Explorer settings (`features.webSearchEnabled`, web-search allow and deny lists). `updateConfig` is a PUT: send back the whole object you read, changed in one place.
 
 ### 7. Agent knowledge: unstructured data
-Upload with the `create-unstructured-data` skill (`create_unstructured.py`: PPTX → Markdown, multipart `POST /api/nuggets?type=unstructuredData`, status poll); `strategy_api.py call` does not send multipart bodies.
+Upload with the `create-unstructured-data` skill (`create_unstructured.py`: PPTX → Markdown, multipart `POST /api/nuggets?type=unstructuredData`, status poll), or send one file with `$API call createNuggets -p type=unstructuredData --project <P> --file file=<doc.md> --form fileName=<doc.md> --form fileType=3 --form folderId=<folder>` (dry run first).
 ```bash
 $API call bulkGetNuggetsStatus --body '{"nuggets":[{"id":"<N>","projectId":"<P>"}]}' --yes   # internal POST read: indexing -> ready
 $API call getNuggets --project <P> -p id=<N>          # internal
@@ -141,7 +141,7 @@ $API call getEvaluationJob --project <P> -p botId=<A> -p jobId=<job>        # in
 $API call getAiAdminJobs --project <P> -p botId=<A>                         # internal: AI jobs in the project
 $API call getFeedbackStatistics --project <P> -p id=<A> -p period=last30days # user feedback (strategy-ops)
 ```
-- `createQuestionSet` and `createEvaluationJob` take multipart bodies (a question file or `questionSetId`): send them with `build_mosaic.py api-call --file/--form` (multipart only when a `--file` is given), and evaluate the test copy rather than the published agent.
+- `createQuestionSet` and `createEvaluationJob` take multipart bodies (a question file or `questionSetId`): send them with `$API call … --file file=<path> --form <name>=<value>` (dry run first), and evaluate the test copy rather than the published agent.
 
 ## Safety rules
 

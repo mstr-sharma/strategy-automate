@@ -22,23 +22,23 @@ Route elsewhere:
 ## How to work
 
 1. Sign in to each Library you touch. Second environment: `$API --base <Library URL> call …` (`--base` goes before the subcommand). In bodies an environment is `{"id": "<Library URL>", "name": "<label>"}`; mstrio sends the URL with a trailing `/`.
-2. `$API describe <operationId>` before every call. Body skeletons list at most 8 enum values; the spec has the rest.
+2. `$API describe <operationId>` before every call. Body skeletons list up to 40 values of an enum.
 3. Reads first: existing records (workflow 9), the objects and their dependents, both projects loaded (`strategy-ops`), source and target IDs written down.
-4. Writes: dry run (no `--yes`), show it, get a yes, then `--yes`. Package, migration and duplication writes answer 201/202 and run asynchronously; poll the status read to a terminal state. A 202 is not success. `call` adds `Prefer: respond-async` at send time (the dry run does not show it) where the spec requires it (holder PUT/DELETE, imports, `triggerValidate`, `triggerImport*`); pass `-p Prefer=respond-async` where it is optional but documented (`createDuplication*`, undo PATCHes). Configuration packages must not carry a project: `--project ""` overrides `MSTR_PROJECT_ID`.
+4. Writes: dry run (no `--yes`), show it, get a yes, then `--yes`. Package, migration and duplication writes answer 201/202 and run asynchronously; poll the status read to a terminal state. A 202 is not success. `call` adds `Prefer: respond-async` (the dry run shows it) where the spec requires it (holder PUT/DELETE, imports, `triggerValidate`, `triggerImport*`); pass `-p Prefer=respond-async` where it is optional but documented (`createDuplication*`, undo PATCHes). Configuration packages must not carry a project: `--project ""` overrides `MSTR_PROJECT_ID`.
 5. Read back status and content, hand the promoted objects to `strategy-validation`, then clean up holders, import processes and records you no longer need.
 
-### Session-bound steps: run them in one process
+### Session-bound steps: keep one session
 
-> **Update (2026-10-05):** `strategy_api.py call` now covers these steps directly — `--reuse-session` (or `MSTR_REUSE_SESSION=1`) keeps one session across calls so holders, imports and instances survive; `--file FIELD=PATH` / `--form NAME=VALUE` send multipart bodies; exports get the spec's `Accept` type automatically (override with `--accept`); changesets are opened in `--project`; dry runs show the auto-added `Prefer` / changeset headers. The one-process frame below remains an alternative. End a reused session with `strategy_auth.py logout`.
+`strategy_api.py call` covers these steps directly — `--reuse-session` (or `MSTR_REUSE_SESSION=1`) keeps one session across calls so holders, imports and instances survive; `--file FIELD=PATH` / `--form NAME=VALUE` send multipart bodies; exports get the spec's `Accept` type automatically (override with `--accept`); changesets are opened in `--project`; dry runs show the auto-added `Prefer` / changeset headers. End a reused session with `strategy_auth.py logout`. The one-process frame below is the alternative.
 
-A package holder and its import process live in your server session ("one package instance per user session", freed at logout). With password or API-token sign-in every `$API call` signs in and out, so the holder is gone before the next command. Chain holder and import steps, plus what `call` cannot send (multipart uploads, `.mmp` downloads with `Accept: application/octet-stream`, YAML with `Accept: application/yaml`), in one process that keeps the tool's validation:
+A package holder and its import process live in your server session ("one package instance per user session", freed at logout). With a password or API-token sign-in and no `--reuse-session`, every `$API call` signs in and out, so the holder is gone before the next command. Without a reused session, chain the holder and import steps in one process that keeps the tool's validation:
 
 ```python
-import json, os, sys, time, requests
+import json, os, sys, time
 sys.path.insert(0, "skills/strategy-platform/scripts")
 import strategy_auth as sa, strategy_api as A
 base, P = os.environ["MSTR_BASE"].rstrip("/"), os.environ.get("MSTR_PROJECT_ID")  # P unset: configuration package
-spec, s = A.load_spec(base), requests.Session()
+spec, s = A.load_spec(base), sa.SafeSession()
 s.headers.update({"Accept": "application/json", **({"X-MSTR-ProjectID": P} if P else {})})
 who = sa.sign_in(s, sa.AuthConfig.from_env(base=base))
 def op(ref, *pairs, body=None):   # spec-checked; fills Prefer and Modeling changesets like `call`
@@ -81,7 +81,7 @@ Conflict actions: `use_existing | replace | keep_both | use_newer | use_older | 
 
 ```python
 pkg = op("createEmptyPackage").json()["id"]
-with open("change.mmp", "rb") as f:                                  # multipart, outside `call`
+with open("change.mmp", "rb") as f:                                  # multipart (CLI: call … --file file=change.mmp)
     s.put(f"{base}/api/packages/{pkg}/binary", files={"file": f}).raise_for_status()
 pk = wait("get_1", f"packageId={pkg}", "showContent=true")
 print(json.dumps(pk.get("settings")), [(c.get("name"), c.get("action")) for c in pk.get("content", [])])
@@ -207,12 +207,12 @@ $API call deleteDuplication -p id=<dupId> --yes
 
 ## Field notes
 
-- `memory/reference_strategy_package_migration.md` — stub with routing (never skip validate; duplicate Mosaic models across projects with packages, not `/api/objects/{id}/copy`). **Contradicts the spec:** `POST /api/migrations/{id}/validate|import|undo` and `POST /api/packages/{id}/import?projectId=` do not exist. The spec has `PUT …/validation`, `PUT /api/migrations/{id}` (import), `PATCH /api/migrations/{id}` (approve, undo) and `POST /api/packages/imports?packageId=`, and `POST /api/packages` only creates an empty holder.
+- `memory/reference_strategy_package_migration.md` — stub with routing (never skip validate; duplicate Mosaic models across projects with packages, not `/api/objects/{id}/copy`). Corrected against the spec on 2026-10-05: `POST /api/migrations/{id}/validate|import|undo` and `POST /api/packages/{id}/import?projectId=` do not exist. The spec has `PUT …/validation`, `PUT /api/migrations/{id}` (import), `PATCH /api/migrations/{id}` (approve, undo) and `POST /api/packages/imports?packageId=`, and `POST /api/packages` only creates an empty holder.
 - `memory/reference_strategy_admin_platform.md` — package types and the project header (configuration packages omit it); `keep_both` blocks undo.
 - `memory/reference_mosaic_yaml_osi_dbt_interop.md` — YAML export (changeset plus `Accept: application/yaml`, JSON otherwise), restore-only semantics, Git, OSI (internal).
 - `memory/reference_strategy_object_cloning.md` — saveAs is the native Mosaic copy; clone-and-remap only when the copy must change the definition.
-- `memory/reference_strategy_project_loading.md`, `memory/reference_strategy_environment_probe.md` — probe the target project and the session cap before importing. Their load calls (`POST /api/projects/{id}?action=load`, `POST /api/admin/projects/{id}`, `POST /api/monitors/projects/{id}/nodes/{node}/activate`) and `DELETE /api/auth/login` are not in the spec. Load and unload live in `strategy-ops`; logout is `POST /api/auth/logout`.
-- `memory/feedback_build_mosaic_session_leak.md` — per-project session cap; each `$API call` is one sign-in.
+- `memory/reference_strategy_project_loading.md`, `memory/reference_strategy_environment_probe.md` — probe the target project and the session cap before importing. Both were corrected on 2026-10-05: their old load calls (`POST /api/projects/{id}?action=load`, `POST /api/admin/projects/{id}`, `POST /api/monitors/projects/{id}/nodes/{node}/activate`) and `DELETE /api/auth/login` are not in the spec. Load and unload live in `strategy-ops`; logout is `POST /api/auth/logout`.
+- `memory/feedback_build_mosaic_session_leak.md` — per-project session cap; each `$API call` is one sign-in unless you pass `--reuse-session`.
 - `memory/reference_strategy_automation_coverage.md` — "Proposed skills" #2 is this skill.
 
 ## Status (2026-10-05)

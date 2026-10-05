@@ -103,10 +103,10 @@ Verified against a Strategy ONE Library Modeling Service in 2026. These rules ca
 ## Login modes per tenant (observed)
 | Tenant | Working modes | Notes |
 |---|---|---|
-| Example SAML-backed demo tenant | 16 (SAML) | Modes 1 and 8 rejected |
-| Example standard-auth tenant | 1 (standard) | Mode 8 (LDAP) returns `INVALID_AUTH_MODE` |
+| Example SAML-backed demo tenant | 16 (LDAP — the old label said SAML; SAML is 1048576, browser only → `MSTR_AUTH_METHOD=sso`) | Modes 1 and 8 rejected |
+| Example standard-auth tenant | 1 (standard) | Mode 8 (Anonymous) returns `INVALID_AUTH_MODE` |
 
-Always tell the helper which mode per tenant via `MSTR_LOGIN_MODE`. Different users on the same tenant may have different SSO configs — test before assuming. The initial `/api/auth/login` call succeeds even when the user has no access to the target project, so a successful login is not proof of a working project session. Always validate by calling a project-scoped endpoint.
+Always tell the helper how to sign in per tenant: `MSTR_AUTH_METHOD` (`sso` for SAML/OIDC tenants), with `MSTR_LOGIN_MODE` only choosing 1 (Standard) or 16 (LDAP) for password sign-in. Different users on the same tenant may have different SSO configs — test before assuming. The initial `/api/auth/login` call succeeds even when the user has no access to the target project, so a successful login is not proof of a working project session. Always validate by calling a project-scoped endpoint.
 
 ## DB instance + schema discovery
 - `GET /api/datasources` (helper `list-datasources`) is **project-agnostic**: it returns every datasource visible to the user regardless of the `X-MSTR-ProjectID` header, not the project's attachments. Filter client-side if the user only wants datasources attached to a specific project.
@@ -114,7 +114,7 @@ Always tell the helper which mode per tenant via `MSTR_LOGIN_MODE`. Different us
 - Warehouse schema names must be passed exactly as the datasource returns them (often uppercase). Trino federation schema naming is different from the MSTR project name — Trino schemas are typically lowercased with spaces preserved and require double-quoting in SQL (e.g., a project named `Shared Studio` becomes `"shared studio"` in Trino).
 
 ## v2 cube execute (runtime probe + validation surface)
-- `POST /api/v2/cubes/{modelId}/instances?limit=N` body `{}` executes a published Mosaic cube (subType 779) and is the definitive publish-completion probe (200 = materialized; 500 `-2147072488` = not published). Async: poll `GET …/instances/{instanceId}` while `status==1`.
+- `POST /api/v2/cubes/{modelId}/instances?limit=N` body `{}` executes a published Mosaic cube (subtype 779 + extType 448) and is the definitive publish-completion probe (200 = materialized; 500 `-2147072488` = not published). Async: poll `GET …/instances/{instanceId}` while `status==1`.
 - `requestedObjects` aggregates ONLY when ≥1 attribute is requested: `{"requestedObjects":{"attributes":[{"id":…}],"metrics":[{"id":…}]}}` returns one row per attribute element (rollup view — ideal for Σ-consistency validation). **Metrics-only `requestedObjects` does NOT return a grand-total row** — it returns the base-grain grid as if no view were requested (observed 2026-06-11). For grand totals, aggregate a one-attribute rollup client-side.
 - Executes against a published in-memory cube of ~3000 rows took ~2–3 min wall each on the observed tenant (instance polling, shared job queue) — budget accordingly in validation loops.
 
@@ -131,4 +131,4 @@ Always tell the helper which mode per tenant via `MSTR_LOGIN_MODE`. Different us
 - `DELETE /api/model/dataModels/{id}` worked on some Library builds but **404s on the observed Strategy ONE Cloud tenant family** — a 404 there means try the objects path, NOT idempotent success. (resolved 2026: newer tenant-verified observation wins — see `reference_strategy_object_cloning.md`)
 
 ## Session cap
-- Canonical coverage: `feedback_build_mosaic_session_leak.md` — symptom (`500 Maximum number of interactive session per user for project exceeded …`, `8004cb0a` / iServerCode `-2147072486`), the one-session-one-process rule, try/finally `m.logout()`, and recovery. (Earlier guidance here to wait 5–10 min after capping is superseded: iServer reaps project-interactive sessions on a ~30-min idle timer — budget the full 30 minutes and do not paper over with retries.)
+- Canonical coverage: `feedback_build_mosaic_session_leak.md` — symptom (`500 Maximum number of interactive session per user for project exceeded …`, `8004cb0a` / iServerCode `-2147072486`), the one-session-per-pipeline rule (one process or `MSTR_REUSE_SESSION=1`), try/finally `m.logout()`, and recovery. (Earlier guidance here to wait 5–10 min after capping is superseded: iServer reaps project-interactive sessions on a ~30-min idle timer — budget the full 30 minutes and do not paper over with retries.)
