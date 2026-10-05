@@ -24,6 +24,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
@@ -335,6 +336,19 @@ class InventoryClient(BaseMSTR):
     def auth(self) -> Auth:
         return Auth(self.base, dict(self.session.headers),
                     self.session.cookies.get_dict(), self.project_id or "")
+
+
+_THREAD_LOCAL = threading.local()
+
+
+def thread_session() -> "requests.Session":
+    """A requests.Session per worker thread: connection reuse (no TCP+TLS handshake per call)
+    without sharing one Session across threads."""
+    session = getattr(_THREAD_LOCAL, "session", None)
+    if session is None:
+        session = requests.Session()
+        _THREAD_LOCAL.session = session
+    return session
 
 
 def read_parallel(items: list[dict[str, Any]], reader: Callable[[dict[str, Any]], dict[str, Any]],
