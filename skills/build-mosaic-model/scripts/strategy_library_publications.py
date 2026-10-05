@@ -217,6 +217,20 @@ def now_iso() -> str:
 
 # --------------------------------------------------------------------------- REST client
 
+def _safe_session():
+    """A requests.Session that never forwards X-MSTR-AuthToken to another origin on a
+    redirect (strategy_auth.SafeSession); plain Session if the platform core is missing."""
+    platform = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                             os.pardir, os.pardir, "strategy-platform", "scripts"))
+    if platform not in sys.path:
+        sys.path.insert(0, platform)
+    try:
+        import strategy_auth
+        return strategy_auth.SafeSession()
+    except ImportError:
+        return requests.Session()
+
+
 class ApiError(Exception):
     pass
 
@@ -240,7 +254,7 @@ class Client:
         self.login_mode = int(login_mode)
         self.timeout = timeout
         self.retries = max(0, int(retries))
-        self.session = requests.Session()
+        self.session = _safe_session()
         self.session.headers["Accept"] = "application/json"
         self.session.verify = verify
         self.user_id = None

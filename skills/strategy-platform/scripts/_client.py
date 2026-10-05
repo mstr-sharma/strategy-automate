@@ -221,7 +221,8 @@ class BaseMSTR:
         self.signin: Any = None   # strategy_auth.SignIn once signed in
         self.project_name = project_name
         self.project_id: str | None = None
-        self.session = requests.Session()
+        import strategy_auth   # sibling module; SafeSession never forwards tokens across origins
+        self.session = strategy_auth.SafeSession()
         self.session.headers.update({
             "Accept": "application/json",
             "Content-Type": "application/json",
@@ -347,7 +348,8 @@ def thread_session() -> "requests.Session":
     without sharing one Session across threads."""
     session = getattr(_THREAD_LOCAL, "session", None)
     if session is None:
-        session = requests.Session()
+        import strategy_auth
+        session = strategy_auth.SafeSession()
         _THREAD_LOCAL.session = session
     return session
 

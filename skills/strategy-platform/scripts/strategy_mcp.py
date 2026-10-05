@@ -321,7 +321,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     if requests is None:
         raise SystemExit("requests is required (pip install requests)")
-    http = requests.Session()
+    http = sa.SafeSession()
     try:
         cfg = sa.AuthConfig.from_env(base=args.base)
         meta = discover(http, args.mcp_url, cfg.base, args.server)

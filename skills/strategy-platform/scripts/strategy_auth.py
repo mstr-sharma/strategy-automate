@@ -80,6 +80,46 @@ class AuthError(RuntimeError):
     """Sign-in failed. The message is safe to print: it never carries a secret."""
 
 
+TOKEN_HEADERS = ("X-MSTR-AuthToken", "X-MSTR-IdentityToken")
+
+
+def _same_origin(old_url: str, new_url: str) -> bool:
+    old, new = urllib.parse.urlsplit(old_url), urllib.parse.urlsplit(new_url)
+    ports = {"http": 80, "https": 443}
+    if old.scheme == "https" and new.scheme != "https":
+        return False
+    return (old.hostname == new.hostname
+            and (old.port or ports.get(old.scheme)) == (new.port or ports.get(new.scheme, new.port)))
+
+
+if requests is not None:
+    class SafeSession(requests.Session):
+        """requests.Session that never forwards Strategy tokens to another origin on a redirect.
+        requests itself strips only `Authorization`; custom headers such as X-MSTR-AuthToken
+        would otherwise follow a redirect to any host."""
+
+        def rebuild_auth(self, prepared_request, response):  # type: ignore[override]
+            super().rebuild_auth(prepared_request, response)
+            if not _same_origin(response.request.url or "", prepared_request.url or ""):
+                for name in TOKEN_HEADERS:
+                    prepared_request.headers.pop(name, None)
+else:  # pragma: no cover
+    SafeSession = None  # type: ignore[assignment,misc]
+
+
+def check_base(base: str) -> None:
+    """Refuse to send credentials to a cleartext http:// tenant (localhost aside)."""
+    parts = urllib.parse.urlsplit(base)
+    if parts.scheme not in ("https", "http") or not parts.hostname:
+        raise AuthError("MSTR_BASE must be the Library URL, e.g. https://<host>/MicroStrategyLibrary")
+    if parts.username or parts.password:
+        raise AuthError("MSTR_BASE must not carry credentials in the URL")
+    if parts.scheme == "http" and parts.hostname not in ("localhost", "127.0.0.1", "::1") \
+            and os.environ.get("MSTR_ALLOW_HTTP") != "1":
+        raise AuthError("MSTR_BASE uses plain http — credentials and tokens would travel in cleartext. "
+                        "Use https (MSTR_ALLOW_HTTP=1 only for an isolated lab)")
+
+
 @dataclass
 class AuthConfig:
     base: str
@@ -166,8 +206,7 @@ def sign_in(session: "requests.Session", cfg: AuthConfig) -> SignIn:
 
 
 def _sign_in(session: "requests.Session", cfg: AuthConfig) -> SignIn:
-    if not cfg.base.startswith(("https://", "http://")):
-        raise AuthError("MSTR_BASE must be the Library URL, e.g. https://<host>/MicroStrategyLibrary")
+    check_base(cfg.base)
     method = cfg.method
     if method == "auto":
         method = _auto_method(cfg)
@@ -787,14 +826,14 @@ def _saved_api_token(base: str) -> str:
 def _session() -> "requests.Session":
     if requests is None:
         raise SystemExit("requests is required (pip install requests)")
-    s = requests.Session()
+    s = SafeSession()
     s.headers.update({"Accept": "application/json", "Content-Type": "application/json"})
     return s
 
 
 def cmd_methods(cfg: AuthConfig) -> dict:
     """What the tenant offers and what this machine can use — no credentials needed."""
-    s = requests.Session()
+    s = SafeSession()
     out: dict[str, Any] = {"base": cfg.base, "warnings": []}
     r = s.get(f"{cfg.base}/api/config/authModes", timeout=30)
     modes = (r.json() or {}).get("modes", []) if r.ok else []
