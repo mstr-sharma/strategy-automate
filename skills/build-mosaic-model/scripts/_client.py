@@ -208,13 +208,15 @@ class BaseMSTR:
     """
 
     def __init__(self, base: str, username: str, password: str,
-                 login_mode: int, project_name: str):
+                 login_mode: int, project_name: str, auth_method: str | None = None):
         if requests is None:
             raise SystemExit("requests is required for the REST client (pip install requests).")
         self.base = base.rstrip("/")
         self.username = username
         self.password = password
         self.login_mode = login_mode
+        self.auth_method = auth_method
+        self.signin = None
         self.project_name = project_name
         self.project_id: str | None = None
         self.session = requests.Session()
@@ -226,24 +228,21 @@ class BaseMSTR:
     # Auth ─────────────────────────────────────────────────────────────────
 
     def login(self) -> None:
-        resp = self.session.post(
-            f"{self.base}/api/auth/login",
-            json={"username": self.username, "password": self.password,
-                  "loginMode": self.login_mode},
-            timeout=60,
-        )
-        if resp.status_code != 204:
-            raise RuntimeError(f"login failed: {resp.status_code} {resp.text[:300]}")
-        token = resp.headers.get("X-MSTR-AuthToken") or resp.headers.get("X-Mstr-Authtoken")
-        if not token:
-            raise RuntimeError("login succeeded but no X-MSTR-AuthToken header returned")
-        self.session.headers["X-MSTR-AuthToken"] = token
+        """Sign in with any method strategy_auth supports (password, LDAP, API token,
+        browser SSO, ...). Raises RuntimeError with a printable message."""
+        import strategy_auth
+        try:
+            self.signin = strategy_auth.sign_in(self.session, strategy_auth.AuthConfig.from_env(
+                base=self.base, method=self.auth_method, username=self.username,
+                password=self.password, login_mode=self.login_mode))
+        except strategy_auth.AuthError as e:
+            raise RuntimeError(str(e)) from None
 
     def logout(self) -> None:
-        try:
-            self.session.delete(f"{self.base}/api/auth/login", timeout=20)
-        except Exception:
-            pass
+        """POST /api/auth/logout for sessions this client created; browser-shared or
+        cached sessions stay open for the next command."""
+        import strategy_auth
+        strategy_auth.sign_out(self.session, self.base, self.signin)
 
     # Project ──────────────────────────────────────────────────────────────
 
@@ -354,12 +353,22 @@ def read_parallel(items: list[dict[str, Any]], reader: Callable[[dict[str, Any]]
     return definitions
 
 
-def dump_inventory(inventory: Any, out: str, prefix: str, run_id: str) -> str:
-    """Write inventory JSON to `out`, or to /tmp as {prefix}-{run_id}.json. Returns the path."""
-    path = out or os.path.join(tempfile.gettempdir(), f"{prefix}-{run_id}.json")
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(inventory, f, indent=2)
+def write_private_json(data: Any, path: str = "", prefix: str = "strategy") -> str:
+    """Write JSON readable only by this user (0600). Without `path`, a new file in the temp
+    dir is created with O_EXCL (no predictable name, no symlink overwrite). Returns the path.
+    Inventories and ledgers carry security-filter definitions, SQL and owners."""
+    if path:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    else:
+        fd, path = tempfile.mkstemp(prefix=f"{prefix}-", suffix=".json")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
     return path
+
+
+def dump_inventory(inventory: Any, out: str, prefix: str, run_id: str) -> str:
+    """Write inventory JSON to `out`, or to a new private temp file. Returns the path."""
+    return write_private_json(inventory, out, prefix=f"{prefix}-{run_id}")
 
 
 # ── CLI helpers ──────────────────────────────────────────────────────────────
@@ -379,7 +388,10 @@ def add_auth_args(parser: argparse.ArgumentParser, *, password: bool = True,
         parser.add_argument("--password", default=os.environ.get("MSTR_PASSWORD", ""), help=h.get("password"))
     if login_mode:
         parser.add_argument("--login-mode", type=int, default=int(os.environ.get("MSTR_LOGIN_MODE", "1")),
-                            help=h.get("login-mode"))
+                            help=h.get("login-mode") or "1 Standard (default), 16 LDAP, 8 Anonymous, 4096 API token")
+        parser.add_argument("--auth-method", default=os.environ.get("MSTR_AUTH_METHOD", "auto"),
+                            help=h.get("auth-method") or "auto (default), password, ldap, anonymous, api-token, "
+                            "sso (browser single sign-on), identity-token, oidc — see strategy_auth.py")
     if project_name:
         parser.add_argument("--project-name", default=os.environ.get("MSTR_PROJECT_NAME", ""),
                             help=h.get("project-name"))
@@ -390,7 +402,13 @@ def add_auth_args(parser: argparse.ArgumentParser, *, password: bool = True,
 
 
 def client_from_args(args: argparse.Namespace, cls: type = BaseMSTR) -> Any:
-    """Build a `cls` client from add_auth_args flags, prompting for the password
-    when neither --password nor MSTR_PASSWORD supplied one."""
-    password = args.password or getpass.getpass("Password: ")
-    return cls(args.base, args.user, password, args.login_mode, args.project_name)
+    """Build a `cls` client from add_auth_args flags. Prompts for a password only
+    when password sign-in is what will run (a --user without a password, an API
+    token or an identity token); otherwise strategy_auth signs in another way."""
+    method = (getattr(args, "auth_method", None) or os.environ.get("MSTR_AUTH_METHOD") or "auto").lower()
+    password = args.password
+    other_credential = os.environ.get("MSTR_API_TOKEN") or os.environ.get("MSTR_DELEGATE_IDENTITY_TOKEN")
+    if not password and (method in ("password", "ldap")
+                         or (method == "auto" and args.user and not other_credential)):
+        password = getpass.getpass("Password: ")
+    return cls(args.base, args.user, password, args.login_mode, args.project_name, auth_method=method)

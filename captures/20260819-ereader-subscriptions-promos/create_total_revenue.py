@@ -27,7 +27,9 @@ NAME = "Total Revenue"
 DESC = ("Company-wide revenue: a-la-carte sales (Transaction Amount, Snowflake) plus "
         "EReaderCo Plus subscription revenue (Monthly Recurring Revenue Amount, Neon PG). "
         "Fully additive and null-safe - safe to SUM at any grain in any tool.")
-CURRENCY = [{"type": "number_category", "value": "2"},
+# Format codes corrected 2026-10-05 to the verified number_category enum (0=Fixed, 1=Currency;
+# see memory/feedback_mosaic_ship_bar.md). The original run used 2 (renders as Date) and 1.
+CURRENCY = [{"type": "number_category", "value": "1"},
             {"type": "number_decimal_places", "value": "2"},
             {"type": "number_format", "value": "$#,##0.00;($#,##0.00)"}]
 

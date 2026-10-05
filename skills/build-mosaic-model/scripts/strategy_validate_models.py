@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import csv
 import getpass
+import urllib.parse
 import json
 import math
 import os
@@ -72,9 +73,10 @@ def _trino_query(host: str, username: str, password: str,
         "X-Trino-Schema": schema,
         "Accept": "application/json",
     }
-    auth = (username, password)
-    resp = requests.post(url, data=sql.encode("utf-8"),
-                         headers=headers, auth=auth, timeout=timeout)
+    http = requests.Session()          # one connection for the POST and every page
+    http.auth = (username, password)
+    http.headers.update(headers)
+    resp = http.post(url, data=sql.encode("utf-8"), timeout=timeout)
     if not resp.ok:
         raise SystemExit(f"Trino POST /v1/statement → {resp.status_code}: {resp.text[:400]}")
     payload = resp.json()
@@ -97,8 +99,15 @@ def _trino_query(host: str, username: str, password: str,
             break
         safety -= 1
         if safety <= 0:
+            http.delete(nxt, timeout=30)   # cancel the query instead of leaving it running
             raise SystemExit("Trino query: exceeded nextUri follow cap (1000)")
-        fr = requests.get(nxt, headers=headers, auth=auth, timeout=timeout)
+        # The password rides on every page request: follow nextUri only over https to the
+        # host we posted to (a proxy may hand back http:// or another host).
+        parts = urllib.parse.urlsplit(nxt)
+        if parts.scheme != "https" or parts.hostname != urllib.parse.urlsplit(url).hostname:
+            raise SystemExit(f"Trino nextUri points at {parts.scheme}://{parts.netloc}; refusing to send "
+                             "credentials there")
+        fr = http.get(nxt, timeout=timeout)
         if not fr.ok:
             raise SystemExit(f"Trino GET {nxt} → {fr.status_code}: {fr.text[:300]}")
         payload = fr.json()

@@ -38,4 +38,4 @@ Per-path behavior:
 - **Strategy → dbt**: export OSI YAML from Strategy (preview) → convert to OSI 0.1.x JSON if needed → drop in dbt `OSI/` → `dbt compile`.
 - **dbt → Strategy**: no native dbt OSI export → author/convert an OSI YAML (commonly via Snowflake as hub) → import into Strategy (preview).
 - **Strategy ↔ Strategy backup/migration**: use native YAML or Git restore (GA), not OSI.
-- See [[reference_strategy_design_transition.md]] (YAML/Git lifecycle as a first-class success criterion) and [[reference_strategy_openapi.md]] for the endpoint-discovery path.
+- See `reference_strategy_design_transition.md` (YAML/Git lifecycle as a first-class success criterion) and `reference_strategy_openapi.md` for the endpoint-discovery path.

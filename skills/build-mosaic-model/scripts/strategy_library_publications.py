@@ -228,11 +228,15 @@ class Client:
     RETRY_STATUS = {429, 502, 503, 504}
 
     def __init__(self, base_url, username=None, password=None, login_mode=1, api_token=None,
-                 verify=True, timeout=120.0, retries=4):
+                 verify=True, timeout=120.0, retries=4, auth_method=None):
         self.base = normalize_base_url(base_url)
         self.username = username
         self._password = password
         self._api_token = api_token
+        # "sso" / "identity-token" / "oidc" / "auto" sign in through strategy_auth
+        # (browser single sign-on, cached sessions, saved API tokens).
+        self.auth_method = auth_method
+        self._signin = None
         self.login_mode = int(login_mode)
         self.timeout = timeout
         self.retries = max(0, int(retries))
@@ -246,6 +250,8 @@ class Client:
 
     # -- auth
     def login(self) -> None:
+        if self.auth_method:
+            return self._login_via_strategy_auth()
         body = {"loginMode": self.login_mode}
         if self.login_mode == 4096:
             body["username"] = self._api_token       # API-token login, same as mstrio-py
@@ -265,7 +271,25 @@ class Client:
             info = r.json()
             self.user_id, self.user_name = info.get("id"), info.get("fullName")
 
+    def _login_via_strategy_auth(self) -> None:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import strategy_auth
+        self.session.headers.pop("X-MSTR-AuthToken", None)
+        self.session.cookies.clear()
+        try:
+            self._signin = strategy_auth.sign_in(self.session, strategy_auth.AuthConfig.from_env(
+                base=self.base, method=self.auth_method))
+        except strategy_auth.AuthError as e:
+            raise ApiError("sign-in failed: %s" % e) from None
+        r = self._send("GET", "/api/sessions/userInfo", retry=True)
+        if r.ok:
+            info = r.json()
+            self.user_id, self.user_name = info.get("id"), info.get("fullName")
+
     def logout(self) -> None:
+        if self._signin is not None and not self._signin.owns_session:
+            self.session.close()   # shared with a browser or cached for the next command
+            return
         if "X-MSTR-AuthToken" in self.session.headers:
             try:
                 self.session.post(self.base + "/api/auth/logout", timeout=30)  # POST, not DELETE
@@ -1005,6 +1029,10 @@ def build_parser():
     g.add_argument("--username", default=os.environ.get("MSTR_USER"), help="(env MSTR_USER)")
     g.add_argument("--login-mode", default=os.environ.get("MSTR_LOGIN_MODE", "1"),
                    help="1 standard, 16 LDAP, 4096 API token, 8 guest (env MSTR_LOGIN_MODE; default 1)")
+    g.add_argument("--auth-method", default=os.environ.get("MSTR_AUTH_METHOD", "auto"),
+                   choices=("auto", "password", "ldap", "anonymous", "api-token", "sso", "identity-token", "oidc"),
+                   help="auto (default: --login-mode / credentials, else a cached browser session or saved API "
+                        "token, else browser single sign-on), or force one (env MSTR_AUTH_METHOD)")
     g.add_argument("--ssl-verify", default=os.environ.get("MSTR_SSL_VERIFY"),
                    help="'0' to disable certificate checks, or a CA bundle path (env MSTR_SSL_VERIFY)")
     g.add_argument("--timeout", type=float, default=120.0, help="seconds per request (default 120)")
@@ -1056,10 +1084,20 @@ def main(argv=None) -> int:
     login_mode = parse_login_mode(args.login_mode)
     api_token = os.environ.get("MSTR_API_TOKEN")
     password = None
-    if login_mode == 4096:
-        if not api_token:
-            usage_error("Login mode 4096 needs MSTR_API_TOKEN")
-    elif login_mode != 8:
+    method = (args.auth_method or "auto").lower()
+    if method == "ldap":
+        method, login_mode = "password", 16
+    elif method == "anonymous":
+        method, login_mode = "password", 8
+    elif method == "api-token" and api_token:
+        method, login_mode = "password", 4096
+    # Browser single sign-on, cached sessions and saved API tokens go through strategy_auth;
+    # explicit credentials keep this script's own login (with its re-login on 401).
+    sso_like = method in ("sso", "identity-token", "oidc", "api-token") or (
+        method == "auto" and not args.username and login_mode not in (4096, 8) and not api_token)
+    if not sso_like and login_mode == 4096 and not api_token:
+        usage_error("Login mode 4096 needs MSTR_API_TOKEN")
+    if not sso_like and login_mode not in (4096, 8):
         if not args.username:
             usage_error("Set MSTR_USER or pass --username")
         password = os.environ.get("MSTR_PASSWORD")
@@ -1071,7 +1109,8 @@ def main(argv=None) -> int:
         usage_error("--workers must be >= 1")
 
     client = Client(args.base_url, args.username, password, login_mode, api_token,
-                    verify=ssl_setting(args.ssl_verify), timeout=args.timeout, retries=args.retries)
+                    verify=ssl_setting(args.ssl_verify), timeout=args.timeout, retries=args.retries,
+                    auth_method=method if sso_like else None)
     try:
         client.login()
         log("Logged in to %s as %s" % (client.base, client.user_name or args.username or "API token"))

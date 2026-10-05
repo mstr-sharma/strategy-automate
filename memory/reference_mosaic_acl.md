@@ -96,29 +96,37 @@ Body (verified shape, mirrors the read response):
 }
 ```
 
-- Wholesale replacement of the ACL (similar semantics to the relationships PUT — any trustee omitted from the body is removed).
+- Wholesale replacement of the ACL (similar semantics to the relationships PUT — any trustee omitted from the body is removed). `build_mosaic.py` merges with the current ACL first.
 - Must be wrapped in a changeset (same as attribute/metric edits).
 - `subType` must match the target object's subtype — `metric`, `fact_metric`, `attribute`, `logical_table` for a contained table, `report_emma_cube` for the model root.
 
-## Rights mask values observed
+## Rights mask values (EnumDSSXMLAccessRightFlags)
 
-| Mask | UI meaning | Notes |
-|---|---|---|
-| `255` | Full Control | Observed when "Full Control" chip is assigned OR when "Denied All" is assigned (as `denied: 255`). |
-| `0` | None | No rights at this level. Use `denied: 255` to deny all, not `granted: 0`. |
+The `granted` / `denied` masks are bit vectors of EnumDSSXMLAccessRightFlags — the same order as the spec's `ms-EnumAccessRight` string enum:
 
-The flag decomposition from prior memory `{read:1, write:2, delete:4, control:32, browse:64, execute:128, use:512, inherit:1024}` sums to 1799, not 255. So 255 in Strategy's ACL world is a shorthand for "Full Control" that may not decompose to the named flag set. Treat 255 as a magic "all rights" constant; don't compute it from the flag names.
+| Bit | Right |
+|---|---|
+| 1 | browse |
+| 2 | use_execute |
+| 4 | read |
+| 8 | write |
+| 16 | delete |
+| 32 | control |
+| 64 | use |
+| 128 | execute |
 
-## UI → trustee → REST mapping
+They sum to **255 = Full Control**. (An earlier version of this note and of `build_mosaic.py`'s `_RIGHT_FLAGS` used read 1, write 2, delete 4, browse 64, use 512, inherit 1024 — wrong: `--grant x:read` set only Browse and `--deny g:write` denied Use&Execute while leaving Write allowed. Fixed 2026-10-05.) Inheritance is the separate `inheritable` boolean on each entry, not a bit.
 
-| UI role in the Object-Level Security pane | `granted` mask | `denied` mask |
+| UI role in the Object-Level Security pane | `granted` | `denied` |
 |---|---|---|
 | Full Control | 255 | 0 |
-| Can Modify | (pending capture — TBD) | 0 |
-| Can View | (pending capture — TBD) | 0 |
+| Can Modify (browse, read, write, delete, use, execute) | 221 | 0 |
+| Can View (browse, read, use, execute) | 197 | 0 |
 | Denied All | 0 | 255 |
 
-`Can Modify` and `Can View` masks need a separate UI capture to pin down. Until then, rely on the legacy Desktop documentation or probe by creating each role and reading back.
+`build_mosaic.py --grant/--deny` and `set-acl` accept these names (`view`, `modify`, `full`, or individual rights) or a number, and refuse unknown names. The modify/view masks follow the standard Strategy bundles; capture one from the UI if a tenant's roles differ.
+
+**Write semantics:** the PATCH body is the whole ACL — trustees left out are removed. The helper therefore reads the current ACL (`GET` on the same path) and changes only the trustees named on the command line before it PATCHes.
 
 ## Model-root ACL (the model object itself)
 

@@ -26,10 +26,12 @@ M_DEN = ("C49B651E1B194AAC96A991B272C7A6D2", "Discount Amount @ Campaign")
 M_ROI = ("812A87F3144E4E4DB733D4D460622422", "Campaign Promo ROI")
 
 SUM_FN = "8107C31BDD9911D3B98100C04F2233EA"
-CURRENCY = [{"type": "number_category", "value": "2"},
+# Format codes corrected 2026-10-05 to the verified number_category enum (0=Fixed, 1=Currency;
+# see memory/feedback_mosaic_ship_bar.md). The original run used 2 (renders as Date) and 1.
+CURRENCY = [{"type": "number_category", "value": "1"},
             {"type": "number_decimal_places", "value": "2"},
             {"type": "number_format", "value": "$#,##0.00;($#,##0.00)"}]
-NUM2DP = [{"type": "number_category", "value": "1"},
+NUM2DP = [{"type": "number_category", "value": "0"},
           {"type": "number_decimal_places", "value": "2"},
           {"type": "number_format", "value": "#,##0.00"}]
 

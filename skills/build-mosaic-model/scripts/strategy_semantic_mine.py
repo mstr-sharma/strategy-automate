@@ -119,22 +119,24 @@ class MSTR(BaseMSTR):
         resp = self.try_request("GET", "/api/searches/results", params=params)
         return items_from_payload(response_json(resp)) if resp is not None else []
 
-    def metadata_search(self, params: dict[str, Any], limit: int = 200) -> list[dict[str, Any]]:
-        q = {"limit": limit, **params}
-        resp = self.try_request("POST", "/api/metadataSearches/results", params=q, json={})
-        if resp is None:
-            resp = self.try_request("GET", "/api/metadataSearches/results", params=q)
-        if resp is None:
-            return []
-        payload = response_json(resp)
-        rows = items_from_payload(payload)
-        if rows:
-            return rows
-        search_id = payload.get("id") or payload.get("searchId") if isinstance(payload, dict) else None
-        if not search_id:
-            return []
-        follow = self.try_request("GET", "/api/metadataSearches/results", params={"id": search_id, "limit": limit})
-        return items_from_payload(response_json(follow)) if follow is not None else []
+    def metadata_search(self, params: dict[str, Any], limit: int = 200,
+                        max_rows: int = 5000) -> list[dict[str, Any]]:
+        """POST /api/metadataSearches/results starts a search and answers {id, totalItems};
+        GET /api/metadataSearches/results?searchId=&offset=&limit= pages through it."""
+        resp = self.try_request("POST", "/api/metadataSearches/results", params=params, json={})
+        payload = response_json(resp) if resp is not None else None
+        if not isinstance(payload, dict) or not payload.get("id"):
+            return items_from_payload(payload) if payload is not None else []
+        total = min(int(payload.get("totalItems") or 0), max_rows)
+        rows: list[dict[str, Any]] = []
+        while len(rows) < total:
+            page = self.try_request("GET", "/api/metadataSearches/results", params={
+                "searchId": payload["id"], "offset": len(rows), "limit": limit})
+            items = items_from_payload(response_json(page)) if page is not None else []
+            if not items:
+                break
+            rows.extend(items)
+        return rows
 
     def read_model_object(self, object_id: str, obj_type: int) -> dict[str, Any] | None:
         path_by_type = {
@@ -294,18 +296,17 @@ def runtime_components_for_seed(m: MSTR, seed: dict[str, Any]) -> list[dict[str,
     object_id = seed.get("id")
     if not object_id:
         return []
+    # Definitions only: reading what a report/document references must never run it
+    # against the warehouse (an instance POST executes the report).
     payloads: list[Any] = []
     if object_type == OBJECT_TYPES["report"]:
-        resp = m.try_request("POST", f"/api/reports/{object_id}/instances", json={})
+        resp = m.try_request("GET", f"/api/v2/reports/{object_id}")
         if resp is not None:
             payloads.append(response_json(resp))
     elif object_type == OBJECT_TYPES["document"]:
         definition = m.try_request("GET", f"/api/documents/{object_id}/definition")
         if definition is not None:
             payloads.append(response_json(definition))
-        instance = m.try_request("POST", f"/api/documents/{object_id}/instances", json={})
-        if instance is not None:
-            payloads.append(response_json(instance))
 
     out: list[dict[str, Any]] = []
     for payload in payloads:

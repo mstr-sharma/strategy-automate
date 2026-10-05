@@ -12,18 +12,26 @@ Every script and skill in this repo reads tenant + credential values from enviro
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `MSTR_BASE` | yes | Library URL, e.g. `https://your-tenant.example.com/MicroStrategyLibrary` |
-| `MSTR_USER` | yes | Username for `/api/auth/login` |
-| `MSTR_PASSWORD` | yes | Password. Never commit. Set in shell, keychain, or CI secret store. |
-| `MSTR_LOGIN_MODE` | no | Login mode integer. 1 = standard (default), 8 = LDAP, 16 = SAML, 4096 = identity token passthrough. |
+| `MSTR_AUTH_METHOD` | no | `auto` (default), `password`, `ldap`, `anonymous`, `api-token`, `sso`, `identity-token`, `oidc`. See `reference_strategy_authentication.md`. |
+| `MSTR_USER` | password sign-in | Username for `/api/auth/login` (Standard or LDAP). Not needed for SSO. |
+| `MSTR_PASSWORD` | password sign-in | Password. Never commit. Set in shell, keychain, or CI secret store. |
+| `MSTR_LOGIN_MODE` | no | 1 = Standard (default), 16 = LDAP, 8 = Anonymous, 4096 = API token. SAML (1048576) and OIDC (4194304) are browser modes → `MSTR_AUTH_METHOD=sso`. |
+| `MSTR_API_TOKEN` | api-token sign-in | API token (login mode 4096), e.g. for CI. |
+| `MSTR_DELEGATE_IDENTITY_TOKEN` | identity-token sign-in | Identity token minted by another app's session (`POST /api/auth/delegate`). |
+| `MSTR_SSO_PORT` / `MSTR_SSO_HOST` | no | Loopback port (default 8753) and host (`127.0.0.1` or `localhost`) for the SSO consent page and OAuth redirects. |
+| `MSTR_SSO_BROWSER` / `MSTR_SSO_TIMEOUT` | no | Browser to open (a `webbrowser` name, e.g. `chrome`) and seconds to wait (default 300). |
+| `MSTR_SESSION_CACHE` | no | `0` disables caching browser sessions in the OS secret store. |
+| `MSTR_SECRET_STORE` | no | Force `keychain`, `secret-tool`, `file` or `none`. |
+| `MSTR_MCP_URL` | no | Mosaic MCP endpoint for `strategy_mcp.py` (found from `MSTR_BASE` when unset). |
 | `MSTR_PROJECT_ID` | one-of | Project UUID (32-hex). |
 | `MSTR_PROJECT_NAME` | one-of | Project display name — helper will resolve to ID at login. Either `MSTR_PROJECT_ID` or `MSTR_PROJECT_NAME` is required; ID wins when both are set. |
 | `MSTR_DEST_FOLDER_ID` | build-only | Destination folder UUID for new Mosaic data models. Look up once via `/api/folders/…` in the target project and export; used by `build_mosaic.py build`. |
 | `MSTR_DEST_FOLDER` | no | Legacy alias for `MSTR_DEST_FOLDER_ID`, kept for back-compat. `MSTR_DEST_FOLDER_ID` wins when both are set. |
 | `MSTR_NEW_USER_PASSWORD` | no | Default password for `build_mosaic.py create-users` rows that omit one. Read via `--default-password-env`, which defaults to this var name. |
 
-### Borrowed session (Studio Cloud / SSO tenants)
+### Borrowed session (last resort — prefer `MSTR_AUTH_METHOD=sso`)
 
-When direct `/api/auth/login` isn't usable, `build_mosaic.py` accepts a session borrowed from a logged-in browser (DevTools → Network header + Application → Cookies). It reuses the session in place and skips `/auth/login` + `/auth/logout` so the human's UI session stays intact.
+`build_mosaic.py` also accepts a session copied out of a logged-in browser (DevTools → Network header + Application → Cookies). It reuses the session in place and never logs it out, so the human's UI session stays intact. The `sso` method gets the same result without DevTools.
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
@@ -45,11 +53,11 @@ Defaults target the MicroStrategy Tutorial project so the live-tenant validator 
 | `MSTR_VALIDATE_DASHBOARD_TERMS` | `Tutorial Home,Dashboard,Sales,Revenue` | Comma-separated terms for the document/dashboard export probe. |
 | `MSTR_VALIDATE_SF_NAME` | `<attr> in <element> — secFilter_validation` | Name for the validation security filter. |
 
-CLI equivalents: every script accepts `--base`, `--user`, `--password`, `--login-mode`, `--project-id` / `--project-name`, and build-mosaic also takes `--dest-folder` plus borrowed-session flags (`--auth-token`, `--identity-token`, `--session-cookie`, `--ingress-cookie`). CLI flags win over env vars.
+CLI equivalents: every script accepts `--base`, `--user`, `--password`, `--login-mode`, `--auth-method`, `--project-id` / `--project-name`, and build-mosaic also takes `--dest-folder` plus borrowed-session flags (`--auth-token`, `--identity-token`, `--session-cookie`, `--ingress-cookie`). CLI flags win over env vars. Prefer env vars for secrets: a `--password` on the command line is visible to other local processes.
 
 ## MCP connectivity (separate from REST)
 
-The Mosaic MCP tools (`get_projects`, `get_mosaic_models`, `get_semantics`, `query`) connect through **Claude / Codex connector config**, not this repo. Each user adds the MCP server to their Claude Code / Codex settings once; the tool names are standard, the server id prefix (`mcp__<uuid>__*`) is per-user. The skills here reference MCP tools by **tool name**, not server id, so any correctly-configured MCP connection works.
+The Mosaic MCP tools (`get_projects`, `get_models` — older servers `get_mosaic_models` — `get_semantics`, `query`) connect through **Claude / Codex connector config**, not this repo; scripts can reach the same server with `strategy_mcp.py` (see `reference_strategy_authentication.md`). Each user adds the MCP server to their Claude Code / Codex settings once; the tool names are standard, the server id prefix (`mcp__<uuid>__*`) is per-user. The skills here reference MCP tools by **tool name**, not server id, so any correctly-configured MCP connection works.
 
 ## Looking up tenant-specific IDs
 

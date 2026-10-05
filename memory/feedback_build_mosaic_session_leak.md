@@ -1,13 +1,17 @@
 ---
 name: iServer session cap + one-process rule for Mosaic builds
-description: Chaining build_mosaic.py subcommands as separate shell invocations trips the per-user-per-project interactive-session cap (8004cb0a / iServerCode -2147072486). DELETE /api/auth/login releases the auth token but NOT the iServer project-interactive session, which reaps on a ~30-min idle timer. Preventive rule — do the whole pipeline (discovery → build → relationships → publish → SF → assign → validate) inside ONE long-lived requests.Session in ONE Python process.
+description: The per-user-per-project interactive-session cap (8004cb0a / iServerCode -2147072486). Root cause found 2026-10-05 — the scripts "logged out" with DELETE /api/auth/login, which does not exist (404), so every run left its session open until the ~30-min idle timer. Logout is now POST /api/auth/logout. Still prefer one process (and one session) per pipeline; kill-sessions can disconnect stale connections with a monitoring privilege.
 type: feedback
 tags: [mosaic, build, publish, session-management, error-code]
 ---
 
+## Root cause (found 2026-10-05)
+
+Every script here ended its session with `DELETE /api/auth/login`. The REST API has no such operation — it answers **404** — so no run ever logged out, and each one held its project-interactive session until the idle timer (~30 min). Five or six quick commands filled the cap. The only logout is **`POST /api/auth/logout`**; `strategy_auth.sign_out()` now sends it for every session a script created (sessions shared with a browser or cached for reuse are left open on purpose). The older explanation below — "logout releases the token but not the iServer session" — was built on that 404 and is superseded; re-verify before relying on it.
+
 ## Rule — one session, one process
 
-When automating an end-to-end Mosaic build, do NOT chain `build_mosaic.py` subcommands as separate shell invocations (build → validate-model → publish → add-security-filter → api-call …). Each invocation opens an iServer project-interactive session keyed to `X-MSTR-ProjectID`, and that session stays parked on the server for ~30 minutes even after a clean logout.
+When automating an end-to-end Mosaic build, prefer not to chain `build_mosaic.py` subcommands as separate shell invocations (build → validate-model → publish → add-security-filter → api-call …). Each invocation signs in and opens a project-interactive session keyed to `X-MSTR-ProjectID`. With working logout this no longer piles up, but one process is still fewer logins, and a crashed run still holds its session until the idle timer.
 
 **Pattern:** collapse the pipeline into one long-lived `requests.Session()` in one Python process that logs in once and reuses the session object for everything.
 
@@ -19,7 +23,7 @@ s.headers['X-MSTR-ProjectID'] = PID
 it = s.post(f'{BASE}/api/auth/identityToken')
 s.headers['X-MSTR-IdentityToken'] = it.headers['X-MSTR-IdentityToken']
 # ... every subsequent call uses s.* ...
-s.delete(f'{BASE}/api/auth/login')   # at end
+s.post(f'{BASE}/api/auth/logout')   # at end — the only logout endpoint
 ```
 
 ## Failure signature
@@ -34,13 +38,13 @@ Modeling-Service wrapper returns the same condition with `8004cb0a`. If present,
 
 ## Why — iServer session ≠ auth token
 
-- `main()` already wraps dispatch in `try/finally: m.logout()` (`skills/build-mosaic-model/scripts/build_mosaic.py`, `main()`). The Python-level auth token IS released on clean exit.
-- BUT **project-scoped requests open a separate iServer interactive session** that `DELETE /api/auth/login` does not immediately tear down. iServer reaps on its own ~30-min idle timer.
+- `main()` wraps dispatch in `try/finally: m.logout()` (`skills/build-mosaic-model/scripts/build_mosaic.py`, `main()`), which now sends `POST /api/auth/logout` and also discards any changeset left open.
+- Project-scoped requests run in an iServer interactive session for that project; a session that is never logged out reaps on the ~30-min idle timer. (Until 2026-10-05 that was every session — see Root cause.)
 - The default project interactive-session cap on most Strategy ONE Cloud tenants is ~5 per user per project.
 - **Which calls count:** anything touching `/api/objects/...`, `/api/model/...`, `/api/dataModels/...`, `/api/cubes/...`.
 - **Which calls don't count:** `/api/projects`, `/api/datasources`, `/api/users`, `/api/auth/*`.
 
-The `kill-sessions` helper only reaps auth tokens (its docstring says so — `cmd_kill_sessions()` in `skills/build-mosaic-model/scripts/build_mosaic.py`). It cannot reap iServer project-interactive sessions from a non-admin token.
+`kill-sessions` lists your open connections through the user-connection monitor (`GET /api/monitors/userConnections`) and disconnects them with `--yes` (`DELETE /api/monitors/userConnections/{id}`). That needs a monitoring/administration privilege; without it the tenant answers 403 and stale sessions end on the idle timer. Your browser sessions are connections too — filter with `--project` / `--idle-minutes` before `--yes`.
 
 ## How to apply — operational rules
 
@@ -57,8 +61,8 @@ The `kill-sessions` helper only reaps auth tokens (its docstring says so — `cm
 ## Recovery when the cap is already hit
 
 - Wait ~25–30 min for iServer to reap. There is NO fast recovery from a non-admin token.
-- `kill-sessions` reaps auth tokens only; returns `killed=0` on the project-interactive sessions that matter.
-- A platform admin with `Bypass ACL` privilege can force-reset the user's sessions via `/api/monitors/...`, but that is a privileged operation and not available to typical operator accounts.
+- With a monitoring privilege: `build_mosaic.py kill-sessions --project "<project>"` lists them, `--yes` disconnects them.
+- Without it, an admin can disconnect them (Monitors → User Connections, or the same REST calls).
 
 ## Build → publish sequencing is the #1 repeat offender
 
@@ -80,4 +84,4 @@ The `kill-sessions` helper only reaps auth tokens (its docstring says so — `cm
 
 ## Remaining helper-script gaps
 
-- `kill-sessions` does not attempt to close project-interactive sessions — it can't, without admin privilege. `--help` output should say this more loudly; some operators still expect it to fix a capped state.
+- `kill-sessions` needs a monitoring privilege most operator accounts lack; its `--help` says so.

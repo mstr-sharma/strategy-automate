@@ -102,10 +102,11 @@ def connect() -> Connection:
         {"ssl_verify": True} if ssl.lower() in ("", "1", "true", "yes", "on") else \
         {"ssl_verify": True, "certificate_path": ssl}
     if mode == 4096:
-        return Connection(base, api_token=os.environ.get("MSTR_API_TOKEN") or sys.exit("Set MSTR_API_TOKEN"), **tls)
+        return Connection(base, api_token=os.environ.get("MSTR_API_TOKEN") or sys.exit("Set MSTR_API_TOKEN"),
+                          request_timeout=120, **tls)
     user = os.environ.get("MSTR_USER") or sys.exit("Set MSTR_USER")
     password = os.environ.get("MSTR_PASSWORD") or getpass.getpass("Password for %s: " % user)
-    return Connection(base, user, password, login_mode=mode, **tls)
+    return Connection(base, user, password, login_mode=mode, request_timeout=120, **tls)
 
 
 def resolve_project(conn: Connection, ref: str):

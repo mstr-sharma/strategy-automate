@@ -158,7 +158,7 @@ def summarize_metric(body: dict[str, Any], family: str) -> dict[str, Any]:
         "isSmart": bool(body.get("smartMetric") or body.get("isSmartMetric")),
         "subtotals": [s.get("name") for s in (body.get("subtotals") or []) if isinstance(s, dict)][:10],
         "thresholds": len(body.get("thresholds") or []),
-        "nestedMetricRefs": list({
+        "nestedMetricRefs": sorted({
             str(n.get("name") or n.get("objectId"))
             for n in walk(body)
             if isinstance(n, dict) and str(n.get("subType") or "").lower().find("metric") >= 0

@@ -1,15 +1,17 @@
 # AGENTS.md — canonical, LLM-agnostic entry point
 
-You are operating inside the **strategy-automate** repo: a one-stop automation brain for **Strategy** (formerly MicroStrategy) that aims for complete platform automation wherever Strategy exposes an API, SDK, MCP, CLI, or reproducible hook. It covers Mosaic semantic models, the classic / legacy semantic layer, runtime analytics, cubes / datasets, platform admin, AI agents, and data validation.
+You are operating inside the **strategy-automate** repo: skills, field-verified notes and Python helpers for automating **Strategy** (formerly MicroStrategy) through its REST API and Mosaic MCP server. It aims to cover every surface Strategy exposes through an API, SDK, MCP, CLI or reproducible hook: Mosaic semantic models, the classic / legacy semantic layer, runtime analytics, cubes / datasets, platform admin, AI agents, and data validation. Known gaps are tracked in `memory/reference_strategy_automation_coverage.md`.
 
 This file is the **canonical cross-tool entry point**. Every LLM-specific shim at the repo root (`CLAUDE.md`, `GEMINI.md`, `CODEX.md`, `GROK.md`, `OLLAMA.md`, `CURSOR.md`, etc.) points here. If you are a model or tool not listed there, read this file + `memory/MEMORY.md` and proceed — nothing else is tool-specific.
 
 **Harness assumptions (apply across LLMs):**
-- The repo is plain Markdown + Python 3 (standard library + `requests`). No Anthropic-specific, OpenAI-specific, or Google-specific SDK calls — every helper is `requests` against Strategy REST or subprocess to `mstrio-py`.
+- The repo is plain Markdown + Python 3.9+ (standard library + `requests`). No Anthropic-specific, OpenAI-specific, or Google-specific SDK calls — every helper is `requests` against Strategy REST; one optional variant (`strategy_library_publications_mstrio.py`) imports `mstrio-py`.
+- `$REPO` in skills and notes means the root of this checkout.
 - `SKILL.md` frontmatter (`name`, `description`) follows Anthropic's skill convention, but any harness that reads Markdown with YAML frontmatter can use it. A skill-unaware LLM can read each `SKILL.md` as a normal instruction file.
 - `memory/MEMORY.md` is a flat index with one-line hooks; any LLM can `grep` or keyword-match to find the relevant memory file on demand.
 - Shell helpers live in `skills/build-mosaic-model/scripts/`. Invoke them via whatever tool-call mechanism your harness exposes (Bash, shell, execute_command, tool-use-bash, etc.).
-- Credentials come from env vars (`MSTR_BASE`, `MSTR_USER`, `MSTR_PASSWORD`, `MSTR_PROJECT_ID`/`MSTR_PROJECT_NAME`, `MSTR_DEST_FOLDER_ID`) — see `memory/reference_strategy_env.md`. Never hardcode.
+- Configuration comes from env vars (`MSTR_BASE`, `MSTR_PROJECT_ID`/`MSTR_PROJECT_NAME`, `MSTR_DEST_FOLDER_ID`) — see `memory/reference_strategy_env.md`. Never hardcode.
+- **Sign-in:** every script takes `--auth-method` / `MSTR_AUTH_METHOD` (default `auto`) through `skills/build-mosaic-model/scripts/strategy_auth.py`: `MSTR_API_TOKEN`, `MSTR_USER`+`MSTR_PASSWORD` (Standard or LDAP), or — with no credentials at all — a cached browser single-sign-on session (`sso`). Never type a user's password, never print tokens, never pass secrets as command-line flags. An `sso` sign-in needs the human to click **Allow** in their browser; if a command waits for it, tell them. See `memory/reference_strategy_authentication.md`.
 
 ## Git workflow
 
@@ -51,7 +53,8 @@ User task → which branch?
    - `skills/build-mosaic-model/SKILL.md` — the `build-mosaic-model` skill (discovery + build + ACL + security filter + publish + post-build edits).
    - `skills/strategy-automation/SKILL.md` — the NLQ router: points you at the right memory + helper for any Strategy task.
    - `skills/strategy-validation/SKILL.md` — paired-query data-correctness validation against any reference source.
-4. **Use environment configuration, never hardcoded values.** `MSTR_BASE`, `MSTR_USER`, `MSTR_PASSWORD`, `MSTR_PROJECT_ID` or `MSTR_PROJECT_NAME`, `MSTR_DEST_FOLDER_ID`. See `.env.example` + `memory/reference_strategy_env.md`.
+   - `skills/create-unstructured-data/SKILL.md` — upload documents and slide decks as knowledge for Strategy AI agents.
+4. **Use environment configuration, never hardcoded values.** `MSTR_BASE`, `MSTR_PROJECT_ID` or `MSTR_PROJECT_NAME`, `MSTR_DEST_FOLDER_ID`, plus a sign-in method (above). See `.env.example` + `memory/reference_strategy_env.md`.
 5. **Probe live specs when endpoint details matter.** `python3 skills/build-mosaic-model/scripts/build_mosaic.py openapi-summary` and `... openapi-search "<term>"` hit `/api/openapi.yaml` directly.
 6. **Classify automation coverage honestly.** Use `memory/reference_strategy_automation_coverage.md`: wrapped helper, generic REST hook, specialized hook, captured fallback, or known gap. Generic `api-call` reachability is an API hook, but not a finished workflow wrapper.
 7. **On any REST failure, grep `memory/reference_strategy_error_codes.md` FIRST.** Every observed `8004cc##` / iServerCode maps to the memory file with the fix. Do not retry blind — all observed codes are class-of-error, not transient.
@@ -102,15 +105,15 @@ For Mosaic work, distinguish the entry path:
 Each AI tool configures MCP servers through its own settings — this repo does NOT ship MCP server configuration. When a correctly-configured Mosaic MCP session exists, the following tool names are available and referenced by memory/skills:
 
 - `get_projects` — list projects in the connected catalog.
-- `get_mosaic_models` (newer servers: `get_models`) — list **certified** models only; a published but uncertified model does not appear.
+- `get_models` (older servers: `get_mosaic_models`) — list **certified** models only; a published but uncertified model does not appear.
 - `get_semantics` — return the annotated attribute/metric surface for a Mosaic model. Name lookup fails until the model is certified.
 - `query` — execute a Trino-compatible SQL query against the published Mosaic layer.
 
-The memory writes say "MCP" — don't hunt for a server-id prefix. If your tool exposes these four tool names under any namespace, you're good.
+The memory writes say "MCP" — don't hunt for a server-id prefix. If your tool exposes these four tool names under any namespace, you're good. Scripts can reach the same server with the same single sign-on through `skills/build-mosaic-model/scripts/strategy_mcp.py` (OAuth, as the MCP connector does).
 
 **If your harness has no MCP support**, every MCP tool has a REST fallback:
 - `get_projects` → `GET /api/projects`
-- `get_mosaic_models` → folder walk for `subtype==779` via `/api/folders/{id}` + `/api/searches`
+- `get_models` → folder walk for `subtype==779` via `/api/folders/{id}` + `/api/searches`
 - `get_semantics` → `GET /api/model/dataModels/{id}/attributes` + `/factMetrics`
 - `query` → direct Trino HTTPS connection (host `<tenant>:443`, catalog `sql`, schema `<project-name-lower>`, basic auth with MSTR creds), or `POST /api/dataModels/{id}/instances` + report/cube execution APIs for result-set equivalents.
 
