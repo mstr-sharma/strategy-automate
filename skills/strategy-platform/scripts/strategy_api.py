@@ -100,7 +100,7 @@ def _cache_path(base: str) -> str:
 def sync_spec(base: str, http: Any = None) -> str:
     """Download the tenant's full spec (public + internal operations) into the cache. Most
     tenants serve it without sign-in; when one answers 401/403, sign in and retry once."""
-    http = http or requests.Session()
+    http = http or sa.SafeSession()
     r = http.get(f"{base}/api/openapi.json", params={"visibility": "all"}, timeout=120)
     if r.status_code in (401, 403):
         signin = sa.sign_in(http, sa.AuthConfig.from_env(base=base))
@@ -686,7 +686,7 @@ def _cmd_call(args: argparse.Namespace, spec: dict, base: str) -> int:
         for handle in files.values():
             handle[1].close()
         return 0
-    session = requests.Session()
+    session = sa.SafeSession()
     session.headers.update({"Accept": "application/json", "Content-Type": "application/json"})
     signin = sa.sign_in(session, sa.AuthConfig.from_env(base=base, method=args.auth_method,
                                                         reuse=True if args.reuse_session else None))

@@ -221,7 +221,7 @@ def friendly_table(tname: str) -> str:
 
 
 # ── Session helpers ───────────────────────────────────────────────────────────
-class _TimeoutSession(requests.Session):
+class _TimeoutSession(strategy_auth.SafeSession):
     """requests.Session with a default (connect, read) timeout — requests waits forever
     otherwise, which can hang a build while it holds a changeset lock. Override per call
     with timeout=..., or for all calls with MSTR_HTTP_TIMEOUT (read seconds)."""

@@ -22,6 +22,26 @@ import sys
 import zipfile
 import xml.etree.ElementTree as ET
 
+# Untrusted decks: Office parts never need DTDs or entities, so refuse them (blocks entity
+# expansion / external-entity tricks with the stdlib parser), and cap decompressed sizes so a
+# zip bomb can't exhaust memory.
+MAX_PART_BYTES = 50 * 1024 * 1024
+MAX_TOTAL_BYTES = 500 * 1024 * 1024
+
+
+def _parse_xml(data: bytes) -> ET.Element:
+    head = data[:4096].lower()
+    if b"<!doctype" in head or b"<!entity" in data.lower():
+        raise ValueError("refusing an Office XML part that declares a DTD or entities")
+    return ET.fromstring(data)  # nosec B314 - DTD/entity declarations are refused above
+
+
+def _read_part(zf: zipfile.ZipFile, name: str) -> bytes:
+    info = zf.getinfo(name)
+    if info.file_size > MAX_PART_BYTES:
+        raise ValueError(f"{name}: {info.file_size} bytes uncompressed exceeds the {MAX_PART_BYTES} limit")
+    return zf.read(name)
+
 A_NS = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 P_NS = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
 R_NS = "{http://schemas.openxmlformats.org/package/2006/relationships}"
@@ -85,7 +105,7 @@ def _table_lines(graphic_frame) -> list[str]:
 
 
 def _slide_to_md(xml_bytes: bytes, index: int) -> list[str]:
-    root = ET.fromstring(xml_bytes)
+    root = _parse_xml(xml_bytes)
     title = ""
     blocks: list[list[str]] = []
     tree_shapes = root.find(f"{P_NS}cSld/{P_NS}spTree")
@@ -111,7 +131,7 @@ def _slide_to_md(xml_bytes: bytes, index: int) -> list[str]:
 
 
 def _notes_to_md(xml_bytes: bytes) -> list[str]:
-    root = ET.fromstring(xml_bytes)
+    root = _parse_xml(xml_bytes)
     texts = []
     for para in root.iter(f"{A_NS}p"):
         text = _paragraph_text(para)
@@ -130,7 +150,7 @@ def _notes_part_for(zf: zipfile.ZipFile, slide_name: str) -> str | None:
     rels_name = re.sub(r"^ppt/slides/(slide\d+\.xml)$", r"ppt/slides/_rels/\1.rels", slide_name)
     if rels_name not in zf.namelist():
         return None
-    root = ET.fromstring(zf.read(rels_name))
+    root = _parse_xml(_read_part(zf, rels_name))
     for rel in root.iter(f"{R_NS}Relationship"):
         if rel.get("Type") == NOTES_REL:
             target = rel.get("Target", "")
@@ -146,6 +166,9 @@ def convert(pptx_path: str, out_path: str | None = None, *,
     if out_path is None:
         out_path = os.path.splitext(pptx_path)[0] + ".md"
     with zipfile.ZipFile(pptx_path) as zf:
+        total = sum(i.file_size for i in zf.infolist())
+        if total > MAX_TOTAL_BYTES:
+            raise ValueError(f"{pptx_path}: {total} bytes uncompressed exceeds the {MAX_TOTAL_BYTES} limit")
         names = zf.namelist()
         slides = sorted((n for n in names if re.match(r"ppt/slides/slide\d+\.xml$", n)),
                         key=_slide_number)
@@ -155,11 +178,11 @@ def convert(pptx_path: str, out_path: str | None = None, *,
         for name in slides:
             index = _slide_number(name)
             md.append("")
-            md.extend(_slide_to_md(zf.read(name), index))
+            md.extend(_slide_to_md(_read_part(zf, name), index))
             if include_notes:
                 notes_name = _notes_part_for(zf, name)
                 if notes_name and notes_name in names:
-                    md.extend(_notes_to_md(zf.read(notes_name)))
+                    md.extend(_notes_to_md(_read_part(zf, notes_name)))
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(md).rstrip() + "\n")
     return out_path

@@ -296,5 +296,66 @@ class SecretStoreTests(unittest.TestCase):
         self.assertEqual(sa._saved_api_token(BASE), "NEW")
 
 
+class TransportSafetyTests(unittest.TestCase):
+    def test_tokens_do_not_follow_a_redirect_to_another_host(self):
+        import http.server
+        seen = {}
+
+        class Target(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                seen[self.path] = {k.lower(): v for k, v in self.headers.items()}
+                self.send_response(200)
+                self.end_headers()
+
+        target = http.server.HTTPServer(("127.0.0.1", 0), Target)
+        port = target.server_address[1]
+
+        class Bouncer(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                # off to another host name (localhost != 127.0.0.1 as an origin)
+                self.send_response(302)
+                self.send_header("Location", f"http://localhost:{port}/other")
+                self.end_headers()
+
+        bouncer = http.server.HTTPServer(("127.0.0.1", 0), Bouncer)
+        for srv in (target, bouncer):
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            s = sa.SafeSession()
+            s.headers["X-MSTR-AuthToken"] = "TOKEN"
+            s.get(f"http://127.0.0.1:{bouncer.server_address[1]}/b", timeout=5)
+            self.assertNotIn("x-mstr-authtoken", seen["/other"])
+            plain = requests.Session()
+            plain.headers["X-MSTR-AuthToken"] = "TOKEN"
+            plain.get(f"http://127.0.0.1:{bouncer.server_address[1]}/b", timeout=5)
+            self.assertIn("x-mstr-authtoken", seen["/other"])   # why SafeSession exists
+        finally:
+            for srv in (target, bouncer):
+                srv.shutdown()
+                srv.server_close()
+
+    def test_same_origin_rules(self):
+        self.assertTrue(sa._same_origin("https://h/a", "https://h:443/b"))
+        self.assertFalse(sa._same_origin("https://h/a", "http://h/b"))       # downgrade
+        self.assertFalse(sa._same_origin("https://h/a", "https://evil/b"))
+        self.assertFalse(sa._same_origin("https://h/a", "https://h:8443/b"))
+
+    def test_cleartext_and_credential_urls_are_refused(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(sa.AuthError, "plain http"):
+                sa.check_base("http://tenant.example.com/MicroStrategyLibrary")
+            with self.assertRaisesRegex(sa.AuthError, "credentials in the URL"):
+                sa.check_base("https://u:p@tenant.example.com/MicroStrategyLibrary")
+            sa.check_base("http://localhost:8080/MicroStrategyLibrary")
+        with mock.patch.dict(os.environ, {"MSTR_ALLOW_HTTP": "1"}):
+            sa.check_base("http://lab.example/MicroStrategyLibrary")
+
+
 if __name__ == "__main__":
     unittest.main()
