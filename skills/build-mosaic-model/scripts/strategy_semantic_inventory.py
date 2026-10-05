@@ -15,13 +15,11 @@ import sys
 from collections import Counter
 from typing import Any
 
-import requests
-
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _client import (  # noqa: E402
     Auth, InventoryClient, add_auth_args, client_from_args, collect_named_values,
     collect_texts, dedupe_by_id, dump_inventory, expression_kind, items_from_payload,
-    now_id, oid, oname, read_parallel, response_json, walk,
+    now_id, oid, oname, read_parallel, response_json, walk, thread_session,
 )
 
 
@@ -124,7 +122,7 @@ def read_definition(auth: Auth, family: str, item: dict[str, Any]) -> dict[str, 
     last_error = ""
     try:
         for params in param_attempts:
-            resp = requests.get(f"{auth.base}{path}", headers=auth.headers, cookies=auth.cookies, params=params, timeout=45)
+            resp = thread_session().get(f"{auth.base}{path}", headers=auth.headers, cookies=auth.cookies, params=params, timeout=45)
             payload = response_json(resp)
             if resp.ok:
                 return {

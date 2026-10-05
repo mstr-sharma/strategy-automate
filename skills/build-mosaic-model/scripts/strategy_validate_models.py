@@ -124,7 +124,9 @@ def _resolve_trino_creds(args: argparse.Namespace) -> tuple[str, str, str, str]:
         raise SystemExit("--trino-host (or --base / MSTR_BASE) is required to locate the Trino endpoint.")
     user = args.user or os.environ.get("MSTR_USER", "")
     if not user:
-        raise SystemExit("--user or MSTR_USER is required for Trino basic auth.")
+        raise SystemExit("--user or MSTR_USER is required for Trino basic auth (a Strategy password). "
+                         "Single-sign-on accounts without one: run the same SQL through the Mosaic MCP "
+                         "server instead — skills/build-mosaic-model/scripts/strategy_mcp.py query.")
     password = os.environ.get("MSTR_PASSWORD", "")
     if not password:
         password = getpass.getpass(f"MSTR password for {user}@{host}: ")

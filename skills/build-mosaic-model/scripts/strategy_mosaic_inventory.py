@@ -18,13 +18,11 @@ import sys
 from collections import Counter
 from typing import Any
 
-import requests
-
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _client import (  # noqa: E402
     Auth, InventoryClient, add_auth_args, client_from_args, collect_named_values,
     collect_texts, dedupe_by_id, dump_inventory, expression_kind, items_from_payload,
-    now_id, oid, oname, read_parallel, response_json, walk,
+    now_id, oid, oname, read_parallel, response_json, walk, thread_session,
 )
 
 
@@ -59,7 +57,7 @@ class Client(InventoryClient):
 def read_subresource(auth: Auth, model_id: str, path_suffix: str, params: dict[str, str]) -> dict[str, Any]:
     url = f"{auth.base}/api/model/dataModels/{model_id}{path_suffix}"
     try:
-        resp = requests.get(url, headers=auth.headers, cookies=auth.cookies, params=params, timeout=60)
+        resp = thread_session().get(url, headers=auth.headers, cookies=auth.cookies, params=params, timeout=60)
         payload = response_json(resp)
         return {
             "ok": resp.ok,
