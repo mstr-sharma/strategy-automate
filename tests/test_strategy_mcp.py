@@ -8,7 +8,7 @@ import urllib.parse
 from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(__file__))
-sys.path.insert(0, os.path.join(ROOT, "skills", "build-mosaic-model", "scripts"))
+sys.path.insert(0, os.path.join(ROOT, "skills", "strategy-platform", "scripts"))
 
 from requests.structures import CaseInsensitiveDict  # noqa: E402
 
@@ -78,22 +78,40 @@ class McpTestCase(unittest.TestCase):
 
 
 class DiscoveryTests(McpTestCase):
-    def test_discover_from_library_base(self):
+    def test_discover_from_library_base_targets_the_mosaic_server(self):
         http = FakeHttp()
-        http.on("GET", f"{HOST}/.well-known/oauth-protected-resource",
-                lambda **kw: Resp(body={"resource": RESOURCE, "authorization_servers": [ISSUER]}))
+        meta_url = f"{HOST}/collaboration/.well-known/oauth-protected-resource/mcp/mosaic"
+        http.on("POST", f"{HOST}/collaboration/mcp/mosaic", lambda **kw: Resp(
+            401, {}, {"WWW-Authenticate": f'Bearer resource_metadata="{meta_url}"'}))
+        http.on("GET", meta_url, lambda **kw: Resp(body={"resource": f"{HOST}/collaboration/mcp/mosaic",
+                                                         "authorization_servers": [ISSUER]}))
         http.on("GET", f"{HOST}/.well-known/oauth-authorization-server/collaboration", lambda **kw: Resp(body=META))
         meta = sm.discover(http, base=f"{HOST}/MicroStrategyLibrary")
-        self.assertEqual((meta["resource"], meta["token_endpoint"]), (RESOURCE, META["token_endpoint"]))
+        self.assertEqual((meta["resource"], meta["token_endpoint"]),
+                         (f"{HOST}/collaboration/mcp/mosaic", META["token_endpoint"]))
+
+    def test_discover_falls_back_to_prefixed_metadata_path(self):
+        http = FakeHttp()
+        http.on("GET", f"{HOST}/collaboration/.well-known/oauth-protected-resource/mcp/agent",
+                lambda **kw: Resp(body={"resource": RESOURCE, "authorization_servers": [ISSUER]}))
+        http.on("GET", f"{HOST}/.well-known/oauth-authorization-server/collaboration", lambda **kw: Resp(body=META))
+        meta = sm.discover(http, base=f"{HOST}/MicroStrategyLibrary", server="agent")
+        self.assertEqual(meta["resource"], RESOURCE)
+
+    def test_challenge_pointing_elsewhere_is_ignored(self):
+        http = FakeHttp()
+        http.on("POST", RESOURCE, lambda **kw: Resp(
+            401, {}, {"WWW-Authenticate": 'Bearer resource_metadata="https://evil.example/meta"'}))
+        self.assertEqual(sm._metadata_from_challenge(http, RESOURCE), "")
 
     def test_issuer_mismatch_is_rejected(self):
         http = FakeHttp()
-        http.on("GET", f"{HOST}/.well-known/oauth-protected-resource",
+        http.on("GET", f"{HOST}/collaboration/.well-known/oauth-protected-resource/mcp/agent",
                 lambda **kw: Resp(body={"resource": RESOURCE, "authorization_servers": [ISSUER]}))
         http.on("GET", f"{HOST}/.well-known/oauth-authorization-server/collaboration",
                 lambda **kw: Resp(body=dict(META, issuer="https://elsewhere.example")))
         with self.assertRaises(sm.McpError):
-            sm.discover(http, base=f"{HOST}/MicroStrategyLibrary")
+            sm.discover(http, base=f"{HOST}/MicroStrategyLibrary", server="agent")
 
     def test_authorize_url_carries_pkce_resource_and_scopes(self):
         url = sm.authorize_url(dict(META, resource=RESOURCE), "CID", "http://127.0.0.1:8753/oauth/callback",

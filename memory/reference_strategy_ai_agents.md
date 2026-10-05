@@ -10,10 +10,12 @@ Use this when the user asks for Strategy AI, Auto Agent, Agent, Bot, chat, quest
 
 Strategy documentation says legacy Bot APIs are deprecated because Auto Agent technology replaces the older Auto Bot system. However, many current REST paths still use `bot` in the URL or operation names while summaries say "agent".
 
-Routing rule:
+Routing rule (corrected 2026-10-05 against the tenant spec and the REST docs "Auto Agent APIs" / "Bot APIs"):
 
-- Prefer **Auto Agent** paths exposed in live OpenAPI, especially `/api/questions...` and `/api/v2/bots...`.
-- Treat older `/api/bots/...` and `/api/chats/...` instance/message APIs as legacy/deprecated unless the tenant or object only supports them.
+- The **documented Agent APIs are `/api/questions`** (ask, get by id, chat history `GET /api/questions?botId=`, suggestions, images) plus `GET /api/v2/bots/{botId}/columns` (attributes/metrics for auto-complete). Prefer these.
+- **v2 bot management is internal**: create / copy / read / patch, chats, config, dataset descriptions, training, NER and question-group cache under `/api/v2/bots/...` are all `visibility: internal`. The only public v2 paths are `GET /api/v2/bots/{botId}/columns`, `POST /api/v2/bots/cubes/status` (Enable-for-AI status) and `POST /api/v2/bots/{botId}/caches/temp/check|promote`.
+- **Deprecated** (spec flag + docs): `POST /api/bots/{botId}/instances`, `…/instances/{id}/questions`, `…/instances/{id}/suggestions`, `…/instances/{id}/topics` (the docs also list deleting a bot instance). **Not deprecated and public:** `GET /api/bots/{botId}/configuration`, `GET /api/bots/{botId}/questions`, `GET /api/bots/{botId}/questions/{questionId}`. `/api/chats/...` is internal.
+- mstrio-py manages agents with `Agent` / `list_agents` (`mstrio.project_objects.agents`, which superseded `bots` in 11.5.10.101).
 - Always check `?visibility=all`; AI/agent paths move quickly and can be hidden or renamed across tenants.
 
 ## Question and answer flow
@@ -24,21 +26,21 @@ Current Auto Agent style endpoints observed in live OpenAPI:
 - Ask with image: `POST /api/questions/withImage`
 - Ask multiple questions: `POST /api/questions/collections`
 - Suggestions: `POST /api/questions/suggestions`
-- Get/cancel/update question: `GET/DELETE/PATCH /api/questions/{questionId}`
+- Get question: `GET /api/questions/{questionId}` (public); cancel/update `DELETE/PATCH /api/questions/{questionId}` are internal
 - Stream: `GET /api/questions/{questionId}/stream`
-- Full data export: `POST /api/questions/{questionId}/fulldata`, then `GET /api/questions/{questionId}/fulldata/{dataId}`
+- Full data export: `POST /api/questions/{questionId}/fulldata` (internal), then `GET /api/questions/{questionId}/fulldata/{dataId}` (public)
 - Answer data/images/diagnostics: `/api/questions/{questionId}/answers/...`, `/diagnostics/...`
 
 These are runtime conversational/data APIs; they do not create semantic model objects.
 
 ## Agent object/config flow
 
-Agent management still appears under `/api/v2/bots` in current tenant OpenAPI:
+Agent management appears under `/api/v2/bots` in the tenant OpenAPI, but **every path in this list is `visibility: internal`** (corrected 2026-10-05) — reachable, not a contract. The public exceptions are `GET /api/v2/bots/{botId}/columns`, `POST /api/v2/bots/cubes/status` and `POST /api/v2/bots/{botId}/caches/temp/check|promote`. For scripted agent management prefer mstrio-py's `Agent` class.
 
 - Create draft agent: `POST /api/v2/bots`
 - Read/modify/copy agent: `GET/PATCH /api/v2/bots/{botId}`, `POST /api/v2/bots/{botId}/copy`
 - Chats: `/api/v2/bots/{botId}/chats`, `/chats/{chatId}`, `/duplicate`
-- Columns/completion data: `/api/v2/bots/{botId}/columns`
+- Columns/completion data: `GET /api/v2/bots/{botId}/columns` (public — documented as "Get attributes and metrics from the agent")
 - Config: `/api/v2/bots/{botId}/config`
 - Dataset/column descriptions: `/api/v2/bots/{botId}/datasetContainers/{datasetContainerId}/datasets/{datasetId}/descriptions`
 - Training jobs/sets: `/api/v2/bots/{botId}/trainingjobs`, `/trainingsets`
@@ -49,16 +51,17 @@ Agent writes are high-impact because they can affect user-facing AI behavior. Re
 
 ## Legacy bot/chat APIs
 
-Older paths include:
+Older paths include (status per the 2026 spec + "Bot APIs" docs page; corrected 2026-10-05):
 
-- `/api/bots/{botId}/instances`
-- `/api/bots/{botId}/instances/{instanceId}/questions`
-- `/api/bots/{botId}/instances/{instanceId}/suggestions`
-- `/api/bots/{botId}/configuration`
-- `/api/bots/{botId}/questions`
-- `/api/chats`, `/api/chats/{chatId}/messages`, `/api/chats/{chatId}/bot`
+- `POST /api/bots/{botId}/instances` — **deprecated**
+- `POST /api/bots/{botId}/instances/{instanceId}/questions` — **deprecated**
+- `POST /api/bots/{botId}/instances/{instanceId}/suggestions` (and `/topics`) — **deprecated**
+- `DELETE /api/bots/{botId}/instances/{instanceId}` — public in the spec, listed as deprecated in the docs
+- `GET /api/bots/{botId}/configuration` — public, **not deprecated**
+- `GET /api/bots/{botId}/questions`, `GET /api/bots/{botId}/questions/{questionId}` — public, **not deprecated**
+- `/api/chats`, `/api/chats/{chatId}/messages`, `/api/chats/{chatId}/bot` — internal
 
-Use only when needed for backward compatibility. Document that the workflow used deprecated/legacy bot APIs if it does.
+Use the deprecated instance/question POSTs only for backward compatibility, and say so when a workflow does. The configuration and question-list reads are fine to use.
 
 ## Nuggets, learnings, auto narratives, and unstructured data
 

@@ -1,4 +1,4 @@
-"""Shared Strategy REST client + helpers for the scripts under skills/build-mosaic-model/scripts/.
+"""Shared Strategy REST client + helpers for every script in this repo (platform core).
 
 Extracted to de-duplicate ~40 LOC of login/session/response_json/items_from_payload
 boilerplate that previously lived in every inventory/validation/mining script. See
@@ -7,13 +7,14 @@ all share.
 
 Design: a thin BaseMSTR class + pure-function helpers. Subclass BaseMSTR when a
 script needs specialized search/read helpers. build_mosaic.py keeps its own MSTR
-class for the changeset/identity-token complexity — it imports only the helpers
-from here.
+class for the changeset/identity-token complexity. Sign-in for both goes through
+strategy_auth.py next to this file.
 
-Import pattern for a sibling script:
+Import pattern for a script in another skill (skills/<skill>/scripts/x.py):
 
     import os, sys
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                     os.pardir, os.pardir, "strategy-platform", "scripts")))
     from _client import BaseMSTR, response_json, items_from_payload, oid, oname
 """
 from __future__ import annotations
@@ -217,7 +218,7 @@ class BaseMSTR:
         self.password = password
         self.login_mode = login_mode
         self.auth_method = auth_method
-        self.signin = None
+        self.signin: Any = None   # strategy_auth.SignIn once signed in
         self.project_name = project_name
         self.project_id: str | None = None
         self.session = requests.Session()
@@ -334,7 +335,7 @@ class InventoryClient(BaseMSTR):
         self.resolve_project()
 
     def auth(self) -> Auth:
-        return Auth(self.base, dict(self.session.headers),
+        return Auth(self.base, {str(k): str(v) for k, v in self.session.headers.items()},
                     self.session.cookies.get_dict(), self.project_id or "")
 
 

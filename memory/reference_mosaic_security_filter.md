@@ -97,8 +97,8 @@ Body:
 
 Gotchas:
 - **Path prefix is `/api/dataModels/...`, NOT `/api/model/dataModels/...`.** The Modeling-scoped path (`/api/model/dataModels/{id}/securityFilters/{sfId}/members`) returns 404. This asymmetry is the trap — creation uses Modeling Service, member assignment uses a sibling top-level path.
-- **`op` must be `addElements`** (one word, camelCase). `add` is rejected with `Patch op 'add' cannot be applied to path 'Members'`. Use `removeElements` / `replaceElements` for the mirror operations.
-- **`path` must be `/Members`** with a **leading slash and capital M**. Lowercase `members`, `/members`, and `Members` (no slash) all fail `Invalid path, the path should a string matching regex '/([/A-Za-z0-9...`. The regex forces the leading slash and PascalCase segment.
+- **`op` must be `addElements`** (one word, camelCase). `add` is rejected with `Patch op 'add' cannot be applied to path 'Members'`. Use `removeElements` for the mirror operation. There is **no `replaceElements`** (corrected 2026-10-05): the spec's `SecurityFilterPatchOperation.op` enum is `add`, `replace`, `remove`, `incr`, `addElement`, `removeElement`, `addElements`, `removeElements`, `move`, `copy`. To swap members, `removeElements` the old set then `addElements` the new one (`replace` is in the enum but untested here).
+- **`path` must be `/Members`** with a **leading slash and capital M** on the tenant this was verified against. Lowercase `members`, `/members`, and `Members` (no slash) all fail `Invalid path, the path should a string matching regex '/([/A-Za-z0-9...`. The regex forces the leading slash and PascalCase segment. Note the spec disagrees: its `path` enum (shared by the Mosaic and classic member endpoints) lists only `/members`. Record both — try `/Members` first on this tenant family and fall back to `/members` elsewhere.
 - Success returns **HTTP 204** with an empty body.
 - Only accepts user/group IDs — resolving names requires a separate `/api/users?nameBegins=<q>` pass first.
 

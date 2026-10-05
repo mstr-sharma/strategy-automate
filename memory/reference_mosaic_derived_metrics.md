@@ -302,7 +302,7 @@ Shape:
 ```
 
 - `conditionality.filter.isEmbedded:true` means the filter is scoped to this metric only (not a reusable top-level filter object).
-- `embedMethod:"report_into_metric_filter"` is the UI default; other values exist (`report_intersect_metric_filter`, `replace`) — check the UI affordance when porting.
+- `embedMethod:"report_into_metric_filter"` is the UI default. The spec enum (`ms-Conditionality.embedMethod`) is exactly `both_filters_together` / `report_into_metric_filter` / `metric_into_report_filter` (corrected 2026-10-05; the `report_intersect_metric_filter` / `replace` values listed here before do not exist).
 - `removeElements:true` means "ignore attribute qualifications from the report context when this filter applies" — removes outer report filters on the qualified attribute.
 
 **Building the embedded filter:** superseded by §0c. The filter is created under the metric itself (`POST .../metrics/{metricId}/embeddedObjects`), not through the model's `/filters` endpoint, and create → embed → bind fits in ONE changeset. Do not follow the earlier note here (separate `/filters` POST, then the metric in a second changeset) — it is not the verified path.
@@ -351,8 +351,8 @@ Shape:
 ```
 
 - The `+` marker on the Product Category unit means "group by this attribute level".
-- `aggregation:"normal"` is the default "sum rows at this level"; `"group_by"` / `"none"` exist for more exotic behaviors.
-- `filtering:"apply" | "absolute" | "ignore" | "none" | "ignore_warehouse"` controls whether report filters restrict this metric's scope.
+- `aggregation:"normal"` is the default "aggregate rows at this level". The spec enum (`ms-DimtyUnit.aggregation`) is `normal` / `first_in_fact` / `last_in_fact` / `first_in_relationship` / `last_in_relationship` (the semi-additive choices). Grouping is the separate boolean `groupBy`, not an aggregation value (corrected 2026-10-05; earlier text listed `group_by` / `none`).
+- `filtering: "apply" | "absolute" | "ignore" | "none"` (spec `ms-DimtyUnit.filtering`; there is no `ignore_warehouse` — corrected 2026-10-05) controls whether report filters restrict this metric's scope; semantics verified in §0b.
 
 ## The `{~+}` "report-base-level" token sequence
 
@@ -372,7 +372,7 @@ Token sequence: `<` → `identifier:UseLookupForAttributes` → `function:=` →
 
 **`number_category` enum (Modeling service, verified 2026-09-29 against a live tenant):**
 `0`=Fixed, `1`=Currency, `2`=Date, `3`=Time, `4`=Percentage, `5`=Fraction, `6`=Scientific,
-`7`=Special, `8`=Custom, `9`=General. An earlier version of this file said `2` = Currency and
+`7`=Custom, `8`=Special, `9`=General (7/8 per the official format samples; corrected 2026-10-05). An earlier version of this file said `2` = Currency and
 `5` = Percentage — wrong: writing `2` for money makes the UI render the amounts as dates.
 
 Verified recipes (the currency one renders everywhere, dashboard grids included):

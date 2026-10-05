@@ -21,7 +21,7 @@ Validation is always comparative. There is no universal "model is correct" check
 
 Pick the reference based on what's available and trusted. Record the selected reference type and reference object/source in the validation report.
 
-1. **Another Mosaic model** — clone-reference pattern. Query via MCP Trino (MCP `query`) with `schema="{your project name lowercased}"`. Best when validating a clone-and-remap or an alternate live/in-memory variant of the same source.
+1. **Another Mosaic model** — clone-reference pattern. Query through the Mosaic MCP `query` tool with `project="<project name from get_projects>"` (the model must be certified to be visible), or direct Trino with schema = project name lowercased. Best when validating a clone-and-remap or an alternate live/in-memory variant of the same source.
 2. **Classic/legacy semantic-layer report** — run the classic report via `/api/reports/{id}/instances` + JSON Data API, or query the classic project attributes/metrics through the Modeling Service. Best during legacy-to-Mosaic migrations; see `memory/reference_strategy_legacy_to_mosaic_mining.md`.
 3. **Flat file** (CSV / Parquet / JSON) — a snapshot export, hand-curated gold set, or auditor-supplied file. Load locally with `csv` / `json` / DuckDB / Pandas. Best when the warehouse is read-once (compliance exports, audit reconciliation).
 4. **Direct warehouse SQL** — bypass the semantic layer entirely and query Snowflake / BigQuery / Oracle / etc. with raw SQL. Best for "does the semantic-layer math match the raw warehouse?" checks.

@@ -16,7 +16,7 @@ Coverage levels are defined in `reference_strategy_automation_coverage.md`: wrap
 
 ## Object discovery and metadata
 - "Find object/report/dashboard/model/user": helper `search-objects`, `/api/searches/results`, `/api/folders/{id}`, `/api/objects/{id}`.
-- "Show dependencies/lineage": `/api/objects/{id}/dependencies`, `/dependents`.
+- "Show dependencies/lineage" (corrected 2026-10-05 — there is no `/api/objects/{id}/dependencies` or `/dependents`): `POST /api/metadataSearches/results?usesObject=<id>;<type>` (what uses the object; `usedByObject=<id>;<type>` for what it uses; `usesRecursive` / `usedByRecursive` for indirect) → `{id, totalItems}`, then page `GET /api/metadataSearches/results?searchId=<id>&offset=&limit=`. Quick variant: `GET /api/searches/results?usesObjectId=<id>`. Counts only: `POST /api/searches/dependents/count` body `{usesOneOf:[ids]}`.
 - "Move/copy/rename/certify/translate": object endpoints; for Mosaic-contained objects prefer data-model object endpoints.
 - "Read/update existing Mosaic object": `get-model-object` then `patch-model-object` with a saved before image.
 - "Read/update legacy schema attribute/metric/table": `get-model-object --kind legacy_attribute|legacy_metric|project_table`, patch only after target ID and payload are reviewed.
@@ -31,7 +31,7 @@ Coverage levels are defined in `reference_strategy_automation_coverage.md`: wrap
 ## Mosaic semantic models
 - "Build model from DB/schema/tables": the `build-mosaic-model` skill.
 - "Build a Mosaic model from these classic attributes/facts/metrics", "port these schema object IDs": helper `build-from-schema-objects` (`build_mosaic.py`); reads classic definitions, maps their physical tables, batch-creates attributes + factMetrics in CS1, wires relationships in CS2, and creates derived metrics bottom-up in CS3. ApplySimple/custom-SQL/raw-SQL tokens and conditional-metric filter refs are flagged in the review file. See `reference_mosaic_schema_object_import.md`.
-- "Set live/in-memory/hybrid": `set-serve-mode` or `PATCH /api/model/dataModels/{id}`.
+- "Set live/in-memory/off-memory": `set-serve-mode` or `PATCH /api/model/dataModels/{id}`.
 - "Publish/refresh/delete model": `publish`, `refresh`, `delete-model --yes` after enumerating the target ID.
 - "Add tables/attributes/metrics/relationships": Modeling Service under `/api/model/dataModels/{id}/...`; use changesets. **Relationship PUT is destructive** — use `put_relationships_merged()` (default in `wire-relationships`) or pass `--replace` explicitly. See the Relationships section of `reference_mosaic_rest_gotchas.md`.
 - "Validate post-build topology / find isolated attributes / check wiring is complete": `build_mosaic.py validate-topology --model-id <id> --strict`. Surfaces isolated attrs on fact tables, fact tables with zero relationships, and numeric-named attrs that should have been metrics. Make this the LAST step of every wiring/build script. See `reference_mosaic_safety_helpers.md`.
@@ -58,7 +58,7 @@ Coverage levels are defined in `reference_strategy_automation_coverage.md`: wrap
 - "Create/update/publish Intelligent Cube / OLAP cube": `/api/model/cubes`, then publish with `/api/v2/cubes/{cubeId}` or tenant-supported `/api/cubes/{cubeId}`; see `reference_strategy_surface_matrix.md` ("Cubes and datasets").
 - "Execute/read cube data": `POST /api/cubes/{cubeId}/instances`, then `GET /api/cubes/{cubeId}/instances/{instanceId}`.
 - "Create/update Push Data / Super Cube / MTDI dataset": single-table `POST /api/datasets` or multi-table `POST /api/datasets/models` + `/uploadSessions`; publish/status endpoints under `/api/datasets/{datasetId}/uploadSessions/{uploadSessionId}`.
-- "Cube caches/refresh/status": `/api/monitors/caches`, `/api/datasets/cubes/{id}/status`, dataset/cube refresh endpoints; use mstrio cube cache helpers when useful.
+- "Cube caches/refresh/status": `GET /api/monitors/caches/cubes?clusterNode=<node>` (+ `GET/PATCH/DELETE …/cubes/{id}`) and `GET /api/monitors/caches/contents?clusterNode=<node>` — there is no bare `/api/monitors/caches` (corrected 2026-10-05; `reference_strategy_monitoring_jobs_alerts.md`); cube state via `HEAD /api/cubes/{id}` (`X-MSTR-CubeStatus`); `/api/datasets/cubes/{id}/status` is internal; use mstrio cube cache helpers when useful.
 
 ## Reports, dashboards, dossiers, documents
 - "List/execute/export report or dashboard/document": `/api/reports`, `/api/dashboards`, `/api/dossiers`, `/api/documents`; see `reference_strategy_runtime_analytics.md`.
@@ -76,10 +76,10 @@ Coverage levels are defined in `reference_strategy_automation_coverage.md`: wrap
 - "Subscriptions/schedules/distribution": `/api/subscriptions`, `/api/schedules`, distribution services modules.
 - "Subscriptions/schedules/distribution": read `reference_strategy_admin_platform.md`; `/api/subscriptions`, `/api/schedules`, contacts, addresses, dynamic recipients, transmitters.
 - "Caches/jobs/monitors/project load/unload": read `reference_strategy_admin_platform.md`; `/api/monitors`, cube/content cache endpoints, project status endpoints.
-- "Project/server settings/VLDB": read `reference_strategy_admin_platform.md`; `/api/projects/{id}/settings`, `/api/iserver/settings`, object `vldb` and property set endpoints, mstrio-py settings helpers.
+- "Project/server settings/VLDB": read `reference_strategy_admin_platform.md`; public `/api/v2/projects/{id}/settings` and `/api/v2/iserver/settings` (GET/PUT/PATCH; the v1 `/api/projects/{id}/settings` and `/api/iserver/settings` are internal — corrected 2026-10-05), object `vldb` and property set endpoints, mstrio-py settings helpers.
 - "Migration/package import/export": read `reference_strategy_admin_platform.md`; migration/package APIs are high-impact, verify source/target environments, package type, package IDs, validation, and rollback/undo support.
 - "Datasource administration": read `reference_strategy_admin_platform.md`; distinguish catalog reads from datasource/connection/login/mapping writes.
-- "Auto Agent / Bot / AI chat": read `reference_strategy_ai_agents.md`; prefer Auto Agent question/config paths over deprecated Bot APIs.
+- "Auto Agent / Bot / AI chat": read `reference_strategy_ai_agents.md`; prefer the documented `/api/questions` Agent APIs (+ `GET /api/v2/bots/{id}/columns`); the rest of `/api/v2/bots` management is internal, only the `/api/bots/{id}/instances…` POSTs are deprecated (`GET /api/bots/{id}/configuration` and the question reads are public), and mstrio-py has an `Agent` class (corrected 2026-10-05).
 
 ## When unsure
 Run:

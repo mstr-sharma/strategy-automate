@@ -1,6 +1,6 @@
 ---
 name: strategy-automation
-description: Automate Strategy (formerly MicroStrategy) environments from natural-language requests. Use for any Strategy REST, Mosaic semantic model, datasource/catalog, project/folder/object, report/dashboard/document, cube/cache, security/governance, user/group, subscription, migration, monitoring, or mstrio-py task. Routes NLQ work to the local Strategy memory, OpenAPI spec, authenticated REST helper, Mosaic builder skill, MCP query tools, or mstrio-py as appropriate.
+description: Automate Strategy (formerly MicroStrategy) environments from natural-language requests. Use for any Strategy REST, Mosaic semantic model, datasource/catalog, project/folder/object, report/dashboard/document, cube/cache, security/governance, user/group, subscription, migration, monitoring, AI agent, MCP or mstrio-py task. Classifies the request and routes it to the owning domain skill (admin, distribution, content, migration, ops, AI, modeling, validation) or to the spec-validated API tool that reaches every REST operation.
 ---
 
 # Strategy Automation
@@ -13,8 +13,8 @@ Use this skill when the user asks to automate, inspect, build, modify, secure, p
 2. Identify the task family in `$REPO/memory/reference_strategy_automation_playbook.md`.
 3. Read `$REPO/memory/reference_strategy_automation_coverage.md` for broad or audit-style requests, then classify coverage as wrapped helper, generic REST hook, specialized hook, captured fallback, or known gap.
 4. Decide the product surface before choosing endpoints: classic project semantic layer/admin, Mosaic data model, runtime analytics, Push Data dataset, cube family, platform admin, or AI/agents. Read `reference_strategy_surface_matrix.md` for ambiguous attributes, metrics, prompts, filters, ACLs/object security, security filters, cubes, datasets, reports, dashboards, documents, users/groups, agents, or project-level requests.
-5. Use live `{Library}/api/openapi.yaml` through the helper when endpoint details matter. Add `?visibility=all` when the Swagger UI shows more detail than the default spec. A local `openapi.yaml` may be generated for temporary caching, but it is not part of the lean repo.
-6. Use credentials from environment (`MSTR_PASSWORD`) or user-provided secure runtime values. Never write secrets to memory, skills, config, or logs.
+5. When endpoint details matter, ask the tenant's own spec: `python3 skills/strategy-platform/scripts/strategy_api.py ops --tag <area> --search "<words>"` and `describe <operationId>` (it caches `{Library}/api/openapi.json?visibility=all`). `memory/reference_strategy_api_surface.md` maps every API area to its owning skill.
+6. Sign in through `strategy_auth.py` (`--auth-method`, default `auto`; `sso` needs no password). Never write secrets to memory, skills, config, logs or command lines.
 
 ## Skill precedence (one-way — no loops)
 
@@ -25,15 +25,23 @@ strategy-automation (this skill — classify)
   ├─► strategy-data-modeling (plan, Kimball-first)    ← all modeling work routes here
   │     └─► skills/build-mosaic-model/SKILL.md (build-mosaic-model)
   │           └─► strategy-validation (verify)
-  ├─► skills/build-mosaic-model/SKILL.md directly                         ← only for post-build admin edits on known-good plans
-  ├─► strategy-validation directly                    ← for data-correctness checks on an existing model
-  └─► REST / mstrio-py / MCP                          ← for admin/runtime/non-modeling work
+  ├─► skills/build-mosaic-model/SKILL.md directly     ← only for post-build edits on known-good plans
+  ├─► strategy-validation directly                    ← data-correctness checks, Test Center comparisons
+  ├─► strategy-admin         ← users, groups, security roles, privileges, SCIM, tenants, license, settings
+  ├─► strategy-distribution  ← subscriptions, schedules, events, contacts, history list
+  ├─► strategy-content       ← reports, dashboards, documents, objects, folders, search, cubes, datasets, Library
+  ├─► strategy-migration     ← packages, migrations, project duplication, Git
+  ├─► strategy-ops           ← monitors, jobs, caches, connections, telemetry, change journal, server scripts
+  ├─► strategy-ai            ← agents, bots, questions, MCP readiness, Explorer, ontology
+  ├─► create-unstructured-data ← documents/decks as agent knowledge
+  └─► strategy-platform      ← sign-in, MCP client, and any single operation no skill wraps (strategy_api.py)
 ```
 
 `strategy-data-modeling` does NOT route back here. Once a modeling task is classified, planning owns the handoff to build/validate.
 
 ## Tool Router
 
+- **Domain first.** If the request belongs to one of the domain skills above, route there — each lists its workflows with exact `strategy_api.py call` commands, safety rules and field notes. Unsure which owns an endpoint? `strategy_api.py describe <operationId>` prints the owning skill.
 - **Any semantic-model design / review / migration / cleanup:** route to `skills/strategy-data-modeling/SKILL.md`. That skill is Kimball-first and produces the model plan before any REST write. Do not re-implement modeling decisions in this skill.
 - **Legacy-to-Mosaic migration:** `skills/strategy-data-modeling/SKILL.md` owns the plan. It will use `strategy_semantic_inventory.py` or `strategy_semantic_mine.py` for discovery, then hand off to `skills/build-mosaic-model/SKILL.md` for the build. Do not treat migration as a greenfield shared-column inference job unless no legacy semantic source exists.
 - **Brand-new Mosaic model:** same — `skills/strategy-data-modeling/SKILL.md` plans, `skills/build-mosaic-model/SKILL.md` builds, `skills/strategy-validation/SKILL.md` verifies.
@@ -49,25 +57,26 @@ strategy-automation (this skill — classify)
 - **Attributes and metrics:** route by container. Classic/project objects use `/api/model/attributes|metrics`; Mosaic-contained objects use `/api/model/dataModels/{id}/attributes|metrics|factMetrics`; Push Data dataset attributes/metrics live in `/api/datasets` definitions.
 - **ACL/object security:** classic object ACL uses `GET/PUT /api/objects/{id}?type=...`; Mosaic-contained object ACL uses `/api/model/dataModels/{id}/objects/{objectId}/acl`; security roles/privileges are separate from ACL and security filters.
 - **Cubes/datasets:** read `reference_strategy_surface_matrix.md` ("Cubes and datasets"); Intelligent/OLAP cubes, Super Cube/MTDI Push Data datasets, DDA/MDX runtime cubes, and Mosaic models use different endpoint families.
-- **Legacy-vs-Mosaic surface guard (must-read before any publish/refresh/execute write):** read `reference_mosaic_vs_legacy_surfaces.md`. **Hard rule:** before hitting `/api/cubes/...`, `/api/dataModels/...`, or `/api/model/dataModels/.../publish`, classify the target via `GET /api/objects/{id}?type=3` → `subtype`. 779 → Mosaic data model (publish per `reference_mosaic_publish_path.md` — ONE trigger per run, then poll `/publishStatus` or Trino-probe before declaring success). 776 → classic Intelligent Cube (use `/api/cubes/...`). Never treat an unconfirmed 2xx as evidence a Mosaic model is published. `build_mosaic.py publish` now routes by subType; do not bypass it with ad-hoc `/api/cubes/*` calls.
+- **Legacy-vs-Mosaic surface guard (must-read before any publish/refresh/execute write):** read `reference_mosaic_vs_legacy_surfaces.md`. **Hard rule:** before hitting `/api/cubes/...` or `/api/dataModels/{id}/publish`, classify the target via `GET /api/objects/{id}?type=3` → `subtype` + `extType`. 779 + extType 448 → Mosaic data model (publish per `reference_mosaic_publish_path.md` — ONE trigger per run, then poll `/publishStatus` to `completed` or Trino-probe before declaring success); 779 with another extType → data-import cube. 776 → classic Intelligent Cube (use `/api/cubes/...`). Never treat an unconfirmed 2xx as evidence a Mosaic model is published. `build_mosaic.py publish` now routes by subType; do not bypass it with ad-hoc `/api/cubes/*` calls.
 - **Reports/dashboards/documents runtime:** read `reference_strategy_runtime_analytics.md`; create instances, answer prompts, apply runtime filters, then fetch/export results.
 - **Library publications (who has which dashboard/document/report/agent, publish/unpublish, replay into a duplicated project):** read `reference_strategy_library_publications.md`; use `skills/build-mosaic-model/scripts/strategy_library_publications.py export` (read-only inventory, one row per object × user/group) and `replicate` (dry run unless `--apply`; additive, never unpublishes).
-- **Platform admin:** read `reference_strategy_admin_platform.md`; datasource admin, distribution/subscriptions, migrations/packages, monitors/caches, project load/unload, settings, search/browse, and object ownership have separate endpoint families.
-- **AI/Agent/Bot:** read `reference_strategy_ai_agents.md`; prefer Auto Agent `/api/questions` and `/api/v2/bots` paths; treat `/api/bots` as legacy/deprecated unless required.
+- **Platform admin:** `skills/strategy-admin/SKILL.md` (users, security, settings), `skills/strategy-distribution/SKILL.md` (subscriptions and schedules), `skills/strategy-migration/SKILL.md` (packages, migrations), `skills/strategy-ops/SKILL.md` (monitors, caches, project load/unload). Background: `reference_strategy_admin_platform.md`.
+- **AI/Agent/Bot:** `skills/strategy-ai/SKILL.md`; background `reference_strategy_ai_agents.md`. The documented agent API is `/api/questions`; v2 bot management is internal in the spec.
 - **Unstructured data / document upload for AI grounding:** route to `skills/create-unstructured-data/SKILL.md` — converts PPTX decks to Markdown (stdlib extractor) and creates nuggets via `POST /api/nuggets?type=unstructuredData` with status polling; also documents the delete path (`DELETE /api/objects/{id}?type=90`).
 - **Validation/testing:** read `reference_strategy_validation_workflows.md`; do not run live write tests until the user signs off on the numbered workflows and cleanup behavior.
 - **Data-correctness validation (post-build, pre-ship):** route through `skills/strategy-validation/SKILL.md` and `reference_strategy_data_validation.md` (covers both the design-time 10-check suite and the runnable 5-query paired-query suite). Reference can be another Mosaic model, legacy/classic report, flat file, direct warehouse SQL, or a saved REST fixture — NOT Mosaic-to-Mosaic only. Required after every build per `feedback_mosaic_ship_bar.md` checklist item 8.
 - **Drop-in ERDs, dictionaries, rosters, or legacy update briefs:** read `reference_strategy_intake_patterns.md`, normalize files to supported JSON/YAML/CSV/DBML/Mermaid/SQL formats, then resolve IDs before writing.
-- **Any REST endpoint not wrapped yet:** use:
+- **Any REST operation no skill wraps:** use the spec-validated tool (checks parameters and body, fills project / changeset / `Prefer` headers, gates writes behind `--yes`):
   ```bash
   cd "$REPO"
-  python3 skills/build-mosaic-model/scripts/build_mosaic.py openapi-search "<term>" --context 2
-  python3 skills/build-mosaic-model/scripts/build_mosaic.py api-call --method GET --path /api/projects
+  python3 skills/strategy-platform/scripts/strategy_api.py ops --search "<words>"
+  python3 skills/strategy-platform/scripts/strategy_api.py describe <operationId>
+  python3 skills/strategy-platform/scripts/strategy_api.py call <operationId> -p name=value [--body @f.json] [--yes]
   ```
-  This is a generic API hook, not proof that the workflow has a typed wrapper or full validation.
+  `build_mosaic.py api-call` remains for multipart uploads and raw probes. A single validated call is still not a tested workflow — say so, and record a repeatable one in the owning skill.
 - **Users and access targets:** use `resolve-users` before ACL/security/user writes; use `create-users` for roster dry-runs and `--yes` only when the user clearly wants creation.
 - **Existing or legacy schema objects:** use `search-objects`, then `get-model-object --show-expression-as tokens|tree`, then `patch-model-object --before-out ... --yes` after reviewing the payload.
-- **Certified-model semantic inspection/query:** use the Mosaic MCP tools when available (`get_projects`, `get_models`, `get_semantics`, `query`). They list and resolve certified models only — for published-but-uncertified models use REST + direct Trino. Scripts reach the same server with single sign-on through `strategy_mcp.py`.
+- **Certified-model semantic inspection/query:** use the Mosaic MCP tools when available (`get_projects`, `get_models`, `get_semantics`, `query`). They list and resolve certified content only — Mosaic models and governed classic cubes / reports / datasets (`Other Model`); for published-but-uncertified models use REST + direct Trino. Scripts reach the same server with single sign-on through `strategy_mcp.py`.
 - **Sign-in / SSO / API tokens / "no password":** `strategy_auth.py` (`methods`, `login`, `status`, `logout`) and `memory/reference_strategy_authentication.md`.
 - **Admin/read workflows with stable wrappers:** mstrio-py is acceptable for users/groups, security roles, schedules/subscriptions, caches, object search, and settings. Capture the equivalent REST path if it becomes a reusable workflow.
 - **Unknown modeling payload:** `GET` a working object, clone/remap IDs, then `POST`/`PATCH` through Modeling Service.
@@ -96,6 +105,8 @@ strategy-automation (this skill — classify)
 - Model + data validation: `reference_strategy_data_validation.md`
 - Environment and credentials: `reference_strategy_env.md`
 - Raw REST spec usage: `reference_strategy_openapi.md`
+- Every API area → owning skill, with coverage: `reference_strategy_api_surface.md` (generated)
+- Sign-in methods, SSO, API tokens, MCP OAuth: `reference_strategy_authentication.md`
 - Broad task routing: `reference_strategy_automation_playbook.md`
 - Automation coverage contract: `reference_strategy_automation_coverage.md`
 - Task-to-endpoint catalog: `reference_strategy_task_catalog.md`

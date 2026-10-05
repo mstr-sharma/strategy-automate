@@ -30,7 +30,9 @@ Do NOT clone when you only need a rename or description tweak — `PATCH /api/mo
 
 ## Per-family notes
 
-### Mosaic data model (subType 779)
+### Mosaic data model (subType 779 + extType 448)
+
+**Native copy first (documented May 2026):** `POST /api/model/dataModels/{id}/saveAs` with the `X-MSTR-MS-Changeset` header and body `{"name": …, "destinationFolderId": …}` → `{objectId}`; commit the changeset. It copies tables, attributes, metrics, facts, hierarchy, security filters and folders with fresh IDs (needs Read on the source, Control if it has security filters, Write on the destination folder). Use the clone-and-remap walk below only when the copy must change the definition (e.g. scrub dataTypes) or `saveAs` is unavailable on the tenant.
 
 See the **Mosaic deep dive** below for the full working script pattern. Highlights:
 - Physical-table dataTypes must match the UI-built reference shape, not the warehouse-catalog shape. See `reference_mosaic_publish_path.md` ("DataType preconditions").
@@ -41,23 +43,29 @@ See the **Mosaic deep dive** below for the full working script pattern. Highligh
 
 ### Classic schema objects (attributes, facts, metrics, filters in a project)
 
-- `POST /api/objects/{id}/copy?destinationFolderId=...` works for most classic schema objects with dependencies auto-copied.
+- `POST /api/objects/{id}/copy?type=<objectType>` with body `{"name": …, "folderId": …}` (201 + the new `ObjectInfo`; omit `name` for "Old Name (1)", omit `folderId` to copy into the source folder). There is no `destinationFolderId` query parameter (corrected 2026-10-05). The spec describes a copy of the one object; don't assume its dependencies are copied.
 - Cross-project: use migrations (see `reference_strategy_package_migration.md`).
 - Security filter clone must handle Mosaic-vs-classic endpoint asymmetry — classic uses `/api/model/securityFilters`, Mosaic uses `/api/model/dataModels/{id}/securityFilters` — **not a drop-in copy**. See `reference_mosaic_security_filter.md`.
 
-### Dossier / dashboard / document (type 58 / 55)
+### Dossier / dashboard / document (type 55)
 
-- `POST /api/objects/{sourceId}/copy` is the primary path.
+(Corrected 2026-10-05: dashboards and documents are both type 55, DocumentDefinition; type 58 is a security filter.)
+
+- `POST /api/objects/{sourceId}/copy?type=55` with body `{name, folderId}` is the primary path.
 - Visualization definitions rebind to the same data-model IDs by default. To retarget, PATCH the dossier's dataset references after copy.
 - Prompt definitions clone intact; prompt *answers* (saved defaults) may or may not — verify on first use.
 
-### Intelligent cube (type 74, subType 776)
+### Intelligent cube (type 3, subType 776)
 
-- `POST /api/cubes` with a full definition body, OR clone via `/api/objects/{id}/copy?type=74`.
-- Post-clone, refresh via `/api/cubes/{id}/refresh?refreshType=replace`.
+(Corrected 2026-10-05: an earlier version said type 74 and listed `POST /api/cubes` and `/api/cubes/{id}/refresh`, neither of which is in the spec.)
+
+- Create from a definition with `POST /api/v2/cubes` (body `{name, folderId, definition, overwrite}`) or `POST /api/model/cubes` (Modeling Service, changeset), OR clone via `POST /api/objects/{id}/copy?type=3` with body `{name, folderId}`.
+- Post-clone, publish via `POST /api/v2/cubes/{id}` (202 + job id) and watch `HEAD /api/cubes/{id}` (`X-MSTR-CubeStatus`).
 - Do NOT confuse with Mosaic cube materialization — see `reference_mosaic_vs_legacy_surfaces.md`.
 
-### User / user group (type 34 / 42)
+### User / user group (type 34; subtype 8704 user / 8705 group)
+
+(Corrected 2026-10-05: user groups are type 34 too — type 42 is a function package definition; type 2 is a template.)
 
 - `POST /api/users` or mstrio-py. Privileges and security role memberships are separate follow-up PATCH calls.
 - ACL on objects owned by a source user doesn't transfer to the new user automatically.
@@ -73,11 +81,11 @@ See the **Mosaic deep dive** below for the full working script pattern. Highligh
 
 | Intent | Use |
 |---|---|
-| Same project, different folder | `/api/objects/{id}/copy?destinationFolderId=...` |
+| Same project, different folder | `POST /api/objects/{id}/copy?type=<type>` body `{name, folderId}`; for a Mosaic model, `POST /api/model/dataModels/{id}/saveAs` |
 | Same tenant, different project | Migration (`reference_strategy_package_migration.md`) |
 | Different tenant | Package export + import |
 | Need to change the definition as part of the copy | Custom clone-and-remap (this memory's walk) |
-| Rebuilding a corrupted Mosaic model | Custom clone-and-remap (scrub dataTypes, mint new IDs; do NOT use `/copy` — it would carry the corruption) |
+| Rebuilding a corrupted Mosaic model | Custom clone-and-remap (scrub dataTypes, mint new IDs; do NOT use `/copy` or `saveAs` — they would carry the corruption) |
 
 ---
 
@@ -167,7 +175,8 @@ del body.displays                                   # PATCH after POST
 POST, capture the new attribute id, then PATCH displays so the attribute passes commit validation (`8004cf06: attribute ... has no report display`):
 
 ```
-PATCH /api/model/dataModels/{MID}/attributes/{newAid}?changeset=...
+PATCH /api/model/dataModels/{MID}/attributes/{newAid}
+headers=X-MSTR-MS-Changeset   # header only; the spec has no changeset query parameter
 body={"displays":{
    "reportDisplays":[{"id": f.id} for f in response.forms if f.id],
    "browseDisplays": [...]
@@ -213,17 +222,17 @@ Follow `reference_mosaic_security_filter.md` — create via Modeling-Service pat
 
 ### 9. Publish
 
-Per `reference_mosaic_publish_path.md`: `POST /api/cubes/{MID}?cubeAction=publish` is the reliable trigger on Strategy ONE Cloud tenants (matches the UI). Poll via the Modeling-native 3-step flow if you need per-table confirmation.
+Per `reference_mosaic_publish_path.md` (corrected 2026-10-05): use the documented flow — `POST /api/dataModels/{MID}/instances` → `POST …/publish` (`tables[].refreshPolicy`) → poll `GET …/publishStatus` until every table is `completed` → `DELETE …/instances/{instanceId}`. `POST /api/cubes/{MID}?cubeAction=publish` (what the UI fired in 2026-04 captures) is internal + deprecated in the spec — a tenant-observed fallback only, never in the same run.
 
 ### What the Mosaic pattern does NOT carry over
 
 - **ACL grants/denies** on the model root or child objects. Re-apply after clone via `/api/model/dataModels/{newMID}/objects/{objId}/acl?subType=...`.
 - **Translations** on names/descriptions — re-PATCH per object.
-- **User-defined hierarchies** — clone separately via `/api/model/dataModels/{newMID}/hierarchies`.
-- **Custom groups, consolidations, prompts, transformations** — each has its own `POST` endpoint and needs its own remap pass.
+- **User-defined hierarchies** — there is no `/api/model/dataModels/{id}/hierarchies` (only read-only `GET …/hierarchy`); hierarchies are project-level `POST /api/model/hierarchies` (corrected 2026-10-05). `saveAs` copies the model hierarchy.
+- **Custom groups, consolidations, prompts, transformations** — project-level objects (`POST /api/model/customGroups`, `/consolidations`, `/prompts`, `/transformations`), not data-model sub-resources; each needs its own remap pass.
 - **Legacy-layer artifacts** (classic reports, project-level filters). The clone is Mosaic-scoped only.
 - **Serve-mode specifics**: the new model starts unpublished; you must re-publish after clone.
 
 ### Helper integration
 
-`build_mosaic.py` should grow a `clone-model --source REF_MID --name NEW_NAME --dest-folder <id>` subcommand that implements steps 2–8. Today the operator has to do this via an ad-hoc script — which is fine for one-off recovery but tedious when building multiple templated models.
+For a straight copy, the native `POST /api/model/dataModels/{id}/saveAs` (documented May 2026) replaces steps 2–8 — wrap that first. A `clone-model --source REF_MID --name NEW_NAME --dest-folder <id>` subcommand implementing steps 2–8 is still worth having for remap-while-copying (dataType scrub, table swaps). Today the operator does that via an ad-hoc script — fine for one-off recovery but tedious when building multiple templated models.

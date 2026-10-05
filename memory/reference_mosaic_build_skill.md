@@ -30,7 +30,7 @@ Invoke directly; auto-reads tenant defaults and requires `MSTR_PASSWORD` (or `--
 
 **Build subcommand:**
 - `build --name N --source "INSTANCE:SCHEMA:T1,T2,..."` (repeatable, for multi-source) — the main one.
-  Flags: `--data-serve-mode {connect_live|in_memory|hybrid}`, `--dictionary`, `--erd`, `--conformance-map`, `--fk-map`, `--attr-cols`, `--metric-cols`, `--skip-relationships`, `--security-filter 'NAME=ATTR_ID[:FORM_ID]=VALUE|USER,USER'`, `--grant 'trusteeId:rights[:user|user_group]'`, `--deny 'trusteeId:rights[:user|user_group]'`, `--translate 'objectId[:SubType]:locale[:field]=text'`, `--certify`, `--publish`.
+  Flags: `--data-serve-mode {connect_live|in_memory|off_memory}`, `--dictionary`, `--erd`, `--conformance-map`, `--fk-map`, `--attr-cols`, `--metric-cols`, `--skip-relationships`, `--security-filter 'NAME=ATTR_ID[:FORM_ID]=VALUE|USER,USER'`, `--grant 'trusteeId:rights[:user|user_group]'`, `--deny 'trusteeId:rights[:user|user_group]'`, `--translate 'objectId[:SubType]:locale[:field]=text'`, `--certify`, `--publish`.
   - `--conformance-map FILE`: JSON/YAML `{logical_name: [TABLE.COLUMN, ...]}`; forces listed columns to collapse into one conformed attribute.
   - `--fk-map FILE`: JSON/YAML `{child_table.child_col: parent_table.parent_col}`; normalizes differently-named FKs so they conform.
 - `build-from-schema-objects` — translate classic attributes / facts / relationships into a new Mosaic model (`reference_mosaic_schema_object_import.md`).
@@ -45,7 +45,7 @@ Invoke directly; auto-reads tenant defaults and requires `MSTR_PASSWORD` (or `--
 - `patch-model-object --kind legacy_attribute|attribute|fact_metric|... --json-file patch.json --before-out before.json --yes` — changeset-backed object update with before/after verification.
 
 **Individual lifecycle ops (operate on existing models):**
-- `set-serve-mode --model-id M --mode {connect_live|in_memory|hybrid}`
+- `set-serve-mode --model-id M --mode {connect_live|in_memory|off_memory}`
 - `publish --model-id M [--skip-classify] [--poll-seconds N]` — for in-memory Mosaic models. `--skip-classify` bypasses the `GET /api/objects/{id}?type=3` surface check when you already know the target is a Mosaic model (e.g. chained right after `build`); saves one project-scoped call against the session cap. See `feedback_build_mosaic_session_leak.md`.
 - `merge-attributes` — conform differently-named FK columns by merging a child attribute's expressions into the parent (`feedback_mosaic_relationship_wiring.md`).
 - `validate-topology --model-id M` — structural join-graph check (isolated tables, missing join paths).

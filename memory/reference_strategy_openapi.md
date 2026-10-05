@@ -63,13 +63,13 @@ Important OpenAPI paths for Mosaic automation:
 - `GET/POST /api/model/dataModels/{dataModelId}/metrics` for advanced metrics; tenant also accepts `/factMetrics` for fact metrics.
 - `GET/POST /api/model/dataModels/{dataModelId}/factMetrics`
 - `GET/POST /api/model/dataModels/{dataModelId}/securityFilters`
-- `PATCH /api/dataModels/{dataModelId}/securityFilters/{securityFilterId}/members` for assigning Mosaic data-model security-filter members; body is JSON Patch style with capitalized path: `{operationList:[{op:"addElements",path:"/Members",value:[ids...]}]}`.
+- `PATCH /api/dataModels/{dataModelId}/securityFilters/{securityFilterId}/members` for assigning Mosaic data-model security-filter members; body is JSON Patch style with capitalized path: `{operationList:[{op:"addElements",path:"/Members",value:[ids...]}]}`. `op` enum (spec `SecurityFilterPatchOperation`): `add`, `replace`, `remove`, `incr`, `addElement`, `removeElement`, `addElements`, `removeElements`, `move`, `copy` — there is no `replaceElements` (corrected 2026-10-05). Path: a live tenant accepted `/Members` and rejected `/members`, while the spec's `path` enum says `/members` — record both.
 - `PATCH /api/model/dataModels/{dataModelId}/objects/{objectId}/acl?subType=<objectSubType>` for ACL on model-contained objects.
 - `PATCH /api/model/dataModels/{dataModelId}/objects/{objectId}/translations?subType=<objectSubType>` for name/description/form translations.
 - `GET/PATCH /api/model/attributes/{attributeId}` for classic/legacy schema attributes outside a Mosaic data model; use changesets and request `showExpressionAs=tokens` when editing expressions.
 - `GET/PATCH /api/model/metrics/{metricId}`, `/api/model/facts/{factId}`, `/api/model/tables/{tableId}` for classic schema objects.
 - `GET/POST /api/users`, `GET/PATCH/DELETE /api/users/{id}`, `POST /api/users/{id}/addresses` for user management; dry-run and resolve exact duplicates before creating users.
-- `POST /api/cubes/{cubeId}` publishes an in-memory cube/model on {MSTR_BASE host}; public spec also lists data-model publish endpoints, but use the tenant-verified cube POST first.
+- Mosaic publish (corrected 2026-10-05): use the documented, public data-model flow first — `POST /api/dataModels/{id}/instances` → `POST /api/dataModels/{id}/publish` (`tables[].refreshPolicy`) → `GET /api/dataModels/{id}/publishStatus` (per-table `completed`) → `DELETE /api/dataModels/{id}/instances/{instanceId}`. `POST /api/cubes/{cubeId}` (`?cubeAction=publish`) is internal + deprecated in the spec — a tenant-observed fallback only, never in the same run (`reference_mosaic_publish_path.md`). Classic/MTDI cubes publish with the public `POST /api/v2/cubes/{cubeId}`.
 
 Important OpenAPI paths for classic/project semantic-layer and admin automation:
 - `POST /api/model/attributes`, `GET/PATCH /api/model/attributes/{attributeId}` for classic/project attributes.

@@ -1,10 +1,12 @@
 ---
 name: Mosaic AI modeling service — automated PK detection, relationship inference, lookup-table and multi-form discovery
-description: The Studio UI has a full AI service that automates modeling decisions our helpers currently do heuristically. Endpoints under `/api/aiservice/*` cover primary-key detection, relationship inference, lookup-table selection, multi-form-attribute discovery, metric recommendations, object linking, and model overview text. Use these as the primary modeling source of truth; fall back to heuristics only when the AI is unavailable or returns low confidence.
+description: The Studio UI calls an AI service (captured in browser traces) under `/api/aiservice/model/*` for primary-key detection, relationship inference, lookup-table selection, multi-form-attribute discovery, metric recommendations, object linking and model overview text. None of these paths is in the tenant's OpenAPI spec, not even as internal (checked 2026-10-05) — treat them as unsupported UI internals: optional hints behind a heuristic fallback, never the primary source of truth.
 type: reference
 ---
 
-## Discovered endpoints
+> **Status (corrected 2026-10-05):** the 2026 tenant spec (1,190 paths) has **no** `/api/aiservice/model/*` path and no `/api/model/batch`, public or internal — its only `aiservice` path is an internal dashboard-chat call. The workspace/pipeline calls in the trace below (`/api/dataServer/workspaces/...`) ARE public. Earlier versions of this note told helpers to make these AI calls the primary modeling source of truth; don't — they are UI internals that can vanish between builds. Use the documented Modeling Service for writes, and treat AI suggestions as optional input.
+
+## Discovered endpoints (UI capture; not in the spec)
 
 All captured from Studio UI "Building your Mosaic Model..." flow and subsequent edits. Verified `POST` with model-specific bodies. All return 200 with recommendation payloads or are fire-and-forget.
 
@@ -19,17 +21,17 @@ All captured from Studio UI "Building your Mosaic Model..." flow and subsequent 
 | `POST /api/aiservice/model/overview` | Generate executive-summary description | Returns markdown-formatted business description. Stored back on the model (`executiveSummary` field). |
 
 Additional AI-adjacent endpoints:
-- `POST /api/nuggets/status/query` — AI indexing status.
-- `GET /api/iams` — Intelligent Agent Management Service enumeration.
-- `POST /api/aiservice/...` (others) — probe via `openapi-search` on the running tenant; this family grows fast.
+- `POST /api/nuggets/status/query` — AI indexing status (internal, tag Agent).
+- `GET /api/iams` — **identity-provider configurations** (OAuth/IdP objects: vendor `IDPTYPE_OKTA` / `IDPTYPE_AZUREAD` / …, `initAuthUrl`, `tokenUrl`, `clientId`; internal, needs Configure Security). Not AI-related — earlier text called it an "Intelligent Agent Management Service" (corrected 2026-10-05).
+- `POST /api/aiservice/...` (others) — `openapi-search` will not find them (absent from the spec); only a fresh UI capture shows what a tenant currently calls.
 
 ## When the UI calls them
 
 Captured sequence during auto-model-build ("Building your Mosaic Model..."):
 
 ```
-POST /api/dataServer/workspaces/{wsId}/pipelines            # workspace + pipelines first
-POST /api/model/batch?allowPartialSuccess=true              # imports metadata shells
+POST /api/dataServer/workspaces/{wsId}/pipelines            # workspace + pipelines first (public in the spec)
+POST /api/model/batch?allowPartialSuccess=true              # imports metadata shells (absent from the spec)
 POST /api/aiservice/model/tables/primaryKeys                # AI picks PKs
 POST /api/aiservice/model/objects/linking                   # AI infers relationships
 POST /api/model/batch?allowPartialSuccess=false             # commits structural edits
@@ -46,12 +48,11 @@ Pattern: hydrate metadata → call AI service → commit structural edits → ca
 - Column-name role classification → duplicates `POST /api/aiservice/model/tables/primaryKeys` and `POST /api/aiservice/model/objects/multiFormAttributes`
 - Lookup-table selection heuristic → duplicates `POST /api/aiservice/model/objects/lookupTable`
 
-Migration path:
+Migration path (downgraded 2026-10-05 — the endpoints are not a supported contract):
 
-1. In `build` after table hydration, call the AI services with the workspace/pipeline refs.
-2. Treat their responses as the default build plan.
-3. Apply the existing heuristics ONLY for columns the AI didn't return (fallback), or when the AI's confidence is below a threshold.
-4. Allow the user to override both via `--dictionary` / `--erd`.
+1. Keep the heuristics (plus `--dictionary` / `--erd` overrides) as the build plan.
+2. Optionally, behind a flag, call an AI endpoint after table hydration and use its answer only as a suggestion to compare against the heuristic plan.
+3. Treat any non-2xx (including 404 on a tenant that never had the path) as "no suggestion", not as an error.
 
 The existing preflight check script (`preflight_model_check.py`, invoked by the `build-mosaic-model` skill) should also consult `POST /api/aiservice/model/objects/multiFormAttributes` before emitting the "LOCALE_COLUMN_EXPLOSION" ERROR — the AI may already be handling it.
 
@@ -72,5 +73,5 @@ Bodies are not captured from MCP (extension returns only URL/status). Use DevToo
 ## Fallback / robustness
 
 - If `/api/aiservice/*` returns non-2xx, fall back to the heuristic build plan silently. Log but don't fail.
-- Some tenants have `/api/iams` disabled or AI services rate-limited. Check feature flags: `GET /api/v2/configurations/featureFlags` returns the tenant's AI capability matrix.
+- AI services may be disabled or rate-limited per tenant. Check feature flags: `GET /api/v2/configurations/featureFlags` (internal; the v1 `/api/configurations/featureFlags` is deprecated) returns the tenant's capability matrix. (`/api/iams` is identity-provider config, not an AI switch.)
 - The `GET /api/telemetry/usage-insights/model` endpoint returned 404 on our tenant — treat telemetry/usage-insights features as tenant-optional.

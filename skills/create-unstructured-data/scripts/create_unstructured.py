@@ -25,8 +25,8 @@ import sys
 import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_BUILD_SCRIPTS = os.path.normpath(os.path.join(_HERE, "..", "..", "build-mosaic-model", "scripts"))
-for _p in (_HERE, _BUILD_SCRIPTS):
+_PLATFORM = os.path.normpath(os.path.join(_HERE, "..", "..", "strategy-platform", "scripts"))
+for _p in (_HERE, _PLATFORM):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -121,7 +121,7 @@ def main():
     ap.add_argument("--login-mode", type=int, default=int(os.environ.get("MSTR_LOGIN_MODE", "1")))
     ap.add_argument("--auth-method", default=os.environ.get("MSTR_AUTH_METHOD", "auto"),
                     help="auto (default), password, ldap, api-token, sso (browser single sign-on), ... "
-                         "— see skills/build-mosaic-model/scripts/strategy_auth.py")
+                         "— see skills/strategy-platform/scripts/strategy_auth.py")
     args = ap.parse_args()
 
     for flag, value in (("--base", args.base), ("--project", args.project)):

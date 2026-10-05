@@ -18,7 +18,7 @@ tags: [auth, sso, saml, oidc, api-token, identity-token, oauth, mcp, logout, ses
 | Tenant with OIDC login mode and a native client that allows a loopback redirect | `oidc` (not yet exercised live) | `--auth-method oidc` |
 | Nothing else works | borrowed session | `MSTR_AUTH_TOKEN` + `MSTR_SESSION_COOKIE` (+ `MSTR_INGRESS_COOKIE`) from DevTools |
 
-`--auth-method auto` (the default everywhere) picks: `MSTR_API_TOKEN` → `MSTR_USER`+`MSTR_PASSWORD` → `MSTR_DELEGATE_IDENTITY_TOKEN` → cached browser session → saved API token → `sso`. Run `python3 skills/build-mosaic-model/scripts/strategy_auth.py methods` to see what a tenant enables and what this machine would use.
+`--auth-method auto` (the default everywhere) picks: `MSTR_API_TOKEN` → `MSTR_USER`+`MSTR_PASSWORD` → `MSTR_DELEGATE_IDENTITY_TOKEN` → cached browser session → saved API token → `sso`. Run `python3 skills/strategy-platform/scripts/strategy_auth.py methods` to see what a tenant enables and what this machine would use.
 
 ## Login modes (`loginMode`, EnumDSSXMLAuthModes)
 
@@ -54,6 +54,8 @@ tags: [auth, sso, saml, oidc, api-token, identity-token, oauth, mcp, logout, ses
 4. On Allow: `POST {base}/api/v2/auth/identityToken {codeChallenge}` → identity token → `POST /callback` on the loopback page (same origin, with `state`).
 5. The script calls `POST /api/auth/delegate {identityToken, codeVerifier}` and has its own session. A stolen identity token is useless without the verifier, which never leaves the script.
 
+**Session reuse for scripts with a password or API token:** `MSTR_REUSE_SESSION=1` (or `strategy_api.py call --reuse-session`) caches the session in the same secret store, one slot per tenant and identity, and skips the logout, so a chain of commands shares one session (fewer sign-ins, and instances/jobs survive between steps). `strategy_auth.py logout` ends and forgets it.
+
 Guards: loopback-only bind, `Host` and `Origin` checks (DNS rebinding), constant-time `state` check, nonce CSP, no token in the URL, browser storage or logs. The delegated session is cached in the OS secret store (macOS Keychain via `security -i` on stdin, libsecret `secret-tool`, else a `0600` file) so later commands reuse it; `strategy_auth.py logout` ends and forgets it.
 
 Tenant requirements: CORS must allow the page origin (`http://127.0.0.1:8753`) with credentials and expose `X-MSTR-AuthToken`; the Library cookie must be `SameSite=None; Secure`. Browsers that block third-party cookies (Safari by default, Firefox's Total Cookie Protection, any incognito window) can't see the Library session from the page: use Chrome/Edge (`MSTR_SSO_BROWSER=chrome`), or sign in once and `--save-api-token`. Web apps can use the same mechanism directly: call `GET {base}/api/auth/token` with `credentials: 'include'` on load, open `{base}/app` in a popup when it answers 401 and poll, keep the token in memory only (never storage, URLs or logs), and clear caches on sign-out. The same CORS and cookie requirements apply.
@@ -62,10 +64,10 @@ Tenant requirements: CORS must allow the page origin (`http://127.0.0.1:8753`) w
 
 ## Mosaic MCP server OAuth (`strategy_mcp.py`) — how the MCP connector signs in
 
-- `GET {host}/.well-known/oauth-protected-resource` → `{resource: {host}/collaboration/mcp/agent, authorization_servers: [{host}/collaboration]}`; an unauthenticated MCP call answers `401` with `WWW-Authenticate: Bearer resource_metadata=...`.
+- Two MCP servers: **Mosaic** at `{host}/collaboration/mcp/mosaic` (models, plus certified classic cubes / reports / datasets) and **Agents** at `{host}/collaboration/mcp/agent`. An unauthenticated call to either answers `401` with `WWW-Authenticate: Bearer resource_metadata="{host}/collaboration/.well-known/oauth-protected-resource/mcp/<server>"`. The host-root `/.well-known/oauth-protected-resource` names only the Agent server, so `strategy_mcp.py` targets Mosaic explicitly (`--server agent` for the other).
 - Authorization server `{host}/collaboration`: authorization code + PKCE S256, `refresh_token`, **dynamic client registration** (`/register`), `client_secret_post`, scopes `openid profile email offline_access mcp:stream`, revocation endpoint. The script registers itself once (redirect `http://127.0.0.1:8753/oauth/callback`), sends the `resource` indicator, and keeps client + tokens in the secret store.
 - MCP transport: streamable HTTP JSON-RPC (`initialize`, `notifications/initialized`, `tools/list`, `tools/call`), `Mcp-Session-Id` and `MCP-Protocol-Version` headers, replies as JSON or `text/event-stream`. Tools: `get_projects`, `get_models` (certified models only), `get_semantics`, `query {project, query}`.
-- The token is for the MCP resource only: Strategy REST ignores `Authorization: Bearer` (same `401 ERR009` with or without it, verified 2026-10-05). REST scripts use the `sso` handoff instead — same IdP, same user.
+- Each token is for one MCP resource only: Strategy REST ignores `Authorization: Bearer` (same `401 ERR009` with or without it, verified 2026-10-05). REST scripts use the `sso` handoff instead — same IdP, same user.
 
 ## Library OAuth2 authorization server (Strategy ONE, Managed Cloud Enterprise)
 

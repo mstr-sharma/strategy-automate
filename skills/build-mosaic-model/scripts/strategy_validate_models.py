@@ -25,6 +25,8 @@ except ImportError:
     requests = None  # type: ignore
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_PLATFORM = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir, "strategy-platform", "scripts"))
+sys.path.insert(0, _PLATFORM)   # shared core: sign-in, API client, MCP
 from _client import add_auth_args  # noqa: E402  (tolerates absent requests)
 
 
@@ -126,7 +128,7 @@ def _resolve_trino_creds(args: argparse.Namespace) -> tuple[str, str, str, str]:
     if not user:
         raise SystemExit("--user or MSTR_USER is required for Trino basic auth (a Strategy password). "
                          "Single-sign-on accounts without one: run the same SQL through the Mosaic MCP "
-                         "server instead — skills/build-mosaic-model/scripts/strategy_mcp.py query.")
+                         "server instead — skills/strategy-platform/scripts/strategy_mcp.py query.")
     password = os.environ.get("MSTR_PASSWORD", "")
     if not password:
         password = getpass.getpass(f"MSTR password for {user}@{host}: ")

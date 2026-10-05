@@ -36,7 +36,7 @@ Every one of these owns a piece of the build surface; this skill delegates the d
 - **DB instance name** (looked up by name, resolved to `dbInstanceId`)
 - **Schema** (warehouse namespace)
 - **Table names** (may span multiple DB instances; each `(instance, schema, table)` triple is treated independently but all tables land in one model)
-- Optional: derived metrics, security filters / ACL grants or denies, `data_serve_mode` (`connect_live | in_memory | hybrid`), translations, certification, publish / refresh instructions.
+- Optional: derived metrics, security filters / ACL grants or denies, `data_serve_mode` (`connect_live | in_memory | off_memory`), translations, certification, publish / refresh instructions.
 
 **Destination folder and project** are read from env vars (`MSTR_BASE`, `MSTR_PROJECT_ID`/`MSTR_PROJECT_NAME`, `MSTR_DEST_FOLDER_ID`). See `memory/reference_strategy_env.md`.
 

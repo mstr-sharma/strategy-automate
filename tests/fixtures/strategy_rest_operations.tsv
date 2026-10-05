@@ -1,0 +1,1682 @@
+DELETE	/api/admin/caches/card	System Administration	internal	deleteCardCache
+DELETE	/api/admin/mstrClients/auth/oidc/iams/{id}	System Administration	internal	delete_2
+DELETE	/api/admin/mstrClients/library/configs/{configID}	Client Configurations	internal	deleteClientConfig
+DELETE	/api/admin/restServerSettings/iServer/trustRelationship	System Administration	public	deleteIServerTrustStoreRelationship_1
+DELETE	/api/admin/restServerSettings/iServer/{serverName}	System Administration	internal	deleteIServerNodeSettings
+DELETE	/api/aiMemories	Agent	internal	deleteAiMemories
+DELETE	/api/auth/apiTokens	Authentication	public	revokeApiToken
+DELETE	/api/bookmarks	Library	public	bulkDeleteBookmarks
+DELETE	/api/bookmarks/{id}	Library	public	deleteBookmark
+DELETE	/api/bots/{botId}/chats	Auto Bots	internal	deleteChats
+DELETE	/api/bots/{botId}/instances/{instanceId}	Auto Bots	public	deleteInstance
+DELETE	/api/changeJournal	Change Journal	public	deleteChangeJournalSearchResult
+DELETE	/api/chats/{chatId}/messages	Auto Bots	internal	deleteMessages
+DELETE	/api/conceptGroups/{id}	Ontology	internal	deleteConceptGroup
+DELETE	/api/concepts/{id}	Ontology	internal	deleteConcept
+DELETE	/api/contactGroups/{id}	Contact Groups	public	removeContactGroup
+DELETE	/api/contacts/{id}	Contacts	public	removeContact
+DELETE	/api/dataModels/{dataModelId}/instances/{instanceId}	Data Models	public	deleteDataModelInstance
+DELETE	/api/dataServer/workspaces/{workspaceId}	Workspaces	public	ms-deleteWorkspace
+DELETE	/api/dataServer/workspaces/{workspaceId}/pipelines/{pipelineId}	Workspaces	public	ms-deletePipeline
+DELETE	/api/dataServer/workspaces/{workspaceId}/pipelines/{pipelineId}/tables/{tableId}	Workspaces	public	ms-deleteDataServerTable
+DELETE	/api/datamarts/{dataMartId}/instances/{instanceId}	Datamarts	public	deleteDataMartInstance
+DELETE	/api/datasetContainers/{id}/cache	Agent	internal	invalidateCache
+DELETE	/api/datasets/{datasetId}/uploadSessions/{uploadSessionId}	Datasets	public	pushApiV2Cancel
+DELETE	/api/datasources/connections/{id}	Datasource Management	public	deleteDatabaseConnectionById
+DELETE	/api/datasources/logins/{id}	Datasource Management	public	deleteDatasourceLogin
+DELETE	/api/datasources/mappings/{id}	Datasource Management	public	deleteConnectionMapping
+DELETE	/api/datasources/scripts/{id}	Datasource Management	public	deleteDataSourceScriptById
+DELETE	/api/datasources/sqlexecution/{id}	Datasource Management	internal	cancelSqlExecution
+DELETE	/api/datasources/{id}	Datasource Management	public	deleteDatasource
+DELETE	/api/deviceRegistrations/{deviceToken}	Devices	internal	deleteDeviceRegistration
+DELETE	/api/documentation/{documentationId}	Documentation	public	deleteDocumentation
+DELETE	/api/documentationDefinition/{documentationDefinitionId}	Documentation Definition	public	deleteDocumentationDefinition
+DELETE	/api/documents/{id}/instances/{instanceId}	Dashboards(Dossiers) and Documents	public	deleteDocumentInstance
+DELETE	/api/documents/{id}/instances/{instanceId}/pdf/results/{resultId}	Dashboards(Dossiers) and Documents	public	deleteExportResult
+DELETE	/api/dossier/{dossierId}/instance/{dossierInstanceId}/sharedInstance	Dashboard(Dossier)_ToBeDeprecated_Use_Dashboards(Dossiers)	public	DeleteDossierSharedInstance
+DELETE	/api/dossierPersonalView	Dashboard(Dossier) Personal View	public	deleteDossierPersonalView
+DELETE	/api/dynamicRecipientLists/{id}	Subscriptions	public	removeDynamicRecipientList
+DELETE	/api/events/{id}	Events	public	removeEvent
+DELETE	/api/excelTemplates/{id}	Subscriptions	public	removeExcelTemplate
+DELETE	/api/explorer/chats	Explorer	internal	deleteAllChats
+DELETE	/api/explorer/chats/{chatId}	Explorer	internal	deleteChat
+DELETE	/api/explorer/chats/{chatId}/files/{id}	Explorer	internal	deleteChatFile
+DELETE	/api/explorer/chats/{chatId}/messages/{messageId}	Explorer	internal	cancelQuestion
+DELETE	/api/explorer/mcp/servers/{name}	Explorer	public	deleteServer
+DELETE	/api/folders/{id}	Browsing	public	deleteFolder
+DELETE	/api/historyList/{messageId}	History List	public	removeFromHistoryList
+DELETE	/api/iams/{id}	IAM	internal	removeIam
+DELETE	/api/incrementalRefresh/{irrId}/instances/{instanceId}	Cubes	public	deleteInstance_1
+DELETE	/api/insight/{path}	Insight Engine	internal	insightServiceDelete
+DELETE	/api/iserver/dataGateway/client/clusters/{id}	System Administration	internal	deleteDataGatewayClientsClusters
+DELETE	/api/iserver/fences/{name}	System Administration	public	deleteFence
+DELETE	/api/iserver/ldap/certificate	System Administration	public	delCertificate
+DELETE	/api/iserver/ldap/configuration	System Administration	public	deleteConfig
+DELETE	/api/iserver/lock	System Administration	public	unlockConfiguration
+DELETE	/api/iserver/logging/config	System Administration	public	resetIserverConfigLogs
+DELETE	/api/iserver/vaults/{id}	Vault Connection Management	public	deleteVault
+DELETE	/api/iserverNative/mdxDataSources/{mdxDataSourceId}/catalog/instance	MDX Cube Catalog	internal	MDXCatalogInstanceDELETE
+DELETE	/api/learnings	Auto Bots	internal	deleteLearnings
+DELETE	/api/library/aiStorage	AI Storage	internal	deleteAllFiles
+DELETE	/api/library/shortcutGroups/{id}	Library	internal	deleteCustomGroup
+DELETE	/api/library/{id}	Library	public	unpublishObject
+DELETE	/api/library/{id}/recipients/{userId}	Library	public	modifyRecipient
+DELETE	/api/maps/customShape/areaLayers/{id}	Maps	internal	deleteAreaLayer
+DELETE	/api/maps/customShape/kmlFiles/{name}	Maps	internal	deleteKmlFile
+DELETE	/api/maps/customShape/shapes/{id}	Maps	internal	deleteGeoShape
+DELETE	/api/migrationGroups	Migration Groups	public	deletePackage
+DELETE	/api/migrations	Migrations	public	deletePackage_1
+DELETE	/api/model/changesets/{changesetId}	Changesets	public	ms-deleteChangeset
+DELETE	/api/model/dataModels/{dataModelId}/attributes/{attributeId}	Data Models	public	ms-deleteDataModelAttribute
+DELETE	/api/model/dataModels/{dataModelId}/externalDataModels/{externalDataModelId}	Data Models	public	ms-deleteExternalDataModel
+DELETE	/api/model/dataModels/{dataModelId}/factMetrics/{factMetricId}	Data Models	public	ms-deleteDataModelFactMetric
+DELETE	/api/model/dataModels/{dataModelId}/folders/{folderId}	Data Models	public	ms-deleteDataModelFolder
+DELETE	/api/model/dataModels/{dataModelId}/metrics/{metricId}	Data Models	public	ms-deleteDataModelMetric
+DELETE	/api/model/dataModels/{dataModelId}/securityFilters/{securityFilterId}	Data Models	public	ms-deleteDataModelSecurityFilter
+DELETE	/api/model/dataModels/{dataModelId}/tables/{tableId}	Data Models	public	ms-deleteDataModelTable
+DELETE	/api/model/datamarts/{datamartId}/instances	Datamarts	public	ms-deleteDatamartInstance
+DELETE	/api/model/reports/{reportId}/derivedElements/{derivedElementId}	Reports	public	ms-deleteReportDerivedElement
+DELETE	/api/model/reports/{reportId}/instances	Reports	public	ms-deleteReportInstance
+DELETE	/api/model/schema/lock	Schema	public	ms-deleteLock
+DELETE	/api/monitors/caches/cubes/{id}	Monitors	public	deleteCubeCache
+DELETE	/api/monitors/caches/document/{id}	Monitors	public	deleteDocumentCaches
+DELETE	/api/monitors/caches/report/{id}	Monitors	public	deleteReportCaches
+DELETE	/api/monitors/dbConnectionInstances/{instanceId}	Monitors	public	getDisConnectDataBaseConnection
+DELETE	/api/monitors/iServer/nodes/{name}	Monitors	public	removeServerClusterMember
+DELETE	/api/monitors/jobs/{id}	Monitors	public	deleteJob
+DELETE	/api/monitors/projects/{projectId}/caches/{cacheType}	Monitors	public	deleteCache
+DELETE	/api/monitors/userConnections/{id}	Monitors	public	deleteUserConnection
+DELETE	/api/mstrClients/auth/oidc/iams/{id}	System Administration	internal	delete_1
+DELETE	/api/mstrClients/auth/saml/registrations/{id}	System Administration	internal	removeRegistration
+DELETE	/api/mstrServices/library/iServer/trustRelationship	System Administration	public	deleteIServerTrustStoreRelationship
+DELETE	/api/mstrServices/library/security/trustedEnvironments/{trustedEnvironmentId}	System Administration	internal	deleteTrustedEnvironment
+DELETE	/api/mstrServices/library/storage/sharedFileStore/files/{fileId}	Shared File Store	public	deleteSharedFile
+DELETE	/api/multitenant/tenant/{tenantId}	Multi Tenant	public	deleteTenant
+DELETE	/api/nuggets	Auto Bots	internal	deleteNuggets
+DELETE	/api/nuggets/{id}	Agent	internal	deleteNuggets_1
+DELETE	/api/objects	Object Management	internal	deleteObjects
+DELETE	/api/objects/inspection/{inspectionId}	Object Management	internal	deleteObjectsInspectionJobStatus
+DELETE	/api/objects/{id}	Object Management	public	deleteObject
+DELETE	/api/objects/{id}/vldb/propertySets	Object Management	internal	deleteVLDBSetting
+DELETE	/api/ontology/vocabularies/fields/{fieldName}/values/{value}	Ontology	public	removeValue
+DELETE	/api/openSemanticLayer/tables	Open Semantic Layer	internal	deleteTables
+DELETE	/api/packages/imports/{importId}	Packages	public	delete_3
+DELETE	/api/packages/{packageId}	Packages	public	deletePackageAsync
+DELETE	/api/projectDuplications/{id}	Project Duplications	public	deleteDuplication
+DELETE	/api/projects/{projectId}	Projects	public	deleteProject
+DELETE	/api/projects/{projectId}/lock	Projects	public	unlockProject
+DELETE	/api/questionSets/{questionSetId}	QuestionSet	internal	deleteQuestionSet
+DELETE	/api/questions	Agent	internal	deleteMessages_1
+DELETE	/api/questions/{questionId}	Agent	internal	cancelQuestion_1
+DELETE	/api/recommendations/jobs/{jobId}	Recommendations	internal	deleteTrainingJob
+DELETE	/api/reports/{reportId}/bulkExport	Reports	public	removeBulkExportConfig
+DELETE	/api/runtimes/{id}	Runtimes	public	deleteScriptRuntime
+DELETE	/api/schedules/{id}	Schedules	public	removeSchedule
+DELETE	/api/scim/v2/Groups/{id}	SCIM	public	delete_4
+DELETE	/api/scim/v2/Users/{id}	SCIM	public	delete_5
+DELETE	/api/scripts/evaluation/{evaluationId}	Scripts	public	cancelCommandManagerScriptEvaluation
+DELETE	/api/scripts/{id}	Scripts	public	deleteCommandManagerScript
+DELETE	/api/securityRoles/{id}	Security Roles	public	deleteSecurityRole
+DELETE	/api/sessions	Authentication	internal	sessionSessionIdDelete
+DELETE	/api/subscriptions/images/{id}	Subscriptions	public	removeImage
+DELETE	/api/subscriptions/{id}	Subscriptions	public	removeSubscription
+DELETE	/api/tasks/{id}	Tasks	public	deleteTask
+DELETE	/api/tasks/{id}/activation	Tasks	public	deactivateTask
+DELETE	/api/teamsApp/configuration	Microsoft Teams App	internal	deleteConfiguration
+DELETE	/api/telemetry/sentinel-performance-data	Telemetry	public	deleteSentinelPerfData
+DELETE	/api/testCenter/files/{fileId}	Test Center - File Store	internal	deleteSharedFile_1
+DELETE	/api/testCenters/integrityComparisons/{integrityComparisonId}	Comparison Test (Test Center)	public	deleteIntegrityComparisonById
+DELETE	/api/testCenters/integrityComparisons/{integrityComparisonId}/comparisons/{comparisonId}	Comparison Test (Test Center)	public	deleteComparison
+DELETE	/api/testCenters/integrityTests/{integrityTestId}	Baseline Test (Test Center)	public	deleteIntegrityTestById
+DELETE	/api/testCenters/integrityTests/{integrityTestId}/baselines/{baselineId}	Baseline Test (Test Center)	public	deleteIntegrityTestBaseline
+DELETE	/api/transmitters/{id}	Transmitters	public	removeTransmitter
+DELETE	/api/usergroups/integrityCheck/jobs/{jobId}	User Management	internal	cancelJob
+DELETE	/api/usergroups/{id}	User Management	public	deleteUserGroup
+DELETE	/api/users/merge/{jobId}/cancel	User Management	public	cancelMergeJob
+DELETE	/api/users/{id}	User Management	public	deleteUser
+DELETE	/api/users/{id}/profile	User Management	internal	deleteUserProfile
+DELETE	/api/users/{userId}/addresses/{addressId}	User Management	public	deleteUserAddress
+DELETE	/api/v2/applications/{id}	Applications	public	removeApplication
+DELETE	/api/v2/bots/{botId}/caches/questionGroups	Agent	internal	deleteGroups
+DELETE	/api/v2/bots/{botId}/chats	Agent	internal	deleteAllChat
+DELETE	/api/v2/bots/{botId}/chats/{chatId}	Agent	internal	deleteChat_1
+DELETE	/api/v2/bots/{botId}/evaluationJobs/{jobId}	Agent	internal	cancelEvaluationJob
+DELETE	/api/v2/bots/{botId}/trainingjobs	Agent	internal	cancelTrainingJob_1
+DELETE	/api/v2/bots/{botId}/tuning/jobs/{jobId}	Agent	internal	cancelTuningJob
+DELETE	/api/v2/bots/{botId}/userContext/prompts/{promptId}	Agent	internal	removePersonalPrompt
+DELETE	/api/v2/devices/{id}	Devices	public	deleteDevice
+DELETE	/api/v2/iserver/fences/{id}	System Administration	public	deleteFence_1
+DELETE	/api/v2/monitors/jobs/{id}	Monitors	public	deleteJob_1
+DELETE	/api/workflows/files/{fileId}	Workflows	internal	deleteWorkflowFile
+DELETE	/api/{path}	(untagged)	internal	delete
+DELETE	/api/{service}/{path}	Model Server	internal	modelServiceDelete
+GET	/api/admin/aiServerSettings/{path}	System Administration	internal	aiProxyGetApi
+GET	/api/admin/collabServerSettings/{path}	System Administration	internal	collaborationProxyGetApi_1
+GET	/api/admin/debugInfo/restServer	Debug	internal	getRestServerDebugInfo
+GET	/api/admin/iServer/clusterMembership	System Administration	internal	getServerClusterMembership
+GET	/api/admin/mstrClients/auth/oidc/iams	System Administration	internal	list_1
+GET	/api/admin/mstrClients/auth/oidc/iams/{id}	System Administration	internal	retrieve_1
+GET	/api/admin/mstrClients/auth/saml/idpmetadata	System Administration	internal	getIdpMetadata_1
+GET	/api/admin/mstrClients/auth/saml/keystore	System Administration	internal	getSamlKeystore_1
+GET	/api/admin/mstrClients/auth/saml/mstrSamlConfig	System Administration	internal	getMstrSamlConfig_1
+GET	/api/admin/mstrClients/auth/saml/spmetadata	System Administration	internal	getSpMetadata
+GET	/api/admin/mstrClients/library/configs	Client Configurations	internal	getClientConfigList
+GET	/api/admin/mstrClients/library/configs/{configID}	Client Configurations	internal	getClientConfig
+GET	/api/admin/mstrServices/library/orgDirectory/settings	System Administration	internal	getSettings_3
+GET	/api/admin/mstrServices/mosaic/settings	Mosaic	public	getSettings_1
+GET	/api/admin/restServerSettings	System Administration	public	getRestServerSettings_1
+GET	/api/admin/restServerSettings/iServer/trustRelationship	System Administration	public	getIServerTrustStoreRelationship_1
+GET	/api/admin/restServerSettings/iServer/{serverName}	System Administration	internal	getIServerNodeSettings
+GET	/api/admin/restServerSettings/security	System Administration	public	getSecurityInfo_1
+GET	/api/aiMemories	Agent	internal	getAiMemories
+GET	/api/applications/{name}	Applications	public	getApplication
+GET	/api/attributes/{id}	Attributes	internal	getAttribute
+GET	/api/attributes/{id}/elements	Attributes	public	getAttributeElements
+GET	/api/auth/apiTokens	Authentication	public	getApiToken
+GET	/api/auth/apiTokens/global	Authentication	internal	getApiTokenByAdmin
+GET	/api/auth/identityToken	Authentication	public	getIdentityTokenInfo
+GET	/api/auth/token	Authentication	public	getAuthToken
+GET	/api/bots/{botId}/chats	Auto Bots	internal	getChats
+GET	/api/bots/{botId}/configuration	Auto Bots	public	getConfiguration
+GET	/api/bots/{botId}/questions	Auto Bots	public	queryMessages
+GET	/api/bots/{botId}/questions/{questionId}	Auto Bots	public	queryMessage
+GET	/api/bots/{id}/nuggets	Auto Bots	internal	getStatus
+GET	/api/cards/{id}	Cards	internal	getProject
+GET	/api/changeJournal/{searchId}	Change Journal	public	getChangeJournalSearchResult
+GET	/api/chats/messages/files/{fileId}	Auto Bots	internal	getChatFile
+GET	/api/collaboration/recipients	User Management	public	getMentionedUsers
+GET	/api/collabsvc	Misc	internal	userSessionIdUserIdGet
+GET	/api/conceptGroups/{id}	Ontology	internal	getConceptGroup
+GET	/api/concepts/{id}	Ontology	internal	getConcept
+GET	/api/config/ESRIExtraConfig	Configuration	internal	getEsriExtraConfig
+GET	/api/config/authModes	Configuration	internal	authModesGet
+GET	/api/config/clientSettings	Configuration	internal	getClientSettings
+GET	/api/config/feedback	Configuration	internal	getFeedbackConfig
+GET	/api/config/getD3WidgetFilesList	Configuration	internal	getD3WidgetFilesList
+GET	/api/config/map	Configuration	internal	getMapConfig
+GET	/api/config/mobile/{configID}	Configuration	internal	mobileConfigGet
+GET	/api/config/multiMap	Configuration	internal	getMultiMapConfig
+GET	/api/config/multiMapCommon	Configuration	internal	getMultiMapConfigCommon
+GET	/api/config/oidc/native	Configuration	public	getNativeOidcConfig
+GET	/api/config/pluginFonts	Configuration	internal	getFontsFileList
+GET	/api/config/pluginFonts/cssFiles	Configuration	internal	getFontsCssFiles
+GET	/api/config/pluginVis/cssFiles	Configuration	internal	getPluginVisCssFiles
+GET	/api/config/pluginVis/jsFiles	Configuration	internal	getPluginVisJsFiles
+GET	/api/config/pluginVisList	Configuration	internal	pluginVisListGet
+GET	/api/configurations	Configurations	internal	getConfiguration_1
+GET	/api/configurations/dataServer	Configurations	internal	getDataServerConf
+GET	/api/configurations/featureFlags	Configurations	public	getFeatureFlags
+GET	/api/configurations/historyMessageExpirationDay	Configurations	public	getHistoryMessageExpirationDay
+GET	/api/configurations/mcsTrial	Configurations	internal	getMcsTrialStatus
+GET	/api/configurations/quota	Configurations	internal	getQuota
+GET	/api/configurations/repository	Configurations	internal	getRepository
+GET	/api/contactGroups	Contact Groups	public	listContactGroups
+GET	/api/contactGroups/{id}	Contact Groups	public	getContactGroupById
+GET	/api/contacts	Contacts	public	listContacts
+GET	/api/contacts/{id}	Contacts	public	getContactById
+GET	/api/contentBundles	Content Bundles	public	getContentBundles
+GET	/api/contentBundles/{id}	Content Bundles	public	getContentBundle
+GET	/api/contentBundles/{id}/contents	Content Bundles	public	getContentBundleContent
+GET	/api/contentGroups	Content Groups	public	getContentGroups
+GET	/api/contentGroups/{id}	Content Groups	public	getContentGroup
+GET	/api/contentGroups/{id}/contents	Content Groups	public	getContentGroupContent
+GET	/api/cubes	Cubes	public	getCubes
+GET	/api/cubes/{cubeId}	Cubes	public	getDefinition
+GET	/api/cubes/{cubeId}/attributes/{attributeId}/elements	Cubes	public	getCubeAttributeElement
+GET	/api/cubes/{cubeId}/instance/{instanceId}/attributes/{attributeId}/elements	Cubes	internal	getAttributeElementDepreciated
+GET	/api/cubes/{cubeId}/instances/{instanceId}	Cubes	public	getReport
+GET	/api/cubes/{cubeId}/instances/{instanceId}/attributes/{attributeId}/elements	Cubes	public	getAttributeElement
+GET	/api/cubes/{instanceId}/resolveSecurityFilters	Cubes	internal	getResolvedSecurityFilters
+GET	/api/dashboards/instances/{messageId}	Dashboards	internal	getDashboardFile
+GET	/api/dashboards/{dashboardId}/instance/{instanceId}/attribute/{attributeId}/elements	Dashboards	internal	getAttributeElements_1
+GET	/api/dashboards/{dashboardId}/instances/{instanceId}/chapters/{chapterKey}/autoNarratives/{visualizationKey}	Dashboards(Dossiers) and Documents	internal	getNlgVisualizationResult
+GET	/api/dashboards/{dashboardId}/instances/{instanceId}/datasets/{datasetId}/folderView	Dashboards	internal	getDatasetFolderStructure
+GET	/api/dashboards/{id}	Dashboards	public	exportDashboard
+GET	/api/dataModels/{dataModelId}/attributes/{attributeId}/elements	Data Models	public	getDataModelAttributeElement
+GET	/api/dataModels/{dataModelId}/publishStatus	Data Models	public	pollPublishStatus
+GET	/api/dataModels/{dataModelId}/securityFilters	Data Models	public	getDataModelSecurityFilters
+GET	/api/dataModels/{dataModelId}/securityFilters/{securityFilterId}/members	Data Models	public	getSecurityFilterUsers
+GET	/api/dataServer/workspaces/{workspaceId}	Workspaces	public	ms-getWorkspace
+GET	/api/dataServer/workspaces/{workspaceId}/pipelines/{pipelineId}	Workspaces	public	ms-getPipeline
+GET	/api/dataServer/workspaces/{workspaceId}/pipelines/{pipelineId}/tables/{tableId}	Workspaces	public	ms-getDataServerTable
+GET	/api/datamarts/{dataMartId}/instances/{instanceId}/execution	Datamarts	public	getExecution
+GET	/api/datamarts/{dataMartId}/instances/{instanceId}/preview	Datamarts	internal	getPreviewData
+GET	/api/datamarts/{dataMartId}/instances/{instanceId}/sqlView	Datamarts	internal	getReportSqlView
+GET	/api/datasetContainers/{id}	Agent	internal	getDatasetContainer
+GET	/api/datasets/cubes/{id}/status	Datasets	internal	getCubeStatus
+GET	/api/datasets/{datasetId}	Datasets	public	getDatasetInfo
+GET	/api/datasets/{datasetId}/instances/{instanceId}/publishInfo	Datasets	internal	getDICubePublishInfo
+GET	/api/datasets/{datasetId}/uploadSessions/{uploadSessionId}/publishStatus	Datasets	public	pushApiV2GetPublishStatus
+GET	/api/datasets/{id}/securityFilterViews	Datasets	internal	getCubeSecurityFilter
+GET	/api/datasources	Datasource Management	public	getDatasources
+GET	/api/datasources/connections	Datasource Management	public	getDatabaseConnections
+GET	/api/datasources/connections/{id}	Datasource Management	public	getDatabaseConnectionById
+GET	/api/datasources/databaseSourceNames	Datasource Management	public	getDatabaseSourceNames
+GET	/api/datasources/databaseTypes	Datasource Management	internal	getTypes
+GET	/api/datasources/logins	Datasource Management	public	getDatasourceLogins
+GET	/api/datasources/logins/export	Datasource Management	public	exportDatasourceLogins
+GET	/api/datasources/logins/{id}	Datasource Management	public	getDatasourceLoginById
+GET	/api/datasources/logins/{id}/username	Datasource Management	public	getDatasourceLoginUserNameById
+GET	/api/datasources/mappings	Datasource Management	public	getConnectionMappings
+GET	/api/datasources/scripts	Datasource Management	public	getDataSourceScripts
+GET	/api/datasources/scripts/{id}	Datasource Management	public	getDataSourceScriptById
+GET	/api/datasources/searches/results	Datasource Management	internal	searchDataSources
+GET	/api/datasources/sqlexecution/{id}	Datasource Management	internal	getSqlExecutionStatus
+GET	/api/datasources/{id}	Datasource Management	public	getDatasourceById
+GET	/api/datasources/{id}/catalog/namespaces	Datasource Management	public	getNamespaces
+GET	/api/datasources/{id}/catalog/namespaces/{namespaceId}/tableSchemas	Datasource Management	internal	getTableInfosForAllTables
+GET	/api/datasources/{id}/catalog/namespaces/{namespaceId}/tables	Datasource Management	public	getTableInfos
+GET	/api/datasources/{id}/catalog/namespaces/{namespaceId}/tables/{tableId}	Datasource Management	public	getTableSchema
+GET	/api/datasources/{id}/catalog/namespaces/{namespaceId}/tables/{tableId}/result	Datasource Management	public	getTablePreview
+GET	/api/datasources/{id}/catalog/settings	Datasource Management	public	getCatalogSettings
+GET	/api/datasources/{id}/jobPriorities	Datasource Management	public	getJobPrioritization
+GET	/api/datasources/{id}/oauth/auth	Datasource Management	public	generateAuthorizationUri
+GET	/api/datasources/{id}/projects	Datasource Management	public	getDatasourceProjects
+GET	/api/dbConnections/{id}	Datasource Management	internal	getDBConnection
+GET	/api/dbLogins	Datasource Management	internal	getDbLogins
+GET	/api/dbLogins/{id}	Datasource Management	internal	getDbLoginById
+GET	/api/dbRoles	Datasource Management	internal	getDBRoles
+GET	/api/dbRoles/{id}	Datasource Management	internal	getDBRole
+GET	/api/dbobjects/dbmss	Datasource Management	public	getDBMSs
+GET	/api/dbobjects/drivers	Datasource Management	public	getDrivers
+GET	/api/dbobjects/dsns	Datasource Management	public	getDSNs
+GET	/api/dependentSubscriptions	Subscriptions	public	getDependentSubscriptions
+GET	/api/desktops/project/DFCSchema	Desktops	internal	getOnetierDFCSchema
+GET	/api/desktops/project/accessToken	Desktops	internal	getOnetierAccessToken
+GET	/api/desktops/project/projectInfo	Desktops	internal	getOnetierProjectInfo
+GET	/api/desktops/project/securityFilter	Desktops	internal	getOnetierSecurityFilter
+GET	/api/deviceRegistrations	Devices	internal	getDeviceRegistrationsByType
+GET	/api/deviceRegistrations/{deviceToken}	Devices	internal	getDeviceRegistrationByToken
+GET	/api/devices	Devices	internal	getDevices
+GET	/api/devices/{id}	Devices	internal	getDevice
+GET	/api/documentation	Documentation	public	getDocumentations
+GET	/api/documentation/status	Documentation	public	getDocumentationStatuses
+GET	/api/documentation/{documentationId}/export	Documentation	public	getDocumentations_1
+GET	/api/documentation/{documentationId}/objects	Documentation	public	getObjects
+GET	/api/documentation/{documentationId}/{resourceId}	Documentation	public	downloadDocumentationFile
+GET	/api/documentationDefinitions	Documentation Definition	public	getDocumentationDefinitions
+GET	/api/documentationDefinitions/{documentationDefinitionId}	Documentation Definition	public	getDocumentationDefinitionById
+GET	/api/documents	Dashboards(Dossiers) and Documents	public	searchForRSDs
+GET	/api/documents/shortcut/{id}	Dashboards(Dossiers) and Documents	internal	getDocumentShortcutInfo
+GET	/api/documents/{id}/cubes	Dashboards(Dossiers) and Documents	public	getCubesUsedByDocument
+GET	/api/documents/{id}/definition	Dashboards(Dossiers) and Documents	public	getDocumentDefinition
+GET	/api/documents/{id}/instances/{instanceId}/definition	Dashboards(Dossiers) and Documents	internal	getDocumentInstanceDefinition
+GET	/api/documents/{id}/instances/{instanceId}/layouts/{layoutKey}/groupBy	Dashboards(Dossiers) and Documents	internal	getDocumentGroupByCombinations
+GET	/api/documents/{id}/instances/{instanceId}/layouts/{layoutKey}/visualizations/{visualizationKey}	Dashboards(Dossiers) and Documents	internal	getVisualizationResult
+GET	/api/documents/{id}/instances/{instanceId}/pdf/results/{resultId}	Dashboards(Dossiers) and Documents	public	getPdfExportResult
+GET	/api/documents/{id}/instances/{instanceId}/prompts	Dashboards(Dossiers) and Documents	public	getPromptsFromInstance
+GET	/api/documents/{id}/instances/{instanceId}/prompts/{promptIdentifier}/elements	Dashboards(Dossiers) and Documents	public	getPromptAvailableAttributeElement
+GET	/api/documents/{id}/instances/{instanceId}/prompts/{promptIdentifier}/objects	Dashboards(Dossiers) and Documents	public	getPromptAvailableObjects
+GET	/api/documents/{id}/instances/{instanceId}/queryDetails	Dashboards(Dossiers) and Documents	public	getQueryDetailsFromDocumentInstance
+GET	/api/documents/{id}/instances/{instanceId}/shortcut	Dashboards(Dossiers) and Documents	public	getDocumentInstanceShortcutInfo
+GET	/api/documents/{id}/instances/{instanceId}/status	Dashboards(Dossiers) and Documents	public	getDocumentInstanceStatus
+GET	/api/documents/{id}/prompts	Dashboards(Dossiers) and Documents	public	getPrompts
+GET	/api/dossier/caches	Dashboard(Dossier)_ToBeDeprecated_Use_Dashboards(Dossiers)	public	getDossierCacheDetails
+GET	/api/dossier/{dossierId}/getMapCoords	Dashboard(Dossier)_ToBeDeprecated_Use_Dashboards(Dossiers)	public	getMapCoordinates
+GET	/api/dossier/{dossierId}/images/{imageId}	Dashboard(Dossier)_ToBeDeprecated_Use_Dashboards(Dossiers)	public	getDossierImageDetails
+GET	/api/dossier/{dossierId}/instance/{dossierInstanceId}	Dashboard(Dossier)_ToBeDeprecated_Use_Dashboards(Dossiers)	public	getDossierInstanceDetails
+GET	/api/dossier/{dossierId}/instance/{dossierInstanceId}/page/{pageKey}/instance/{pageInstanceId}	Dashboard(Dossier)_ToBeDeprecated_Use_Dashboards(Dossiers)	public	getDossierPageInstanceDetails
+GET	/api/dossier/{dossierId}/instance/{dossierInstanceId}/page/{pageKey}/instance/{pageInstanceId}/widget/{widgetKey}	Dashboard(Dossier)	public	getDossierPageWidgetDetails
+GET	/api/dossierPersonalView/{id}	Dashboard(Dossier) Personal View	public	getDocumentShortcutInfo_1
+GET	/api/dossiers	Dashboards(Dossiers) and Documents	public	searchForDossiers
+GET	/api/dossiers/{dossierId}/caches	Dashboards(Dossiers) and Documents	internal	getCache
+GET	/api/dossiers/{dossierId}/caches/{cacheId}	Dashboards(Dossiers) and Documents	internal	getDossierCaches
+GET	/api/dossiers/{dossierId}/definition	Dashboards(Dossiers) and Documents	public	getVisualizationList
+GET	/api/dossiers/{dossierId}/instances/{dossierInstanceId}	Dashboards(Dossiers) and Documents	internal	getDossierInstance
+GET	/api/dossiers/{dossierId}/instances/{dossierInstanceId}/currentPage	Dashboards(Dossiers) and Documents	internal	getDossierInstanceInCurrentPage
+GET	/api/dossiers/{dossierId}/instances/{dossierInstanceId}/elements	Dashboards(Dossiers) and Documents	public	getDossierDatasetFilterElements
+GET	/api/dossiers/{dossierId}/instances/{dossierInstanceId}/executionStatus	Dashboards(Dossiers) and Documents	internal	getDossierInstanceExecutionStatus
+GET	/api/dossiers/{dossierId}/instances/{instanceId}/caches	Dashboards(Dossiers) and Documents	internal	getCacheByInstance
+GET	/api/dossiers/{dossierId}/instances/{instanceId}/chapters/{chapterKey}/visualizations/{visualizationKey}	Dashboards(Dossiers) and Documents	public	getVisualizationResult_1
+GET	/api/dossiers/{dossierId}/instances/{instanceId}/pages/{pageKey}/cacheInfo	Dashboards(Dossiers) and Documents	internal	getDossierPageCacheInfo
+GET	/api/dossiers/{dossierId}/instances/{instanceId}/queryDetails	Dashboards(Dossiers) and Documents	public	getQueryDetailsFromDossierInstance
+GET	/api/dossiers/{id}/instances/{instanceId}/datasets/sqlView	Dashboards(Dossiers) and Documents	public	getDatasetsSqlViewFromInstance
+GET	/api/drivers	Drivers	public	getDrivers_1
+GET	/api/drivers/{id}	Drivers	public	getDriverById
+GET	/api/dynamicRecipientLists	Subscriptions	public	listDynamicRecipientLists
+GET	/api/dynamicRecipientLists/{id}	Subscriptions	public	getDynamicRecipientListById
+GET	/api/events	Events	public	listEvents
+GET	/api/events/{id}	Events	public	getEventById
+GET	/api/excelTemplates	Subscriptions	public	listExcelTemplates
+GET	/api/excelTemplates/{id}	Subscriptions	public	getExcelTemplateById
+GET	/api/explorer/chats	Explorer	internal	getAllChats
+GET	/api/explorer/chats/sandbox	Explorer	internal	getSandboxHtml
+GET	/api/explorer/chats/settings	Explorer	internal	getSettings
+GET	/api/explorer/chats/{chatId}	Explorer	internal	getChat
+GET	/api/explorer/chats/{chatId}/files	Explorer	internal	getChatFiles
+GET	/api/explorer/chats/{chatId}/messages/{messageId}	Explorer	public	startQuestionStreamTask
+GET	/api/explorer/chats/{chatId}/messages/{messageId}/files/{fileId}	Explorer	public	getVizData
+GET	/api/explorer/chats/{chatId}/messages/{messageId}/fulldata/{dataId}	Explorer	internal	getMessageFullData
+GET	/api/explorer/config	Explorer	public	getConfig
+GET	/api/explorer/features/settings	Explorer	internal	getFeatureSettings
+GET	/api/explorer/mcp/servers	Explorer	public	getServers
+GET	/api/explorer/mcp/servers/callback	Explorer	public	callback
+GET	/api/explorer/mcp/servers/status	Explorer	public	getServerStatus
+GET	/api/explorer/webSearch/config	Explorer	public	getConfig_1
+GET	/api/flows	Flows	public	listFlows
+GET	/api/flows/conversion/{id}	Flows	internal	getWorkflowPythonFlowTaskStatus
+GET	/api/flows/conversion/{id}/yaml	Flows	internal	getWorkflowPythonFlowTaskYaml
+GET	/api/folders	Browsing	public	getRootFolder
+GET	/api/folders/myPersonalObjects	Browsing	public	getPersonalFolder
+GET	/api/folders/preDefined	Browsing	public	getPreDefinedFolders
+GET	/api/folders/preDefined/{folderType}	Browsing	public	getPreDefinedFolder
+GET	/api/folders/preDefined/{folderType}/id	Browsing	internal	getPreDefinedFolderId
+GET	/api/folders/{id}	Browsing	public	getFolder
+GET	/api/folders/{id}/scopeFilters	Browsing	public	getScopeFiltersByFolder
+GET	/api/gateways	Gateways	public	getGateways
+GET	/api/gateways/summary	Gateways	internal	getGatewaysSummary
+GET	/api/gateways/{id}	Gateways	public	getGatewayById
+GET	/api/hangDetector/status	HangDetector	internal	getHangDetectorStatus
+GET	/api/hierarchies/{hierarchyId}/attributes	Hierarchies	public	getHierarchyAttributes
+GET	/api/historyList	History List	public	getHistoryList
+GET	/api/historyList/{messageId}	History List	public	getHistoryListMessage
+GET	/api/hyper/cards	Hyper	internal	getCards
+GET	/api/hyper/cards/{cardId}/instances/{instanceId}/layout	Hyper	internal	getCardLayoutFromInstance
+GET	/api/hyper/cards/{cardId}/instances/{instanceId}/mainAttribute/elements	Hyper	internal	createReportInstanceAndGetAttributeElements
+GET	/api/hyper/configuration	Hyper	internal	getHyperConfiguration
+GET	/api/hyper/templates	Hyper	internal	getLayouts
+GET	/api/hyper/templates/{templateId}/layouts/{layoutId}/thumbnails/{thumbnailId}	Hyper	internal	getThumbnailByLayoutId
+GET	/api/iams	IAM	internal	getIams
+GET	/api/iams/{id}	IAM	internal	getIam
+GET	/api/incrementalRefresh/{irrId}/instances/{instanceId}	Cubes	public	getInstance
+GET	/api/incrementalRefresh/{irrId}/instances/{instanceId}/data	Cubes	public	getIrrPreviewData
+GET	/api/ingestionservice/api/KPIs/hashes	Insight Engine - Insight Engine - Insight Engine - Insight Engine - KPIs	internal	getKPIsHashes
+GET	/api/ingestionservice/api/insightCards/hashes	Insight Engine - Insight Engine - Insight Engine - Insight Engine - Insights	internal	getInsightCardHashes
+GET	/api/insight/{path}	Insight Engine	internal	insightServiceGet
+GET	/api/interfaceLanguages	Languages	public	getAvailableInterfaceLanguages
+GET	/api/iserver/baseLanguages	Languages	public	getSupportedLanguages
+GET	/api/iserver/clusterStartupMembership	System Administration	public	getClusterStartupMembership
+GET	/api/iserver/dataGateway/agents	System Administration	internal	getDataGatewayAgents
+GET	/api/iserver/dataGateway/client/clusters	System Administration	internal	getDataGatewayClientsClusters
+GET	/api/iserver/dataservice/configurations	System Administration	internal	getDataserviceConfigurations
+GET	/api/iserver/default	System Administration	internal	iserverGetDefault
+GET	/api/iserver/fences	System Administration	public	getFences
+GET	/api/iserver/fences/{name}	System Administration	public	getFence
+GET	/api/iserver/ldap/attributes	System Administration	public	getAttributeNames
+GET	/api/iserver/ldap/authuserbinds	System Administration	public	getAuthUserBinds
+GET	/api/iserver/ldap/certificate	System Administration	public	getCertificateInfo
+GET	/api/iserver/ldap/configuration	System Administration	public	getConfig_2
+GET	/api/iserver/ldap/import	System Administration	public	getBatchImportProgress
+GET	/api/iserver/lock	System Administration	public	queryConfigurationLock
+GET	/api/iserver/logging/config	System Administration	public	getIserverConfigLogs
+GET	/api/iserver/logging/destinations	System Administration	public	getIserverLogDestinations
+GET	/api/iserver/machineInformation	System Administration	public	getServerInfo
+GET	/api/iserver/mstrAppLicense	System Administration	internal	getMstrAppLicense
+GET	/api/iserver/neoengineConfigurations	System Administration	internal	getNeoEngineConfigurations
+GET	/api/iserver/privileges	Security Roles	public	getServerPrivilege
+GET	/api/iserver/privileges/categories	Security Roles	public	getServerPrivilegeCategories
+GET	/api/iserver/queues/{id}	System Administration	public	getJobQueueProxyApi
+GET	/api/iserver/settings	System Administration	internal	getServerSettings
+GET	/api/iserver/settings/default	System Administration	internal	getDefaultServerSettings
+GET	/api/iserver/settings/definition	System Administration	internal	getServerDefinitionObject
+GET	/api/iserver/settings/publicsettings	System Administration	internal	getServerSetting
+GET	/api/iserver/telemetryProducer	System Administration	public	getTelemetryProducerDataForAllAccessibleProjects
+GET	/api/iserver/telemetryProducer/{projectId}	System Administration	public	getTelemetryProducerDataForSingleProject
+GET	/api/iserver/vaults	Vault Connection Management	public	getVaults
+GET	/api/iserver/vaults/{id}	Vault Connection Management	public	getVault
+GET	/api/iserver/vaults/{id}/secrets	Vault Connection Management	internal	getVaultSecrets_1
+GET	/api/iserver/vaults/{id}/secrets/{secretName}	Vault Connection Management	public	getVaultSecret
+GET	/api/iserver/vaults/{id}/status	Vault Connection Management	public	getVaultConnectionStatus
+GET	/api/iserverNative/cubes/{cubeId}/aiDescriptions	Cubes	internal	AICubeDescriptionGET
+GET	/api/iserverNative/documents/{documentId}/instances/{instanceId}/prompts/order	Dashboards(Dossiers) and Documents	internal	DocumentsPromptOrderGET
+GET	/api/iserverNative/mdxDataSources/{mdxDataSourceId}/catalog	MDX Cube Catalog	internal	MDXCatalogGet
+GET	/api/iserverNative/mdxDataSources/{mdxDataSourceId}/catalog/cubes/{cubeId}	MDX Cube Catalog	internal	MDXCatalogCubeGet
+GET	/api/iserverNative/openSemanticLayer/settings	Open Semantic Layer	internal	OpenSemanticSettingsGET
+GET	/api/iserverNative/queues/{jobId}	URL Scan	internal	QueuesGET
+GET	/api/iserverNative/urlscan/import/{jobId}/download	URL Scan	internal	UrlscanImportJobsDownloadGET
+GET	/api/iserverNative/urlscan/jobs/{jobId}/download	URL Scan	internal	UrlscanJobsDownloadGET
+GET	/api/languages	Languages	public	getAvailableLanguages
+GET	/api/languages/baseLocaleDefaultFormats/{lcid}	Languages	public	getBaseLocaleDefaultFormats
+GET	/api/languages/{id}	Languages	public	getLanguageDetails
+GET	/api/languages/{id}/formattingSettings	Languages	public	getFormattingSettings
+GET	/api/learnings	Auto Bots	internal	getLearnings
+GET	/api/library	Library	public	getLibrary
+GET	/api/library/bookmarks/favorites	Library	internal	getBookmarksFavorites
+GET	/api/library/dataModels/favorites	Library	internal	getFavoritesOfDataModelObjects
+GET	/api/library/favorites/datasources	Library	internal	getFavoritesOfDatasources
+GET	/api/library/hyperCards/favorites	Library	internal	getHyperCardFavorites
+GET	/api/library/shortcutGroups	Library	internal	getAllGroups
+GET	/api/library/snapshots/favorites	Library	internal	getViewsFavorites
+GET	/api/library/{id}	Library	public	getPublishedObject
+GET	/api/libraryContents	Library	public	getLibraryContents
+GET	/api/license/iServer/audit/result	License	public	checkLicenseAuditResult
+GET	/api/license/iServer/compliance/result	License	public	checkComplianceResult
+GET	/api/license/iServer/compliance/status	License	public	checkLicenseComplianceStatus
+GET	/api/license/iServer/expiration/status	License	internal	checkLicenseExpirationStatus
+GET	/api/license/iServer/nodes/{nodeName}	License	public	getLicense
+GET	/api/license/iServer/nodes/{nodeName}/activation	License	public	getLicenseActivation
+GET	/api/license/iServer/nodes/{nodeName}/activation/xmlFile	License	public	getLicenseActivationXmlFile
+GET	/api/license/iServer/nodes/{nodeName}/entitlements	License	public	getLicenseEntitlements
+GET	/api/license/iServer/nodes/{nodeName}/history	License	public	getLicenseHistory
+GET	/api/license/privileges/{id}	License	public	getLicenseAuditPrivileges
+GET	/api/maps/customShape/areaLayers	Maps	internal	getAreaLayers
+GET	/api/maps/customShape/areaLayers/{id}	Maps	internal	getAreaLayer
+GET	/api/maps/customShape/kmlFiles	Maps	internal	getKmlFiles
+GET	/api/maps/customShape/kmlFiles/{name}	Maps	internal	getKmlFile
+GET	/api/maps/customShape/shapes	Maps	internal	getGeoShapes
+GET	/api/maps/customShape/shapes/{id}	Maps	internal	getGeoShape
+GET	/api/mdxDataSources/{mdxDataSourceId}	MDX Cube Catalog	public	getMdxCubeCatalog
+GET	/api/mdxDataSources/{mdxDataSourceId}/cubes/{cubeId}/attributes/{attributeId}/elements	MDX Cube Catalog	internal	getMdxDataSourceAttributeElements
+GET	/api/metadata/connection	Misc	internal	getMetadataConnectionInfo
+GET	/api/metadataSearches/results	Browsing	public	searchObjectList
+GET	/api/metadataSearches/results/tree	Browsing	public	searchObjectTree
+GET	/api/migrationGroups	Migration Groups	public	getMigrationGroupList
+GET	/api/migrationGroups/{migrationGroupId}	Migration Groups	public	getMigrationGroup
+GET	/api/migrations	Migrations	public	getMigrationList
+GET	/api/migrations/imports/{importId}/binary	Migrations	public	downloadUndoPackageBinary
+GET	/api/migrations/packages/{packageId}/binary	Migrations	public	downloadPackageBinary
+GET	/api/migrations/{migrationId}	Migrations	public	getMigration
+GET	/api/model/attributes/{attributeId}	Attributes	public	ms-getAttributeDetails
+GET	/api/model/attributes/{attributeId}/applicableAdvancedProperties	Attributes	public	ms-getAttributeApplicableAdvancedProperties
+GET	/api/model/attributes/{attributeId}/smartAttributes	Attributes	public	ms-getSmartAttributes
+GET	/api/model/attributes/{attributeId}/smartAttributes/templates	Attributes	public	ms-getSmartAttributesTemplates
+GET	/api/model/calendars	Calendars	public	ms-getCalendars
+GET	/api/model/calendars/{calendarId}	Calendars	public	ms-getCalendar
+GET	/api/model/consolidations/{consolidationId}	Consolidations	public	ms-getConsolidation
+GET	/api/model/cubes/{cubeId}	Cubes	public	ms-getCube
+GET	/api/model/cubes/{cubeId}/applicableVldbProperties	Cubes	public	ms-getCubeApplicableVldbProperties
+GET	/api/model/customGroups/{customGroupId}	Custom Groups	public	ms-getCustomGroupDetails
+GET	/api/model/customGroups/{customGroupId}/applicableAdvancedProperties	Custom Groups	public	ms-getCustomGroupApplicableAdvancedProperties
+GET	/api/model/dataModels/{dataModelId}	Data Models	public	ms-getDataModel
+GET	/api/model/dataModels/{dataModelId}/attributes	Data Models	public	ms-getDataModelAttributes
+GET	/api/model/dataModels/{dataModelId}/attributes/{attributeId}	Data Models	public	ms-getDataModelAttribute
+GET	/api/model/dataModels/{dataModelId}/attributes/{attributeId}/relationships	Data Models	public	ms-getDataModelAttributeRelationships
+GET	/api/model/dataModels/{dataModelId}/attributes/{attributeId}/smartAttributes	Data Models	public	ms-getDataModelSmartAttributes
+GET	/api/model/dataModels/{dataModelId}/attributes/{attributeId}/smartAttributes/templates	Data Models	public	ms-getDataModelSmartAttributeTemplates
+GET	/api/model/dataModels/{dataModelId}/externalDataModels	Data Models	public	ms-getExternalDataModels
+GET	/api/model/dataModels/{dataModelId}/externalDataModels/{externalDataModelId}/objects	Data Models	public	ms-getExternalDataModelObjects
+GET	/api/model/dataModels/{dataModelId}/factMetrics	Data Models	public	ms-getDataModelFactMetrics
+GET	/api/model/dataModels/{dataModelId}/factMetrics/{factMetricId}	Data Models	public	ms-getDataModelFactMetric
+GET	/api/model/dataModels/{dataModelId}/folders	Data Models	public	ms-getDataModelFolders
+GET	/api/model/dataModels/{dataModelId}/folders/{folderId}	Data Models	public	ms-getDataModelFolder
+GET	/api/model/dataModels/{dataModelId}/hierarchy	Data Models	public	ms-getDataModelHierarchy
+GET	/api/model/dataModels/{dataModelId}/links	Data Models	public	ms-getDataModelLinks
+GET	/api/model/dataModels/{dataModelId}/metrics	Data Models	public	ms-getDataModelMetrics
+GET	/api/model/dataModels/{dataModelId}/metrics/{metricId}	Data Models	public	ms-getDataModelMetric
+GET	/api/model/dataModels/{dataModelId}/metrics/{metricId}/applicableAdvancedProperties	Data Models	public	ms-getApplicableAdvancedProperties
+GET	/api/model/dataModels/{dataModelId}/metrics/{metricId}/embeddedObjects/{embeddedObjectId}	Data Models	public	ms-getDataModelMetricEmbeddedObject
+GET	/api/model/dataModels/{dataModelId}/objects/{objectId}/acl	Data Models	public	ms-getDataModelObjectAcl
+GET	/api/model/dataModels/{dataModelId}/objects/{objectId}/translations	Data Models	public	ms-getDataModelObjectTranslations
+GET	/api/model/dataModels/{dataModelId}/securityFilters	Data Models	public	ms-getDataModelSecurityFilters
+GET	/api/model/dataModels/{dataModelId}/securityFilters/{securityFilterId}	Data Models	public	ms-getDataModelSecurityFilter
+GET	/api/model/dataModels/{dataModelId}/tables	Data Models	public	ms-getDataModelTables
+GET	/api/model/dataModels/{dataModelId}/tables/{tableId}	Data Models	public	ms-getDataModelTable
+GET	/api/model/datamarts/{datamartId}	Datamarts	public	ms-getDatamart
+GET	/api/model/datamarts/{datamartId}/applicableVldbProperties	Datamarts	public	ms-getDatamartVldbProperties
+GET	/api/model/datasources/{datasourceId}	Datasource Management	public	ms-getDatasource
+GET	/api/model/datasources/{datasourceId}/applicableAdvancedProperties	Datasource Management	public	ms-getDatasourceApplicableAdvancedProperties
+GET	/api/model/derivedElements/{derivedElementId}	Derived Elements	public	ms-getDerivedElement
+GET	/api/model/drillMaps/{drillMapId}	Drill Maps	public	ms-getDrillMap
+GET	/api/model/facts/{factId}	Facts	public	ms-getFactDetails
+GET	/api/model/filters/{filterId}	Filters	public	ms-getFilterDetails
+GET	/api/model/formulas/{formulaId}	Base Formulas	public	ms-getFormulaDetails
+GET	/api/model/hierarchies	User Hierarchies	public	ms-getHierarchies
+GET	/api/model/hierarchies/{hierarchyId}	User Hierarchies	public	ms-getHierarchy
+GET	/api/model/incrementalRefresh/{incrementalRefreshReportId}	Cubes	public	ms-getIncrementalRefreshReport
+GET	/api/model/incrementalRefresh/{incrementalRefreshReportId}/applicableVldbProperties	Cubes	public	ms-getIncrementalRefreshVldbProperties
+GET	/api/model/metrics/{metricId}	Metrics	public	ms-getMetricDetails
+GET	/api/model/metrics/{metricId}/applicableAdvancedProperties	Metrics	public	ms-getMetricApplicableAdvancedProperties
+GET	/api/model/projects/{projectId}	Projects	public	ms-getProject
+GET	/api/model/projects/{projectId}/applicableAdvancedProperties	Projects	public	ms-getProjectApplicableAdvancedProperties
+GET	/api/model/prompts/{promptId}	Prompts	public	ms-getPromptDetails
+GET	/api/model/reports/{reportId}	Reports	public	ms-getReport
+GET	/api/model/reports/{reportId}/applicableVldbProperties	Reports	public	ms-getReportVldbProperties
+GET	/api/model/reports/{reportId}/derivedElements/{derivedElementId}	Reports	public	ms-getReportDerivedElement
+GET	/api/model/schema/lock	Schema	public	ms-getLock
+GET	/api/model/scopeFilters/{scopeFilterId}	Scope Filters	public	ms-getScopeFilter
+GET	/api/model/securityFilters/{securityFilterId}	Security Filters	public	ms-getSecurityFilterDetails
+GET	/api/model/subtotals/{subtotalId}	Subtotals	public	ms-getSubtotalDetails
+GET	/api/model/systemHierarchy	System Hierarchy	public	ms-getSystemHierarchy
+GET	/api/model/systemHierarchy/attributes/{attributeId}/relationships	System Hierarchy	public	ms-getAttributeRelationships
+GET	/api/model/tables	Tables	public	ms-getTableList
+GET	/api/model/tables/{tableId}	Tables	public	ms-getTableDetails
+GET	/api/model/tables/{tableId}/prompts/{promptId}	Tables	public	ms-getTablePromptDetails
+GET	/api/model/tasks/{taskId}	Schema	public	ms-getTask
+GET	/api/model/timezones	Timezones	public	ms-getTimezones
+GET	/api/model/timezones/{timezoneId}	Timezones	public	ms-getTimezone
+GET	/api/model/transactionReports/{transactionReportId}	Transaction Reports	public	ms-getTransactionReport
+GET	/api/model/transformations/{transformationId}	Transformations	public	ms-getTransformation
+GET	/api/monitors/caches/aggregatedUsages	Monitors	public	getCacheAggregatedUsages
+GET	/api/monitors/caches/contents	Monitors	public	getAllCaches
+GET	/api/monitors/caches/cubes	Monitors	public	getAllCubeCaches
+GET	/api/monitors/caches/cubes/aggregatedUsages	Monitors	public	getCubeCacheAggregatedUsages
+GET	/api/monitors/caches/cubes/manipulations/{id}/status	Monitors	public	getManipulationStatus
+GET	/api/monitors/caches/cubes/{id}	Monitors	public	getSingleCubeProperties
+GET	/api/monitors/caches/document/{id}	Monitors	public	getDocumentCaches
+GET	/api/monitors/caches/report/{id}	Monitors	public	getReportCaches
+GET	/api/monitors/dbConnectionInstances	Monitors	public	getMultipleDataBaseConnection
+GET	/api/monitors/iServer/clusterMembership	System Administration	internal	getServerClusterMembership_1
+GET	/api/monitors/iServer/nodes	Monitors	public	getClusterNodes
+GET	/api/monitors/iServer/nodes/{nodeName}/projects/{projectId}/status	Monitors	public	getProjectStatusFromNode
+GET	/api/monitors/iServer/serverBusyIndicator	Monitors	internal	getServerBusyIndicator
+GET	/api/monitors/jobs	Monitors	public	getJobs
+GET	/api/monitors/projects	Monitors	public	getProjects
+GET	/api/monitors/projects/status	Monitors	public	getProjectStatusOnAllNodes
+GET	/api/monitors/userConnections	Monitors	public	getUserConnections
+GET	/api/monitors/userConnections/aggregatedUsages	Monitors	public	getUserConnectionsAggregatedUsages
+GET	/api/mstrAppConfig	Misc	public	mstrAppConfig
+GET	/api/mstrClients/auth/jwt	System Administration	internal	getJwtConfig
+GET	/api/mstrClients/auth/oidc/iams	System Administration	internal	list
+GET	/api/mstrClients/auth/oidc/iams/metadata	System Administration	internal	getIamMetaList
+GET	/api/mstrClients/auth/oidc/iams/{id}	System Administration	internal	retrieve
+GET	/api/mstrClients/auth/saml/idpmetadata	System Administration	internal	getIdpMetadata
+GET	/api/mstrClients/auth/saml/keystore	System Administration	internal	getSamlKeystore
+GET	/api/mstrClients/auth/saml/mstrSamlConfig	System Administration	internal	getMstrSamlConfig
+GET	/api/mstrClients/auth/saml/registrations	System Administration	internal	getRegistrationList
+GET	/api/mstrClients/auth/saml/registrations/{id}	System Administration	internal	getRegistration
+GET	/api/mstrClients/auth/saml/registrations/{id}/idpmetadata	System Administration	internal	getRegistrationIdpMetadata
+GET	/api/mstrClients/auth/saml/registrations/{id}/keystore	System Administration	internal	getRegistrationKeyStore
+GET	/api/mstrClients/auth/saml/registrations/{id}/spmetadata	System Administration	internal	getRegistrationSpMetadata
+GET	/api/mstrClients/auth/saml/spmetadata	System Administration	internal	getServerSpMetadata
+GET	/api/mstrClients/library/configs/{configID}	Client Configurations	internal	getClientConfig_1
+GET	/api/mstrServices/collabServerSettings/{path}	System Administration	internal	collaborationProxyGetApi
+GET	/api/mstrServices/library/configurations	System Administration	internal	getLibraryConfigurations
+GET	/api/mstrServices/library/cookies	System Administration	public	getCookieInfo
+GET	/api/mstrServices/library/iServer/trustRelationship	System Administration	public	getIServerTrustStoreRelationship
+GET	/api/mstrServices/library/mcp/settings	System Administration	internal	getMcpSettings
+GET	/api/mstrServices/library/mosaic	System Administration	internal	getMosaicSettings
+GET	/api/mstrServices/library/oauth2/settings	System Administration	internal	getOAuth2Settings
+GET	/api/mstrServices/library/scim	SCIM	internal	getScimConfig
+GET	/api/mstrServices/library/security	System Administration	public	getSecurityInfo
+GET	/api/mstrServices/library/security/trustedEnvironments	System Administration	internal	getTrustedEnvironments
+GET	/api/mstrServices/library/settings	System Administration	public	getRestServerSettings
+GET	/api/mstrServices/library/storage	System Administration	public	getStorageDetail
+GET	/api/mstrServices/library/storage/sharedFileStore/files	Shared File Store	public	getMigrationList_1
+GET	/api/mstrServices/library/storage/sharedFileStore/files/{fileId}/binary	Shared File Store	public	downloadSharedFileBinary
+GET	/api/mstrServices/library/telemetryProducer/settings	System Administration	internal	getClientTelemetrySettings
+GET	/api/mstrServices/searchEngine	System Administration	public	getSearchEngine
+GET	/api/mstrServices/searchEngine/indices	System Administration	public	listSearchIndices
+GET	/api/mstrServices/searchEngine/indices/{projectId}	System Administration	public	getSearchIndex
+GET	/api/mstrServices/telemetryServer/settings	System Administration	internal	getTelemetryServerSettings
+GET	/api/multitenant/tenant/{tenantId}	Multi Tenant	public	getTenantData
+GET	/api/multitenant/tenant/{tenantId}/settings	Multi Tenant	public	getTenantSettings
+GET	/api/nuggets	Auto Bots	internal	getAllNuggets
+GET	/api/nuggets/{id}	Agent	internal	getNuggets
+GET	/api/nuggets/{id}/categories	Agent	public	getCategories
+GET	/api/nuggets/{id}/file	Agent	internal	getNuggetsFile
+GET	/api/objects	Object Management	internal	searchObject
+GET	/api/objects/cubes/dataImport	Object Management	public	getCubes_1
+GET	/api/objects/cubes/dataImport/{id}	Object Management	public	getCubeById_1
+GET	/api/objects/folders/{folderType}	Object Management	internal	getPreDefinedFolder_1
+GET	/api/objects/inspection	Object Management	internal	getObjectsInspectionInProject
+GET	/api/objects/inspection/{inspectionId}	Object Management	internal	getObjectsInspectionJobStatus
+GET	/api/objects/{id}	Object Management	public	getObject
+GET	/api/objects/{id}/inspection	Object Management	internal	getObjectDetailInspection
+GET	/api/objects/{id}/recommendations	Object Management	public	getRecommendations
+GET	/api/objects/{id}/type/{type}/propertySets/{propertySetId}/properties	Object Management	internal	getObjectExtendedProperties
+GET	/api/objects/{id}/vldb/propertySets	Object Management	internal	getVLDBSetting
+GET	/api/objects/{type}/{id}/translations	Object Management	public	getObjectsTranslation
+GET	/api/ontology/vocabularies	Ontology	public	getVocabularies
+GET	/api/openSemanticLayer/dbmsFunctions	Open Semantic Layer	internal	getDbmsFunctions
+GET	/api/openSemanticLayer/dossiers/{dossierId}/instances/{instanceId}/chapters/{chapterKey}/visualizations/{visualizationKey}	Open Semantic Layer	internal	getArrowSerializationData
+GET	/api/openSemanticLayer/sqlSettings	Open Semantic Layer	internal	getSqlSettings
+GET	/api/packages/imports/{importId}	Packages	public	retrieve_2
+GET	/api/packages/imports/{importId}/undoPackage/binary	Packages	public	downloadUndoPackageBinary_1
+GET	/api/packages/{packageId}	Packages	public	get_1
+GET	/api/packages/{packageId}/binary	Packages	public	downloadPackageBinary_1
+GET	/api/packages/{packageId}/objects	Packages	public	getPackageObjectDetail
+GET	/api/palettes	Palettes	public	getAllPalettes
+GET	/api/palettes/{id}	Palettes	public	getPalette
+GET	/api/preferences/project/{projectId}/iserverLanguage	Preferences	public	getLocaleMsgsProjectPreference
+GET	/api/preferences/project/{projectId}/numberAndDateFormat	Preferences	public	getSLocProjectPreference
+GET	/api/preferences/project/{projectId}/schedules	Preferences	public	getScheduleProjectPreference
+GET	/api/preferences/project/{projectId}/units	Preferences	public	getUnitsProjectPreference
+GET	/api/preferences/user/adminhub	Preferences	internal	getAllUserPreferences
+GET	/api/preferences/user/{name}	Preferences	internal	getSingleUserPreference
+GET	/api/preferences/user/{userId}/units	Preferences	public	getUnitsUserPreference
+GET	/api/preferences/usergroup/{userGroupId}/locale	Preferences	public	getUserGroupPreferences
+GET	/api/preferences/webpreferences/currentuser	Preferences	public	listCurrentUserWebPreferences
+GET	/api/preferences/webpreferences/currentuser/project/{projectId}	Preferences	public	listCurrentUserProjectWebPreferences
+GET	/api/preferences/webpreferences/project/{projectId}	Preferences	public	listProjectWebPreferences
+GET	/api/preferences/webpreferences/user/{userId}	Preferences	public	listUserWebPreferences
+GET	/api/preferences/webpreferences/user/{userId}/project/{projectId}	Preferences	public	listUserProjectWebPreferences
+GET	/api/projectDuplications	Project Duplications	public	getProjectDuplications
+GET	/api/projectDuplications/versions	Project Duplications	public	getProjectDuplicationVersions
+GET	/api/projectDuplications/{id}	Project Duplications	public	getProjectDuplication
+GET	/api/projectDuplications/{id}/backup	Project Duplications	public	getProjectDuplicationFiles
+GET	/api/projects	Projects	public	getProjects_1
+GET	/api/projects/datasets/settings	Projects	internal	getDISettings
+GET	/api/projects/deleteUnusedManagedObjects/status	Projects	public	getDeleteUnusedManagedObjectsStatus
+GET	/api/projects/settings/onStartup	Projects	public	getProjectLoadSettings
+GET	/api/projects/{id}/datasources	Datasource Management	public	getProjectDatasources
+GET	/api/projects/{id}/languages	Projects	public	getProjectLanguageSettings
+GET	/api/projects/{id}/quotas	Projects	public	getProjectQuota
+GET	/api/projects/{id}/users/quotas	Projects	public	getUserQuotas
+GET	/api/projects/{name}	Projects	public	getProject_1
+GET	/api/projects/{projectId}/lock	Projects	public	queryProjectLock
+GET	/api/projects/{projectId}/properties/cubes	Projects	internal	getCubesProperties
+GET	/api/projects/{projectId}/settings	Projects	internal	getServerSettings_1
+GET	/api/projects/{projectId}/settings/engine	Projects	public	getEngineSettings
+GET	/api/projects/{projectId}/statusMessage	Projects	public	getProjectStatusMessage
+GET	/api/questionSets	QuestionSet	internal	listQuestionSets
+GET	/api/questionSets/{questionSetId}	QuestionSet	internal	getQuestionSet
+GET	/api/questions	Agent	public	getChats_1
+GET	/api/questions/collections/{questionIds}	Agent	public	getQuestionCollections
+GET	/api/questions/{questionId}	Agent	public	queryMessage_1
+GET	/api/questions/{questionId}/answers/data/{dataId}	Agent	public	getMessageVis
+GET	/api/questions/{questionId}/answers/images/{imageId}	Agent	public	getMessageImage
+GET	/api/questions/{questionId}/answers/reportImages/{dataId}	Agent	internal	getReportImages
+GET	/api/questions/{questionId}/diagnostics/data/{dataId}	Agent	internal	getMessageDiagnostics
+GET	/api/questions/{questionId}/fulldata/{dataId}	Agent	public	getFullData
+GET	/api/questions/{questionId}/stream	Agent	public	startQuestionStreamTask_1
+GET	/api/recommendations	Recommendations	internal	getRecommendations_1
+GET	/api/recommendations/jobs	Recommendations	internal	listTrainingJobs
+GET	/api/recommendations/jobs/{jobId}	Recommendations	internal	getTrainingJobStatus
+GET	/api/recommendations/orgDirectory/settings	Recommendations	internal	getSettings_2
+GET	/api/reports	Reports	public	searchForReports
+GET	/api/reports/caches	Reports	internal	getReportCacheDetails
+GET	/api/reports/{reportId}	Reports	public	getDefinition_1
+GET	/api/reports/{reportId}/attributes/{attributeId}/elements	Reports	public	getAttributeElementFromReport
+GET	/api/reports/{reportId}/bulkExport	Reports	public	getBulkExportConfig
+GET	/api/reports/{reportId}/cacheInvalidationSchedule	Reports	public	getCacheInvalidationSchedule
+GET	/api/reports/{reportId}/instances/{instanceId}	Reports	public	executeReport
+GET	/api/reports/{reportId}/instances/{instanceId}/attributes/{attributeId}/elements	Reports	public	getAttributeElement_1
+GET	/api/reports/{reportId}/instances/{instanceId}/promptContent	Reports	internal	getReportPromptContent
+GET	/api/reports/{reportId}/instances/{instanceId}/prompts	Reports	public	getPromptsFromInstance_1
+GET	/api/reports/{reportId}/instances/{instanceId}/prompts/{promptIdentifier}/elements	Reports	public	getPromptAvailableAttributeElement_1
+GET	/api/reports/{reportId}/instances/{instanceId}/prompts/{promptIdentifier}/objects	Reports	public	getPromptAvailableObjects_1
+GET	/api/reports/{reportId}/instances/{instanceId}/status	Reports	public	getDocumentInstanceStatus_1
+GET	/api/reports/{reportId}/prompts	Reports	public	getPrompts_1
+GET	/api/runtimes	Runtimes	public	listRuntimes
+GET	/api/runtimes/versions	Runtimes	public	getRuntimeVersions
+GET	/api/runtimes/{id}	Runtimes	public	getScriptRuntime
+GET	/api/schedules	Schedules	public	listSchedules
+GET	/api/schedules/{id}	Schedules	public	getScheduleById
+GET	/api/scim/v2/Groups	SCIM	public	query
+GET	/api/scim/v2/Groups/{id}	SCIM	public	getById
+GET	/api/scim/v2/ResourceTypes	SCIM	public	getAll
+GET	/api/scim/v2/ResourceTypes/{name}	SCIM	public	get_2
+GET	/api/scim/v2/Schemas	SCIM	public	getAll_1
+GET	/api/scim/v2/Schemas/{id}	SCIM	public	get_3
+GET	/api/scim/v2/ServiceProviderConfig	SCIM	public	get_4
+GET	/api/scim/v2/Users	SCIM	public	query_1
+GET	/api/scim/v2/Users/{id}	SCIM	public	getById_1
+GET	/api/scopeFilters	Scope Filters	public	getScopeFilters
+GET	/api/scopeFilters/{id}/folders	Scope Filters	public	getScopeFilterFolders
+GET	/api/scriptFunctions	Scripts	internal	getScriptFunctions
+GET	/api/scripts	Scripts	public	bulkReadScripts
+GET	/api/scripts/conversion/bulk/{id}	Scripts	public	getBulkCommandManagerScriptConversionStatus
+GET	/api/scripts/evaluation/{evaluationId}	Scripts	public	getCommandManagerScriptEvaluationStatus
+GET	/api/scripts/evaluationList/{id}	Scripts	public	getScriptEvaluationIds
+GET	/api/scripts/evaluationLog/{id}/{evaluationId}	Scripts	public	getScriptEvaluationLog
+GET	/api/scripts/evaluations	Scripts	public	getScriptEvaluationHistory
+GET	/api/scripts/history	Scripts	public	getScriptHistory
+GET	/api/scripts/settings/logRetention	Scripts	public	getScriptLogRetentionSettings
+GET	/api/scripts/{id}	Scripts	public	getCommandManagerScript
+GET	/api/scripts/{id}/variables/answers	Scripts	public	getScriptVariablesAnswer
+GET	/api/searchObjects/{searchObjectId}	Browsing	public	getSearchObjectById
+GET	/api/searchObjects/{searchObjectId}/results	Browsing	public	metadataSearchFromSearchObject
+GET	/api/searches/results	Browsing	public	doQuickSearch
+GET	/api/searches/suggestions	Browsing	public	searchSuggestions
+GET	/api/searches/usergroups/{id}/members	Browsing	public	getUserGroupMembers
+GET	/api/securityFilters	Security Filters	public	getSecurityFilters
+GET	/api/securityFilters/{id}/members	Security Filters	public	getSecurityFilterUsers_1
+GET	/api/securityRoles	Security Roles	public	getSecurityRoles
+GET	/api/securityRoles/projects/{projectId}	Security Roles	public	getSecurityRolesInProject
+GET	/api/securityRoles/{id}	Security Roles	public	getSecurityRole
+GET	/api/securityRoles/{id}/projects/{projectId}/members	Security Roles	public	getSecurityRoleMembers
+GET	/api/sessions	Authentication	public	sessionSessionIdGet
+GET	/api/sessions/lifetime	Authentication	public	getSessionLifetime
+GET	/api/sessions/privileges	Authentication	public	getUserPrivilegeInfo
+GET	/api/sessions/privileges/{id}	Authentication	public	getSingleUserPrivilegeInfo
+GET	/api/sessions/privilegesAll	Authentication	public	getUserPrivilegesAll
+GET	/api/sessions/projectId	Authentication	public	sessionSessionIdGetForProject
+GET	/api/sessions/user	Authentication	internal	getSessionUserInfo
+GET	/api/sessions/userInfo	Authentication	public	sessionSessionIdUserInfoGet
+GET	/api/sessions/{projectId}/locales	Authentication	internal	getServerSettings_2
+GET	/api/shortcuts/{shortcutId}/bookmarks	Library	public	getBookmarksWithShortcutID
+GET	/api/staticResources	Misc	internal	getStaticResources
+GET	/api/status	Misc	public	getHealth
+GET	/api/subscriptions	Subscriptions	public	getSubscriptions
+GET	/api/subscriptions/bursting	Subscriptions	public	listBurstingAttributes
+GET	/api/subscriptions/images	Subscriptions	public	listImages
+GET	/api/subscriptions/images/{id}	Subscriptions	public	getImageById
+GET	/api/subscriptions/recipients/personalAddresses	Subscriptions	public	listPersonalAddresses
+GET	/api/subscriptions/{id}	Subscriptions	public	getSubscriptionById
+GET	/api/subscriptions/{id}/status	Subscriptions	public	getSubscriptionStatusById
+GET	/api/subscriptions/{subscriptionId}/prompts	Subscriptions	public	getPromptsSubscription
+GET	/api/tasks	Tasks	public	queryTasks
+GET	/api/tasks/{id}	Tasks	public	queryTask
+GET	/api/teamsApp/configuration	Microsoft Teams App	internal	getConfiguration_2
+GET	/api/teamsApp/messages/getReport	Microsoft Teams App	internal	getTeamsKeyDriverReport
+GET	/api/telemetry/admin/bot-interactions/details	Telemetry	public	getBotInteractionDetails
+GET	/api/telemetry/admin/multitenantMetadata/status	Telemetry	public	getMultitenantMetadataStatus
+GET	/api/telemetry/admin/restore/status	Telemetry	public	getRestoreStatus
+GET	/api/telemetry/admin/runtime-config	Telemetry	public	listRuntimeConfigs
+GET	/api/telemetry/admin/runtime-config/{key}	Telemetry	public	getRuntimeConfig
+GET	/api/telemetry/agg/status	Telemetry	public	getAggregationStatus
+GET	/api/telemetry/alerts	Telemetry	public	getAlerts
+GET	/api/telemetry/alerts/elementList	Telemetry	public	getAlertElementList
+GET	/api/telemetry/alerts/{alertId}/details	Telemetry	public	getAlertDetails
+GET	/api/telemetry/audit	Telemetry	public	getAudit
+GET	/api/telemetry/audits/elementList	Telemetry	public	getAuditElementList
+GET	/api/telemetry/bots/{id}/feedback	Telemetry	public	getFeedbackForObject
+GET	/api/telemetry/bots/{id}/learnings	Telemetry	public	getLearnings
+GET	/api/telemetry/bots/{id}/statistics	Telemetry	public	getFeedbackStatistics
+GET	/api/telemetry/lakehouse-migration/status	Telemetry	public	getLakehouseMigrationStatus
+GET	/api/telemetry/objects/client-executions	Telemetry	public	getClientExecutions
+GET	/api/telemetry/objects/definitions	Telemetry	public	getObjectDefinitions
+GET	/api/telemetry/objects/interactions	Telemetry	public	getDashboardInteractions
+GET	/api/telemetry/objects/unused	Telemetry	public	getUnusedObjects
+GET	/api/telemetry/objects/{id}/lastError	Telemetry	public	getObjectErrors
+GET	/api/telemetry/performance	Telemetry	public	getPerformance
+GET	/api/telemetry/performance/elementList	Telemetry	public	getPerformanceElementList
+GET	/api/telemetry/performance/queryProfile/{trinoFragmentId}/sourceBreakdown/{instanceId}	Telemetry	public	getQueryProfileSourceBreakdown_1
+GET	/api/telemetry/performance/queryProfile/{trinoFragmentId}/sourceBreakdown/{instanceId}/{templateId}	Telemetry	public	getQueryProfileSourceBreakdown
+GET	/api/telemetry/performance/queryProfile/{trinoQueryId}	Telemetry	public	getQueryProfile
+GET	/api/telemetry/processing/status	Telemetry	public	getProcessingStatus
+GET	/api/telemetry/sentinel-tables	Telemetry	public	getSentinelTableData
+GET	/api/telemetry/sentinelClient/table/tableInfo	Telemetry	public	getTableInfo
+GET	/api/telemetry/status	Telemetry	public	getStatus
+GET	/api/telemetry/usage-insights/model	Telemetry	public	getModelUsage
+GET	/api/telemetry/usage-insights/model/elementList	Telemetry	public	getUsageModelElementList
+GET	/api/telemetry/usage-insights/model/{modelId}/executions	Telemetry	public	getDataModelExecutionDrilldown
+GET	/api/telemetry/usage-insights/model/{modelId}/executions/elementList	Telemetry	public	getDataModelExecutionDrilldownElementList
+GET	/api/telemetry/usage-insights/model/{modelId}/users	Telemetry	public	getDataModelUserDrilldown
+GET	/api/telemetry/usage-insights/model/{modelId}/users/elementList	Telemetry	public	getDataModelUserDrilldownElementList
+GET	/api/telemetry/usage-insights/object	Telemetry	public	getObjectUsage
+GET	/api/telemetry/usage-insights/object/elementList	Telemetry	public	getUsageObjectElementList
+GET	/api/telemetry/usage-insights/object/{objectId}/executions	Telemetry	public	getSemanticObjectExecutionDrilldown
+GET	/api/telemetry/usage-insights/object/{objectId}/executions/elementList	Telemetry	public	getSemanticObjectExecutionDrilldownElementList
+GET	/api/telemetry/usage-insights/object/{objectId}/users	Telemetry	public	getSemanticObjectUserDrilldown
+GET	/api/telemetry/usage-insights/object/{objectId}/users/elementList	Telemetry	public	getSemanticObjectUserDrilldownElementList
+GET	/api/telemetry/usage-insights/source	Telemetry	public	getSourceUsage
+GET	/api/telemetry/usage-insights/source/elementList	Telemetry	public	getUsageSourceElementList
+GET	/api/telemetry/usage-insights/source/{sourceId}/executions	Telemetry	public	getSourceExecutionDrilldown
+GET	/api/telemetry/usage-insights/source/{sourceId}/executions/elementList	Telemetry	public	getSourceExecutionDrilldownElementList
+GET	/api/telemetry/usage-insights/source/{sourceId}/models	Telemetry	public	getSourceModelDrilldown
+GET	/api/telemetry/usage-insights/source/{sourceId}/models/elementList	Telemetry	public	getSourceModelDrilldownElementList
+GET	/api/telemetry/usage-insights/source/{sourceId}/users	Telemetry	public	getSourceUserDrilldown
+GET	/api/telemetry/usage-insights/source/{sourceId}/users/elementList	Telemetry	public	getSourceUserDrilldownElementList
+GET	/api/telemetry/users/{id}/statistics	Telemetry	public	getUserStatistics
+GET	/api/testCenter/files/{fileId}	Test Center - File Store	internal	getSharedFileMeta
+GET	/api/testCenter/files/{fileId}/binary	Test Center - File Store	internal	downloadSharedFileBinary_1
+GET	/api/testCenter/files/{fileId}/binary/range	Test Center - File Store	internal	downloadSharedFileBinaryRange
+GET	/api/testCenters/integrityComparisons	Comparison Test (Test Center)	public	getAllIntegrityComparisons
+GET	/api/testCenters/integrityComparisons/comparisons	Comparison Test (Test Center)	public	getAllIntegrityComparisonResults
+GET	/api/testCenters/integrityComparisons/{integrityComparisonId}	Comparison Test (Test Center)	public	getIntegrityComparisonObjectById
+GET	/api/testCenters/integrityComparisons/{integrityComparisonId}/comparisons	Comparison Test (Test Center)	public	getIntegrityComparisons
+GET	/api/testCenters/integrityComparisons/{integrityComparisonId}/comparisons/{comparisonId}	Comparison Test (Test Center)	public	getIntegrityComparisonById
+GET	/api/testCenters/integrityComparisons/{integrityComparisonId}/comparisons/{comparisonId}/status	Comparison Test (Test Center)	public	queryIntegrityComparisonStatus
+GET	/api/testCenters/integrityComparisons/{integrityComparisonId}/comparisons/{comparisonId}/summary	Comparison Test (Test Center)	public	getIntegrityComparisonSummary
+GET	/api/testCenters/integrityComparisons/{integrityComparisonId}/comparisons/{comparisonId}/testObjectComparisons/{testObjectComparisonId}/dataDiff	Comparison Test (Test Center)	public	queryCubeDataDiff
+GET	/api/testCenters/integrityComparisons/{integrityComparisonId}/comparisons/{comparisonId}/testObjectComparisons/{testObjectComparisonId}/nodes/{key}/dataDiff	Comparison Test (Test Center)	public	queryDataDiff
+GET	/api/testCenters/integrityComparisons/{integrityComparisonId}/comparisons/{comparisonId}/testObjectComparisons/{testObjectComparisonId}/nodes/{key}/sqlDiff	Comparison Test (Test Center)	public	querySqlDiff
+GET	/api/testCenters/integrityComparisons/{integrityComparisonId}/comparisons/{comparisonId}/testObjectComparisons/{testObjectComparisonId}/pdf/source	Comparison Test (Test Center)	public	querySourcePdf
+GET	/api/testCenters/integrityComparisons/{integrityComparisonId}/comparisons/{comparisonId}/testObjectComparisons/{testObjectComparisonId}/pdf/target	Comparison Test (Test Center)	public	queryTargetPdf
+GET	/api/testCenters/integrityComparisons/{integrityComparisonId}/comparisons/{comparisonId}/testObjectComparisons/{testObjectComparisonId}/pdfDiff	Comparison Test (Test Center)	public	queryPdfDiff
+GET	/api/testCenters/integrityComparisons/{integrityComparisonId}/comparisons/{comparisonId}/testObjectComparisons/{testObjectComparisonId}/sqlDiff	Comparison Test (Test Center)	public	queryCubeSqlDiff
+GET	/api/testCenters/integrityComparisons/{integrityComparisonId}/comparisons/{comparisonId}/testObjectComparisons/{testObjectComparisonId}/summary	Comparison Test (Test Center)	public	queryComparisonResultSummary
+GET	/api/testCenters/integrityTests	Baseline Test (Test Center)	public	getAllIntegrityTests
+GET	/api/testCenters/integrityTests/baselines	Baseline Test (Test Center)	public	getAllIntegrityTestBaselines
+GET	/api/testCenters/integrityTests/{integrityTestId}	Baseline Test (Test Center)	public	getIntegrityTestById
+GET	/api/testCenters/integrityTests/{integrityTestId}/baselines	Baseline Test (Test Center)	public	getIntegrityTestBaselines
+GET	/api/testCenters/integrityTests/{integrityTestId}/baselines/{baselineId}	Baseline Test (Test Center)	public	queryIntegrityBaselineById
+GET	/api/testCenters/integrityTests/{integrityTestId}/baselines/{baselineId}/status	Baseline Test (Test Center)	public	queryIntegrityBaselineStatus
+GET	/api/testCenters/integrityTests/{integrityTestId}/baselines/{baselineId}/summary	Baseline Test (Test Center)	public	getIntegrityBaselineSummary
+GET	/api/testCenters/integrityTests/{integrityTestId}/baselines/{baselineId}/testObjectBaselines/{testObjectBaselineId}	Baseline Test (Test Center)	public	queryIntegrityTestSingle
+GET	/api/testCenters/integrityTests/{integrityTestId}/baselines/{baselineId}/testObjectBaselines/{testObjectBaselineId}/data	Baseline Test (Test Center)	public	queryIntegrityTestData
+GET	/api/testCenters/integrityTests/{integrityTestId}/baselines/{baselineId}/testObjectBaselines/{testObjectBaselineId}/pdf	Baseline Test (Test Center)	public	queryIntegrityTestPdf
+GET	/api/testCenters/integrityTests/{integrityTestId}/baselines/{baselineId}/testObjectBaselines/{testObjectBaselineId}/sql	Baseline Test (Test Center)	public	queryIntegrityTestVizSql_1
+GET	/api/testCenters/integrityTests/{integrityTestId}/baselines/{baselineId}/testObjectBaselines/{testObjectBaselineId}/visualizations/{vizKey}	Baseline Test (Test Center)	public	queryIntegrityTestVisualization
+GET	/api/testCenters/integrityTests/{integrityTestId}/baselines/{baselineId}/testObjectBaselines/{testObjectBaselineId}/visualizations/{vizKey}/data	Baseline Test (Test Center)	public	queryIntegrityTestVizData
+GET	/api/testCenters/integrityTests/{integrityTestId}/baselines/{baselineId}/testObjectBaselines/{testObjectBaselineId}/visualizations/{vizKey}/queryDetail	Baseline Test (Test Center)	public	queryIntegrityTestVizQueryDetail
+GET	/api/testCenters/integrityTests/{integrityTestId}/baselines/{baselineId}/testObjectBaselines/{testObjectBaselineId}/visualizations/{vizKey}/sql	Baseline Test (Test Center)	public	queryIntegrityTestVizSql
+GET	/api/testCenters/integrityTests/{integrityTestId}/resolvedTestObjects	Baseline Test (Test Center)	public	previewResolvedTestObjects
+GET	/api/testCenters/internal/baseline-result-files	internal-baseline-result-file-controller	public	searchBaselineResultFiles
+GET	/api/testCenters/settings	Test Center Settings	public	getSettings
+GET	/api/themes/dossiers/{dossierId}/themeInstances/{instanceId}	Themes	public	getThemeInstance
+GET	/api/transmitters	Transmitters	public	listTransmitters
+GET	/api/transmitters/{id}	Transmitters	public	getTransmitterById
+GET	/api/usergroups	User Management	public	getUserGroups
+GET	/api/usergroups/integrityCheck/jobs/{jobId}	User Management	internal	getJobStatus
+GET	/api/usergroups/topLevel	User Management	public	getTopLevelUsergroups
+GET	/api/usergroups/{id}	User Management	public	getUserGroup
+GET	/api/usergroups/{id}/members	User Management	public	getUserGroupMembers_1
+GET	/api/usergroups/{id}/memberships	User Management	public	getUsergroupParents
+GET	/api/usergroups/{id}/privileges	User Management	public	getUserGroupPrivileges
+GET	/api/usergroups/{id}/securityFilters	User Management	public	getSecurityFilterUsers_3
+GET	/api/usergroups/{id}/securityRoles	User Management	public	getUserSecurityRoles_1
+GET	/api/usergroups/{id}/settings	User Management	public	getUserGroupSettings
+GET	/api/users	User Management	public	getUsers
+GET	/api/users/aiSettings	User Management	public	getCurrentUserAiSettings
+GET	/api/users/merge/status	User Management	public	getMergeStatus
+GET	/api/users/{id}	User Management	public	getUser
+GET	/api/users/{id}/addresses	User Management	public	getAddresses
+GET	/api/users/{id}/memberships	User Management	public	getUserParents
+GET	/api/users/{id}/privileges	User Management	public	getUserPrivileges
+GET	/api/users/{id}/projects/quotas	User Management	public	getQuotasUsage
+GET	/api/users/{id}/projects/{projectId}/quotas	User Management	public	getQuotaUsage
+GET	/api/users/{id}/securityFilters	User Management	public	getSecurityFilterUsers_2
+GET	/api/users/{id}/settings	User Management	public	getUserSettings
+GET	/api/users/{userId}/quota	User Management	public	getUserQuota
+GET	/api/users/{userId}/securityRoles	User Management	public	getUserSecurityRoles
+GET	/api/users/{userId}/systemprompts	User Management	public	getSystemPrompts
+GET	/api/v2/applications	Applications	public	getApplications
+GET	/api/v2/applications/{id}	Applications	public	getApplication_1
+GET	/api/v2/bots/aiadmin/jobs	Agent	internal	getAiAdminJobs
+GET	/api/v2/bots/voices	Agent	internal	getSupportingVoices
+GET	/api/v2/bots/voices/sample	Agent	internal	getVoiceSample
+GET	/api/v2/bots/{botId}	Agent	internal	getBotInfo
+GET	/api/v2/bots/{botId}/caches/questionGroups	Agent	internal	getQuestionGroups
+GET	/api/v2/bots/{botId}/caches/questionGroups/{groupId}/questions	Agent	internal	getQuestion
+GET	/api/v2/bots/{botId}/caches/questionGroups/{groupId}/questions/{questionId}/answer	Agent	internal	getAnswer
+GET	/api/v2/bots/{botId}/chats	Agent	internal	getChats_2
+GET	/api/v2/bots/{botId}/chats/{chatId}	Agent	internal	getChat_1
+GET	/api/v2/bots/{botId}/columns	Agent	public	getBotColumns
+GET	/api/v2/bots/{botId}/config	Agent	internal	getBotConfig
+GET	/api/v2/bots/{botId}/datasetContainers/{datasetContainerId}/datasets/{datasetId}/descriptions	Agent	internal	getBotDatasetDescriptions
+GET	/api/v2/bots/{botId}/datasets/descriptions	Agent	internal	getBotDatasetsDescriptions
+GET	/api/v2/bots/{botId}/detail	Agent	internal	getBotDetail
+GET	/api/v2/bots/{botId}/evaluationJobs/{jobId}	Agent	internal	getEvaluationJob
+GET	/api/v2/bots/{botId}/evaluationJobs/{jobId}/stream	Agent	internal	streamEvaluationJob
+GET	/api/v2/bots/{botId}/subBotDescriptions	Agent	internal	getSubBotDescriptions
+GET	/api/v2/bots/{botId}/trainingjobs	Agent	internal	getTrainingJobs
+GET	/api/v2/bots/{botId}/trainingsets	Agent	internal	getTrainingSets
+GET	/api/v2/bots/{botId}/tuning/jobs/{jobId}	Agent	internal	getTuningJob
+GET	/api/v2/bots/{botId}/tuning/jobs/{jobId}/stream	Agent	internal	streamTuningJob
+GET	/api/v2/bots/{botId}/userContext	Agent	internal	getUserAgentContext
+GET	/api/v2/changeJournal/{searchId}	Change Journal	public	getChangeJournalRowSearchResult
+GET	/api/v2/configurations/featureFlags	Configurations	internal	getFeatureFlags_1
+GET	/api/v2/cubes/{cubeId}	Cubes	public	getDefinition_2
+GET	/api/v2/cubes/{cubeId}/instances/{instanceId}	Cubes	public	getReport_1
+GET	/api/v2/cubes/{cubeId}/instances/{instanceId}/parameters	Cubes	public	getMosaicParameters
+GET	/api/v2/cubes/{cubeId}/instances/{instanceId}/status	Cubes	public	getCubeInstanceStatus
+GET	/api/v2/cubes/{cubeId}/powerBiDataSource	Cubes	public	getCubePowerBIDataSource
+GET	/api/v2/cubes/{cubeId}/sqlView	Cubes	public	getCubeSqlView
+GET	/api/v2/cubes/{cubeId}/tableauDataSource	Cubes	public	getCubeTableauDataSource
+GET	/api/v2/devices	Devices	public	getDevices_1
+GET	/api/v2/devices/{id}	Devices	public	getDevice_1
+GET	/api/v2/devices/{id}/buckets	Devices	public	getDeviceBuckets
+GET	/api/v2/dossiers/{dossierId}/definition	Dashboards(Dossiers) and Documents	public	getVisualizationList_1
+GET	/api/v2/dossiers/{dossierId}/instances/{instanceId}/chapters/{chapterKey}/visualizations/{visualizationKey}	Dashboards(Dossiers) and Documents	public	getVisualizationResult_2
+GET	/api/v2/dossiers/{dossierId}/instances/{instanceId}/definition	Dashboards(Dossiers) and Documents	public	getVisualizationList_2
+GET	/api/v2/historyList	History List	public	getHistoryList_1
+GET	/api/v2/iserver/fences	System Administration	public	getFences_1
+GET	/api/v2/iserver/fences/{id}	System Administration	public	getFence_1
+GET	/api/v2/iserver/settings	System Administration	public	getIserverSettings
+GET	/api/v2/iserver/settings/config	System Administration	public	getIserverSettingsProperties
+GET	/api/v2/library	Library	public	getLibraryV2
+GET	/api/v2/monitors/jobs	Monitors	public	getJobs_1
+GET	/api/v2/monitors/jobs/{id}	Monitors	public	getJob
+GET	/api/v2/monitors/jobs/{id}/queries	Monitors	public	getJobQueries
+GET	/api/v2/monitors/processingUnitDump	Monitors	public	getProcessingUnitDump
+GET	/api/v2/monitors/schema	Monitors	internal	getJobSchema
+GET	/api/v2/projects/{projectId}/settings	Projects	public	getServerSettings_3
+GET	/api/v2/projects/{projectId}/settings/config	Projects	public	getServerSettingProperties
+GET	/api/v2/projects/{projectId}/settings/defaultTemplates	Projects	internal	getDefaultTemplateSettings
+GET	/api/v2/reports/{reportId}	Reports	public	getDefinition_3
+GET	/api/v2/reports/{reportId}/instances/{instanceId}	Reports	public	executeReport_1
+GET	/api/v2/reports/{reportId}/instances/{instanceId}/pageBy/elements	Reports	public	getPageByElements
+GET	/api/v2/reports/{reportId}/instances/{instanceId}/sqlView	Reports	public	getReportSqlView_1
+GET	/api/v2/schedules	Schedules	public	listSchedules_1
+GET	/api/v2/users/{id}/securityFilters	User Management	public	getSecurityFilterUsers_4
+GET	/api/v2/users/{userId}/addresses	User Management	public	listAddresses
+GET	/api/v2/users/{userId}/addresses/{addressId}	User Management	public	getAddressById
+GET	/api/webSettings/trustRelationships	System Administration	public	getTrustRelationships
+GET	/api/workflows/files	Workflows	internal	getMigrationList_2
+GET	/api/workflows/files/{fileId}	Workflows	internal	downloadWorkflowFileBinary
+GET	/api/{path}	(untagged)	internal	get
+GET	/api/{service}/{path}	Model Server	internal	modelServiceGet
+HEAD	/api/cubes/{cubeId}	Cubes	public	getCubeById
+HEAD	/api/documents/{id}	Dashboards(Dossiers) and Documents	internal	getDocumentProperties
+PATCH	/api/admin/mstrServices/library/storage	System Administration	internal	updateStorageDetail
+PATCH	/api/chats/{chatId}	Auto Bots	internal	modifyChat_1
+PATCH	/api/chats/{chatId}/messages/{messageId}	Auto Bots	internal	modifyChatMessage
+PATCH	/api/configurations/quota	Configurations	internal	updateQuota
+PATCH	/api/contentBundles/{id}	Content Bundles	public	updateContentBundle
+PATCH	/api/contentBundles/{id}/contents	Content Bundles	public	updateContentBundleContent
+PATCH	/api/contentGroups/{id}	Content Groups	public	updateContentGroup
+PATCH	/api/contentGroups/{id}/contents	Content Groups	public	updateContentGroupContent
+PATCH	/api/dataModels/{dataModelId}/securityFilters/{securityFilterId}/members	Data Models	public	updatePartialSecurityFilter
+PATCH	/api/dataServer/workspaces/{workspaceId}	Workspaces	public	ms-patchWorkspace
+PATCH	/api/dataServer/workspaces/{workspaceId}/pipelines/{pipelineId}	Workspaces	public	ms-updatePipeline
+PATCH	/api/dataServer/workspaces/{workspaceId}/pipelines/{pipelineId}/tables/{tableId}	Workspaces	public	ms-updateDataServerTable
+PATCH	/api/datasets/{datasetId}/tables/{tableId}	Datasets	public	updateDICube
+PATCH	/api/datasources/connections/{id}	Datasource Management	public	updateDatasourceConnection
+PATCH	/api/datasources/connections/{id}/test	Datasource Management	public	testUpdateDatasourceConnection
+PATCH	/api/datasources/logins/{id}	Datasource Management	public	updateDatasourceLogin
+PATCH	/api/datasources/scripts/{id}	Datasource Management	public	updateDataSourceScript
+PATCH	/api/datasources/{id}	Datasource Management	public	updateDatasource
+PATCH	/api/datasources/{id}/catalog/settings	Datasource Management	public	setCatalogSettings
+PATCH	/api/datasources/{id}/jobPriorities	Datasource Management	public	updateJobPrioritization
+PATCH	/api/datasources/{id}/projects	Datasource Management	public	updateDatasourceProjects
+PATCH	/api/datasources/{id}/test	Datasource Management	public	testUpdateEmbeddedConnection
+PATCH	/api/dbRoles/{id}	Datasource Management	internal	updatePartialDBRole
+PATCH	/api/documentation/{documentationId}	Documentation	public	updateDocumentation
+PATCH	/api/documentationDefinition/{documentationDefinitionId}	Documentation Definition	public	updateDocumentationDefinition
+PATCH	/api/dossiers/{dossierId}/instance/{dossierInstanceId}	Dashboards(Dossiers) and Documents	internal	applyDossierImportDocument
+PATCH	/api/dossiers/{dossierId}/instances/{instanceId}/datasets	Dashboards(Dossiers) and Documents	public	updateDossierInstanceDatasets
+PATCH	/api/drivers	Drivers	internal	patchDrivers
+PATCH	/api/drivers/{id}	Drivers	public	patchDriverById
+PATCH	/api/excelTemplates/{id}	Subscriptions	public	patchExcelTemplate
+PATCH	/api/explorer/chats/{chatId}	Explorer	internal	modifyChat
+PATCH	/api/explorer/chats/{chatId}/messages/{messageId}	Explorer	internal	updateQuestion
+PATCH	/api/flows/{id}	Flows	public	patchFlow
+PATCH	/api/historyList/{messageId}	History List	public	updateHistoryListMessage
+PATCH	/api/iams/{id}	IAM	internal	updateIam
+PATCH	/api/ingestionservice/api/insightCards/{id}	Insight Engine - Insight Engine - Insight Engine - Insight Engine - Insights	internal	patchInsightCard
+PATCH	/api/insight/{path}	Insight Engine	internal	insightServicePatch
+PATCH	/api/iserver/dataservice/configurations	System Administration	internal	patchDataserviceConfigurations
+PATCH	/api/iserver/fences/{name}	System Administration	public	updateFence
+PATCH	/api/iserver/ldap/configuration	System Administration	public	updateConfig_2
+PATCH	/api/iserver/telemetryProducer/{projectId}	System Administration	public	updateTelemetryProducerDataForSingleProject
+PATCH	/api/iserver/vaults/{id}	Vault Connection Management	public	updateVault
+PATCH	/api/iserver/vaults/{id}/test	Vault Connection Management	public	testUpdatedVault
+PATCH	/api/iserverNative/mdxDataSources/{mdxDataSourceId}/catalog	MDX Cube Catalog	internal	MDXCatalogPATCH
+PATCH	/api/languages/{id}	Languages	public	updateLanguage
+PATCH	/api/languages/{id}/formattingSettings	Languages	public	updateFormattingSettings
+PATCH	/api/library/bookmarks/favorites	Library	internal	updateBookmarksFavorites
+PATCH	/api/library/dataModels/favorites	Library	internal	updateDataModelFavorites
+PATCH	/api/library/favorites/datasources	Library	internal	updateFavoritesOfDatasources
+PATCH	/api/library/hyperCards/favorites	Library	internal	updateHyperCardFavorites
+PATCH	/api/library/shortcutGroups	Library	internal	updateGroupItems
+PATCH	/api/library/shortcutGroups/favorites	Library	internal	updatePartialShortcutGroup
+PATCH	/api/library/shortcutGroups/{id}	Library	internal	updatePartialShortcutGroup_1
+PATCH	/api/library/snapshots/favorites	Library	internal	updateViewsFavorites
+PATCH	/api/library/{id}	Library	public	modifyRecipients
+PATCH	/api/license/iServer/nodes/{nodeName}	License	public	updateLicense
+PATCH	/api/license/iServer/nodes/{nodeName}/activation	License	public	updateLicenseActivation
+PATCH	/api/mdxDataSources/{mdxDataSourceId}/cubes/{cubeId}	MDX Cube Catalog	public	alterMdxCube
+PATCH	/api/migrationGroups/{migrationGroupId}	Migration Groups	public	updateMigration
+PATCH	/api/migrationGroups/{migrationGroupId}/certification	Migration Groups	public	certifyMigrationGroup
+PATCH	/api/migrations/{migrationId}	Migrations	public	updateMigration_1
+PATCH	/api/migrations/{migrationId}/packageInfo/certification	Migrations	public	certifyMigrationPackage
+PATCH	/api/model/attributes/{attributeId}	Attributes	public	ms-updateAttribute
+PATCH	/api/model/dataModels/{dataModelId}	Data Models	public	ms-updateDataModel
+PATCH	/api/model/dataModels/{dataModelId}/attributes/{attributeId}	Data Models	public	ms-patchDataModelAttribute
+PATCH	/api/model/dataModels/{dataModelId}/externalDataModels/{externalDataModelId}	Data Models	public	ms-patchExternalDataModel
+PATCH	/api/model/dataModels/{dataModelId}/externalDataModels/{externalDataModelId}/objects/{objectId}	Data Models	public	ms-patchExternalDataModelObject
+PATCH	/api/model/dataModels/{dataModelId}/factMetrics/{factMetricId}	Data Models	public	ms-patchDataModelFactMetric
+PATCH	/api/model/dataModels/{dataModelId}/folders/{folderId}	Data Models	public	ms-updateDataModelFolder
+PATCH	/api/model/dataModels/{dataModelId}/objects/{objectId}/acl	Data Models	public	ms-updateDataModelObjectAcl
+PATCH	/api/model/dataModels/{dataModelId}/objects/{objectId}/translations	Data Models	public	ms-updateDataModelObjectTranslations
+PATCH	/api/model/dataModels/{dataModelId}/tables/{tableId}	Data Models	public	ms-patchDataModelTable
+PATCH	/api/model/hierarchies/{hierarchyId}	User Hierarchies	public	ms-updateHiearchy
+PATCH	/api/model/tables/{tableId}	Tables	public	ms-patchTableDetails
+PATCH	/api/model/timezones/{timezoneId}	Timezones	public	ms-patchTimezone
+PATCH	/api/model/transformations/{transformationId}	Transformations	public	ms-updateTransformation
+PATCH	/api/monitors/caches/contents	Monitors	public	alterContentCache
+PATCH	/api/monitors/caches/cubes/{id}	Monitors	public	alterCubeAction
+PATCH	/api/monitors/iServer/nodes/{nodeName}/projects/{projectId}	Monitors	public	updateProjectStatus
+PATCH	/api/monitors/projects/status	Monitors	public	updateProjectStatusOnAllNodes
+PATCH	/api/mstrServices/library/storage	System Administration	public	updateStorageDetail_1
+PATCH	/api/mstrServices/searchEngine/indices/{projectId}	System Administration	public	updateSearchIndex
+PATCH	/api/multitenant/tenant/{tenantId}/settings	Multi Tenant	public	updateTenantSettings
+PATCH	/api/multitenant/tenant/{tenantId}/status	Multi Tenant	public	toggleTenant
+PATCH	/api/multitenant/tenant/{tenantId}/suffix	Multi Tenant	public	updateTenantSuffix
+PATCH	/api/nuggets/{id}	Agent	internal	modifyNuggets
+PATCH	/api/objects/ownership	Object Management	internal	bulkUpdateObjectOwnerAndAcl
+PATCH	/api/objects/{type}/{id}/translations	Object Management	public	updateObjectsTranslation
+PATCH	/api/preferences/usergroup/{userGroupId}/locale	Preferences	public	setUserGroupPreference
+PATCH	/api/preferences/webpreferences/currentuser	Preferences	public	applyCurrentUserWebPreferences
+PATCH	/api/preferences/webpreferences/currentuser/project/{projectId}	Preferences	public	applyCurrentUserProjectWebPreferences
+PATCH	/api/preferences/webpreferences/project/{projectId}	Preferences	public	applyProjectWebPreferences
+PATCH	/api/preferences/webpreferences/user/{userId}	Preferences	public	applyUserWebPreferences
+PATCH	/api/preferences/webpreferences/user/{userId}/project/{projectId}	Preferences	public	applyUserProjectWebPreferences
+PATCH	/api/projects/settings/onStartup	Projects	public	patchProjectLoadSettings
+PATCH	/api/projects/{id}/datasources	Datasource Management	public	updateProjectDatasources
+PATCH	/api/projects/{id}/languages	Projects	public	updateProjectLanguageSettings
+PATCH	/api/projects/{projectId}	Projects	public	updateProject
+PATCH	/api/projects/{projectId}/properties/cubes	Projects	internal	patchCubesProperties
+PATCH	/api/projects/{projectId}/settings/engine	Projects	public	patchAnalyticalEngineVersionProperties
+PATCH	/api/projects/{projectId}/statusMessage	Projects	public	updateProjectStatusMessage
+PATCH	/api/prompts/{promptId}/personalAnswers/{id}	Prompts	public	updatePromptAnswers
+PATCH	/api/questions	Agent	internal	updateQuestions
+PATCH	/api/questions/{questionId}	Agent	internal	updateQuestion_1
+PATCH	/api/recommendations/objects/{objectId}	Recommendations	internal	modifyObject
+PATCH	/api/runtimes/{id}	Runtimes	public	modifyScriptRuntime
+PATCH	/api/scim/v2/Groups/{id}	SCIM	public	patch
+PATCH	/api/scim/v2/Users/{id}	SCIM	public	patch_1
+PATCH	/api/scopeFilters/{id}/folders	Scope Filters	public	updateScopeFilterFolders
+PATCH	/api/searchObjects/{searchObjectId}	Browsing	public	updateSearchObject
+PATCH	/api/securityFilters/{id}/members	Security Filters	public	updatePartialSecurityFilter_1
+PATCH	/api/securityRoles/{id}	Security Roles	public	updatePartialSecurityRole
+PATCH	/api/securityRoles/{id}/members	Security Roles	public	updateMembersSecurityRole
+PATCH	/api/shortcuts/{shortcutId}	Library	public	updateShortcutInfo
+PATCH	/api/subscriptions/images/{id}	Subscriptions	public	patchImage
+PATCH	/api/subscriptions/owner	Subscriptions	public	batchChangeSubscriptionOwner
+PATCH	/api/subscriptions/{id}	Subscriptions	public	patchSubscription
+PATCH	/api/subscriptions/{id}/owner	Subscriptions	public	changeSubscriptionOwner
+PATCH	/api/testCenters/settings	Test Center Settings	public	updateSettings
+PATCH	/api/usergroups/{id}	User Management	public	updatePartialUser_1
+PATCH	/api/usergroups/{id}/settings	User Management	public	patchUserGroupSettings
+PATCH	/api/users/{id}	User Management	public	updatePartialUser
+PATCH	/api/users/{id}/settings	User Management	public	patchUserSettings
+PATCH	/api/users/{userId}/quota	User Management	public	updateUserQuota
+PATCH	/api/v2/bots/{botId}	Agent	internal	modifyBot
+PATCH	/api/v2/bots/{botId}/caches/questionGroups	Agent	internal	modifyGroup
+PATCH	/api/v2/bots/{botId}/caches/questionGroups/{groupId}	Agent	internal	modifyGroup_1
+PATCH	/api/v2/bots/{botId}/chatGroups	Agent	internal	modifyChatGroup
+PATCH	/api/v2/bots/{botId}/chats/{chatId}	Agent	internal	modifyChat_2
+PATCH	/api/v2/cubes/{cubeId}/instances/{instanceId}/parameters	Cubes	public	setMosaicParameterValues
+PATCH	/api/v2/iserver/fences/{id}	System Administration	public	updateFence_1
+PATCH	/api/v2/iserver/settings	System Administration	public	setIserverSettings
+PATCH	/api/v2/monitors/caches/contents	Monitors	public	alterContentCache_1
+PATCH	/api/v2/projects/setPlatformAnalytics	Projects	public	setProjectAsPlatformAnalytics
+PATCH	/api/v2/projects/{projectId}/settings	Projects	public	setServerSettings_2
+PATCH	/api/webSettings/trustRelationships	System Administration	public	manageTrustRelationships
+PATCH	/api/{path}	(untagged)	internal	patchMultipart
+PATCH	/api/{service}/{path}	Model Server	internal	modelServicePatch
+POST	/api/admin/aiServerSettings/{path}	System Administration	internal	aiProxyPostApi
+POST	/api/admin/collabServerSettings/{path}	System Administration	internal	collaborationProxyPostApi_1
+POST	/api/admin/mstrClients/auth/oidc/iams	System Administration	internal	create_1
+POST	/api/admin/mstrClients/library/configs	Client Configurations	internal	createClientConfig
+POST	/api/admin/mstrServices/mosaic/keytab	Mosaic	public	uploadKeytab
+POST	/api/admin/mstrServices/mosaic/settings/commit	Mosaic	public	commitSettings
+POST	/api/admin/mstrServices/mosaic/settings/stage	Mosaic	public	saveDraft
+POST	/api/admin/restServerSettings/aiServer/connectionTest	System Administration	public	createAiServerConnectionTest
+POST	/api/admin/restServerSettings/collaboration/connectionTest	System Administration	public	createCollaborationConnectionTest
+POST	/api/admin/restServerSettings/iServer/connectionTest	System Administration	public	createIServerConnectionTest
+POST	/api/admin/restServerSettings/iServer/trustRelationship	System Administration	public	createIServerTrustStoreRelationship_1
+POST	/api/aiservice/chats/dossier/reviseVisualizationType	(untagged)	internal	getVisualizationType
+POST	/api/applications	Applications	public	createApplication
+POST	/api/auth/admin/login	Authentication	internal	createAdminSession
+POST	/api/auth/apiTokens	Authentication	public	createApiToken
+POST	/api/auth/delegate	Authentication	public	sessionPost_1
+POST	/api/auth/identityToken	Authentication	public	createIdentityToken
+POST	/api/auth/login	Authentication	public	postLogin
+POST	/api/auth/logout	Authentication	public	postLogout
+POST	/api/auth/oidc/token	Authentication	public	oidcTokenLogin
+POST	/api/autoExpert/intake	AutoExpert	public	createCase
+POST	/api/bookmarks	Library	public	createBookmark
+POST	/api/bots/{botId}/instances	Auto Bots	public	createInstance
+POST	/api/bots/{botId}/instances/{instanceId}/questions	Auto Bots	public	postQuestion
+POST	/api/bots/{botId}/instances/{instanceId}/suggestions	Auto Bots	public	createSuggestions
+POST	/api/bots/{botId}/instances/{instanceId}/topics	Auto Bots	public	createTopics
+POST	/api/changeJournal	Change Journal	public	createChangeJournalSearch
+POST	/api/chats	Auto Bots	internal	createChat_1
+POST	/api/chats/{chatId}/categories	Auto Bots	internal	createCategories
+POST	/api/chats/{chatId}/messages	Auto Bots	internal	postMessage
+POST	/api/conceptGroups	Ontology	internal	createConceptGroup
+POST	/api/concepts	Ontology	internal	createConcept
+POST	/api/config/mobile	Configuration	internal	mobileConfigPost
+POST	/api/configurations/mcsTrial/extension	Configurations	internal	extendMcsTrial
+POST	/api/contactGroups	Contact Groups	public	createContactGroup
+POST	/api/contactGroups/query	Contact Groups	public	searchContactGroups
+POST	/api/contacts	Contacts	public	createContact
+POST	/api/contacts/query	Contacts	public	searchContacts
+POST	/api/contentBundles	Content Bundles	public	createContentBundle
+POST	/api/contentGroups	Content Groups	public	createContentGroup
+POST	/api/conversations	Agent	internal	createBot_1
+POST	/api/cubes/aiCubesTables	Cubes	internal	getCubeTables
+POST	/api/cubes/dumpcubes	Cubes	public	dumpCubes
+POST	/api/cubes/retrieve	Cubes	internal	getCubeCaches
+POST	/api/cubes/{cubeId}	Cubes	internal	publishCube
+POST	/api/cubes/{cubeId}/instances	Cubes	public	createCubeInstance
+POST	/api/dashboards	Dashboards	public	importDashboard
+POST	/api/dashboards/datasetExecution	Dashboards	public	datasetExecution
+POST	/api/dashboards/json	Dashboards	public	createDashboard
+POST	/api/dashboards/{dashboardId}/instances/{instanceId}/datasets/objects	Dashboards	internal	postDashboardDatasetObjects
+POST	/api/dashboards/{dashboardId}/instances/{instanceId}/datasets/{datasetId}/instances/{datasetInstanceId}/index	Dashboards	internal	postDashboardDatasetIndexRequest
+POST	/api/dashboards/{dashboardId}/instances/{instanceId}/manipulations	Dashboards	internal	postDashboardManipulations
+POST	/api/dataModels/{dataModelId}/instances	Data Models	public	createDataModelInstance
+POST	/api/dataModels/{dataModelId}/publish	Data Models	public	publishDataModel
+POST	/api/dataServer/workspaces	Workspaces	public	ms-postWorkspace
+POST	/api/dataServer/workspaces/{workspaceId}/dataSources	Data Server	internal	syncDataSource
+POST	/api/dataServer/workspaces/{workspaceId}/pipelines	Workspaces	public	ms-createPipeline
+POST	/api/dataServer/workspaces/{workspaceId}/pipelines/{pipelineId}/refresh	Workspaces	public	ms-refreshPipeline
+POST	/api/dataServer/workspaces/{workspaceId}/pipelines/{pipelineId}/tables	Workspaces	public	ms-createDataServerTable
+POST	/api/datamarts/{dataMartId}/instances/{instanceId}/execution/jobs	Datamarts	public	execute
+POST	/api/datamarts/{dataMartId}/instances/{instanceId}/preview/jobs	Datamarts	internal	requestPreviewData
+POST	/api/datamarts/{dataMartId}/instances/{instanceId}/rePrompts	Datamarts	internal	rePrompt
+POST	/api/datasets	Datasets	public	createDICube
+POST	/api/datasets/files	Datasets	public	FileInvoker
+POST	/api/datasets/models	Datasets	public	createTable
+POST	/api/datasets/tasks	Datasets	public	DITaskInvoker
+POST	/api/datasets/{datasetId}	Datasets	internal	publishCube_1
+POST	/api/datasets/{datasetId}/instances/{instanceId}	Datasets	internal	saveAsDataset
+POST	/api/datasets/{datasetId}/instances/{instanceId}/refresh	Datasets	internal	refreshDataset
+POST	/api/datasets/{datasetId}/instances/{instanceId}/refreshPolicy	Datasets	internal	editEmmaTable
+POST	/api/datasets/{datasetId}/instances/{instanceId}/tables/{tableId}	Datasets	internal	uploadDataFile
+POST	/api/datasets/{datasetId}/instances/{instanceId}/validate	Datasets	internal	validateTables
+POST	/api/datasets/{datasetId}/uploadSessions	Datasets	public	pushApiV2CreateUploadSession
+POST	/api/datasets/{datasetId}/uploadSessions/{uploadSessionId}/publish	Datasets	public	pushApiV2Publish
+POST	/api/datasources	Datasource Management	public	createDatasource
+POST	/api/datasources/connections	Datasource Management	public	createDatabaseConnection
+POST	/api/datasources/connections/test	Datasource Management	public	testDatabaseConnectionWithBody
+POST	/api/datasources/connections/{id}/conversion	Datasource Management	public	datasourceConnectionConversion
+POST	/api/datasources/logins	Datasource Management	public	createDatasourceLogin
+POST	/api/datasources/mappings	Datasource Management	public	createDatabaseMapping
+POST	/api/datasources/mappings/bulk	Datasource Management	internal	createDatabaseMappingBatch
+POST	/api/datasources/scripts	Datasource Management	public	createDatasourceScript
+POST	/api/datasources/wallet	Datasource Management	public	uploadWallet
+POST	/api/datasources/{id}/aidescription	Datasource Management	internal	updateAiDescription
+POST	/api/datasources/{id}/catalog/tableExtraInfos/retrieve	Datasource Management	internal	gettableExtraInfos
+POST	/api/datasources/{id}/conversion	Datasource Management	public	datasourceConversion
+POST	/api/datasources/{id}/sqlQuery	Datasource Management	internal	getSqlPreview
+POST	/api/datasources/{id}/sqlexecution	Datasource Management	internal	postSqlExecution
+POST	/api/datasources/{id}/test	Datasource Management	public	testEmbeddedConnection
+POST	/api/dbConnections	Datasource Management	internal	createDBConnection
+POST	/api/dbLogins	Datasource Management	internal	createDbLogin
+POST	/api/dbRoles	Datasource Management	internal	createDBRole
+POST	/api/deviceRegistrations	Devices	internal	registerDevice
+POST	/api/documentation	Documentation	public	createDocumentation
+POST	/api/documentationDefinition	Documentation Definition	public	createDocumentationDefinition
+POST	/api/documentationDefinitions/refreshTenantIds	Documentation Definition	public	refreshTenantIds
+POST	/api/documents/{id}/instances	Dashboards(Dossiers) and Documents	public	createDocumentInstance
+POST	/api/documents/{id}/instances/{instanceId}/copy	Dashboards(Dossiers) and Documents	internal	createDocumentInstanceCopy
+POST	/api/documents/{id}/instances/{instanceId}/csv	Dashboards(Dossiers) and Documents	internal	exportDashboardToCsv
+POST	/api/documents/{id}/instances/{instanceId}/excel	Dashboards(Dossiers) and Documents	public	exportDocumentToExcel
+POST	/api/documents/{id}/instances/{instanceId}/layouts/{layoutKey}/visualizations/{visualizationKey}/query	Dashboards(Dossiers) and Documents	internal	getVisualizationResultWithGroupByElements
+POST	/api/documents/{id}/instances/{instanceId}/manipulations	Dashboards(Dossiers) and Documents	internal	applyDocumentManipulation
+POST	/api/documents/{id}/instances/{instanceId}/mstr	Dashboards(Dossiers) and Documents	public	exportDocumentToMSTR
+POST	/api/documents/{id}/instances/{instanceId}/pdf	Dashboards(Dossiers) and Documents	public	exportDashboardToPdf
+POST	/api/documents/{id}/instances/{instanceId}/promptsAnswers	Dashboards(Dossiers) and Documents	public	answerPrompts_1
+POST	/api/documents/{id}/instances/{instanceId}/rePrompt	Dashboards(Dossiers) and Documents	public	rePrompt_1
+POST	/api/documents/{id}/instances/{instanceId}/save	Dashboards(Dossiers) and Documents	public	saveDocument
+POST	/api/documents/{id}/instances/{instanceId}/saveAs	Dashboards(Dossiers) and Documents	public	documentSaveAs
+POST	/api/documents/{id}/instances/{instanceId}/txt	Dashboards(Dossiers) and Documents	internal	exportDashboardToTxt
+POST	/api/documents/{id}/instances/{instanceId}/visualizations/{nodeKey}/csv	Dashboards(Dossiers) and Documents	public	exportDocumentToCSV
+POST	/api/documents/{id}/instances/{instanceId}/visualizations/{nodeKey}/pdf	Dashboards(Dossiers) and Documents	public	exportSingleVisualization
+POST	/api/documents/{id}/instances/{instanceId}/visualizations/{nodeKey}/txt	Dashboards(Dossiers) and Documents	internal	exportDocumentToTxt
+POST	/api/dossier/{dossierId}/instance	Dashboard(Dossier)_ToBeDeprecated_Use_Dashboards(Dossiers)	public	createDossierInstance
+POST	/api/dossier/{dossierId}/instance/{dossierInstanceId}/page/{pageKey}/instance	Dashboard(Dossier)_ToBeDeprecated_Use_Dashboards(Dossiers)	public	createDossierPageInstance
+POST	/api/dossier/{dossierId}/instance/{dossierInstanceId}/page/{pageKey}/instance/{pageInstanceId}	Dashboard(Dossier)_ToBeDeprecated_Use_Dashboards(Dossiers)	public	getDossierPageInstanceDetailsV2
+POST	/api/dossier/{dossierId}/instance/{dossierInstanceId}/page/{pageKey}/instance/{pageInstanceId}/dataset/{datasetId}	Dashboard(Dossier)_ToBeDeprecated_Use_Dashboards(Dossiers)	public	getDossierPageDatasetFilterElements
+POST	/api/dossier/{dossierId}/instance/{dossierInstanceId}/sharedInstance	Dashboard(Dossier)_ToBeDeprecated_Use_Dashboards(Dossiers)	public	CreateDossierSharedInstance
+POST	/api/dossierPersonalView	Dashboard(Dossier) Personal View	public	CreateDossierPersonalView
+POST	/api/dossiers/draft/instances	Dashboards(Dossiers) and Documents	public	createDraftDossierInstance
+POST	/api/dossiers/instances	Dashboards(Dossiers) and Documents	public	createDossierInstance_1
+POST	/api/dossiers/{dossierId}/executionResult	Dashboards(Dossiers) and Documents	internal	getDossierExecutionResult
+POST	/api/dossiers/{dossierId}/instance/{dossierInstanceId}/binaryCache	Dashboards(Dossiers) and Documents	internal	createDossierBinaryCache
+POST	/api/dossiers/{dossierId}/instance/{dossierInstanceId}/jsonCache	Dashboards(Dossiers) and Documents	internal	createDossierJsonCache
+POST	/api/dossiers/{dossierId}/instances	Dashboards(Dossiers) and Documents	public	createDossierInstance_2
+POST	/api/dossiers/{dossierId}/instances/{instanceId}/answerPrompts	Dashboards(Dossiers) and Documents	internal	answerPrompt
+POST	/api/dynamicRecipientLists	Subscriptions	public	createDynamicRecipientList
+POST	/api/elements/results	Elements	internal	searchElements
+POST	/api/elements/status	Elements	internal	getElementsIndexStatus
+POST	/api/emails	Emails	public	sendEmails
+POST	/api/events	Events	public	createEvent
+POST	/api/events/{id}/trigger	Events	public	triggerEvent
+POST	/api/excelTemplates	Subscriptions	public	createExcelTemplate
+POST	/api/explorer/chats	Explorer	internal	createChat
+POST	/api/explorer/chats/{chatId}/files	Explorer	internal	createChatFile
+POST	/api/explorer/chats/{chatId}/messages	Explorer	public	createQuestion
+POST	/api/explorer/chats/{chatId}/messages/{messageId}/fulldata	Explorer	internal	exportMessageFullData
+POST	/api/explorer/mcp/servers	Explorer	public	createServer
+POST	/api/explorer/mcp/servers/{name}/connect	Explorer	public	connect
+POST	/api/explorer/mcp/servers/{name}/disconnect	Explorer	public	disconnect
+POST	/api/explorer/mcp/servers/{name}/jsonrpc	Explorer	public	jsonRpc
+POST	/api/flows	Flows	public	createFlow
+POST	/api/flows/conversion	Flows	internal	convertWorkflowToPythonFlow
+POST	/api/flows/conversion/review	Flows	internal	reviewWorkflowPythonFlowConversion
+POST	/api/folders	Browsing	public	createFolder
+POST	/api/git/{gitIntegrationId}/backup	Git Service	public	backupObjects
+POST	/api/git/{gitIntegrationId}/history/retrieve	Git Service	public	getObjectsHistory
+POST	/api/git/{gitIntegrationId}/restore	Git Service	public	restoreObjects
+POST	/api/hangDetector/status	HangDetector	internal	postHangDetectorStatus
+POST	/api/hierarchies/{hierarchyId}/dataExplorer	Hierarchies	public	getDataExplorer
+POST	/api/historyList	History List	public	sendToHistoryList
+POST	/api/historyList/deleteMessages	History List	internal	bulkDeleteHistoryList
+POST	/api/historyList/updateMessages	History List	internal	bulkModifyHistoryListStatuses
+POST	/api/hyper/cards/{cardId}/attributes/{attributeId}/elements/search	Hyper	internal	searchAttributeElements
+POST	/api/hyper/cards/{cardId}/cardInstances	Hyper	internal	createHyperReportInstanceForCardRenderer
+POST	/api/hyper/cards/{cardId}/instances	Hyper	internal	createHyperCardReportInstance
+POST	/api/iams	IAM	internal	createIam
+POST	/api/incrementalRefresh/{irrId}	Cubes	public	executeIrr
+POST	/api/incrementalRefresh/{irrId}/instances/{instanceId}/data	Cubes	public	requestIrrPreviewData
+POST	/api/insight/{path}	Insight Engine	internal	insightServicePost
+POST	/api/iserver/dataGateway/client/clusters	System Administration	internal	postDataGatewayClientsClusters
+POST	/api/iserver/dataGateway/ports	System Administration	internal	postDataGatewayServicePort
+POST	/api/iserver/fences	System Administration	public	createFence
+POST	/api/iserver/ldap/certificate	System Administration	public	uploadCertificate
+POST	/api/iserver/ldap/configuration	System Administration	public	createConfig
+POST	/api/iserver/ldap/import	System Administration	public	startBatchImport
+POST	/api/iserver/metadata/commands	System Administration	public	postMetadataCommandProxyApi
+POST	/api/iserver/urlscan/import/jobs	URL Scan	internal	createUser
+POST	/api/iserver/vaults	Vault Connection Management	public	createVault
+POST	/api/iserver/vaults/test	Vault Connection Management	public	validateVault
+POST	/api/iserver/vaults/{id}/secrets/fetch	Vault Connection Management	public	getVaultSecrets
+POST	/api/iserverNative/mdxDataSources/{mdxDataSourceId}/catalog	MDX Cube Catalog	internal	MDXCatalogPOST
+POST	/api/iserverNative/mdxDataSources/{mdxDataSourceId}/catalog/cubePreview	MDX Cube Catalog	internal	MDXCatalogCubePreviewPOST
+POST	/api/iserverNative/mdxDataSources/{mdxDataSourceId}/catalog/instance	MDX Cube Catalog	internal	MDXCatalogInstancePOST
+POST	/api/iserverNative/mdxDataSources/{mdxDataSourceId}/catalog/instance/save	MDX Cube Catalog	internal	MDXCatalogInstanceSavePOST
+POST	/api/iserverNative/urlscan/jobs	URL Scan	internal	UrlscanJobsPOST
+POST	/api/languages	Languages	public	createLanguage
+POST	/api/learnings/delete	Auto Bots	internal	bulkDeleteLearnings
+POST	/api/library	Library	public	publishObject
+POST	/api/library/aiStorage	AI Storage	internal	writeFile
+POST	/api/library/shortcutGroups	Library	internal	createCustomGroup
+POST	/api/license/iServer/audit	License	public	checkLicenseAudit
+POST	/api/license/iServer/compliance	License	public	checkLicenseCompliance
+POST	/api/logs	Misc	internal	clientSideLogger
+POST	/api/logs/tickets	Misc	internal	createLogTicket
+POST	/api/maps/customShape/areaLayers	Maps	internal	createAreaLayer
+POST	/api/maps/customShape/kmlFiles	Maps	internal	uploadKmlFile
+POST	/api/maps/customShape/shapes	Maps	internal	createGeoShape
+POST	/api/maps/mapbox/boundaries/query	Maps	internal	getMapBoxGeoId
+POST	/api/metadataSearches/results	Browsing	public	createSearch
+POST	/api/migrationGroups	Migration Groups	public	createMigrationGroup
+POST	/api/migrations	Migrations	public	createMigration
+POST	/api/model/attributes	Attributes	public	ms-createAttribute
+POST	/api/model/calendars	Calendars	public	ms-createCalendar
+POST	/api/model/changesets	Changesets	public	ms-createChangeset
+POST	/api/model/changesets/{changesetId}/commit	Changesets	public	ms-commitChangeset
+POST	/api/model/consolidations	Consolidations	public	ms-postConsolidation
+POST	/api/model/cubes	Cubes	public	ms-createCube
+POST	/api/model/customGroups	Custom Groups	public	ms-postCustomGroup
+POST	/api/model/dataModels	Data Models	public	ms-postDataModel
+POST	/api/model/dataModels/{dataModelId}/attributes	Data Models	public	ms-postDataModelAttribute
+POST	/api/model/dataModels/{dataModelId}/export	Data Models	public	ms-exportDataModel
+POST	/api/model/dataModels/{dataModelId}/externalDataModels	Data Models	public	ms-postExternalDataModel
+POST	/api/model/dataModels/{dataModelId}/externalDataModels/refresh	Data Models	public	ms-refreshExternalDataModels
+POST	/api/model/dataModels/{dataModelId}/factMetrics	Data Models	public	ms-postDataModelFactMetric
+POST	/api/model/dataModels/{dataModelId}/folders	Data Models	public	ms-createDataModelFolder
+POST	/api/model/dataModels/{dataModelId}/links	Data Models	public	ms-postDataModelLink
+POST	/api/model/dataModels/{dataModelId}/metrics	Data Models	public	ms-postDataModelMetric
+POST	/api/model/dataModels/{dataModelId}/metrics/{metricId}/embeddedObjects	Data Models	public	ms-postDataModelMetricEmbeddedObject
+POST	/api/model/dataModels/{dataModelId}/restore	Data Models	public	ms-restoreDataModel
+POST	/api/model/dataModels/{dataModelId}/saveAs	Data Models	public	ms-saveAsDataModel
+POST	/api/model/dataModels/{dataModelId}/securityFilters	Data Models	public	ms-postDataModelSecurityFilter
+POST	/api/model/dataModels/{dataModelId}/tables	Data Models	public	ms-addDataModelTable
+POST	/api/model/datamarts	Datamarts	public	ms-createDatamart
+POST	/api/model/datamarts/{datamartId}/instances	Datamarts	public	ms-createDatamartInstance
+POST	/api/model/datamarts/{datamartId}/instances/save	Datamarts	public	ms-saveDatamartInstance
+POST	/api/model/datamarts/{datamartId}/instances/saveAs	Datamarts	public	ms-saveAsDatamartInstance
+POST	/api/model/derivedElements	Derived Elements	public	ms-postDerivedElement
+POST	/api/model/drillMaps	Drill Maps	public	ms-postDrillMap
+POST	/api/model/facts	Facts	public	ms-postFact
+POST	/api/model/filters	Filters	public	ms-postFilter
+POST	/api/model/formulas	Base Formulas	public	ms-postFormula
+POST	/api/model/hierarchies	User Hierarchies	public	ms-createHierarchy
+POST	/api/model/incrementalRefresh	Cubes	public	ms-createIncrementalRefreshReport
+POST	/api/model/metrics	Metrics	public	ms-postMetric
+POST	/api/model/prompts	Prompts	public	ms-postPrompt
+POST	/api/model/reports	Reports	public	ms-postReport
+POST	/api/model/reports/{reportId}/derivedElements	Reports	public	ms-postReportDerivedElement
+POST	/api/model/reports/{reportId}/instances	Reports	public	ms-createReportInstance
+POST	/api/model/reports/{reportId}/instances/save	Reports	public	ms-saveReportInstance
+POST	/api/model/reports/{reportId}/instances/saveAs	Reports	public	ms-saveAsReportInstance
+POST	/api/model/schema/lock	Schema	public	ms-postLock
+POST	/api/model/schema/reload	Schema	public	ms-schemaReload
+POST	/api/model/scopeFilters	Scope Filters	public	ms-postScopeFilter
+POST	/api/model/securityFilters	Security Filters	public	ms-postSecurityFilter
+POST	/api/model/subtotals	Subtotals	public	ms-postSubtotal
+POST	/api/model/tables	Tables	public	ms-addTable
+POST	/api/model/tables/{tableId}/physicalTable/refresh	Tables	public	ms-refreshPhysicalTable
+POST	/api/model/timezones	Timezones	public	ms-postTimezone
+POST	/api/model/transactionReports	Transaction Reports	public	ms-postTransactionReport
+POST	/api/model/transformations	Transformations	public	ms-createTransformation
+POST	/api/monitors/caches/cubes/manipulations/statuses	Monitors	public	getMultiManipulationsStatus
+POST	/api/monitors/cancelJobs	Monitors	public	bulkDeleteJobs
+POST	/api/monitors/deleteUserConnections	Monitors	internal	bulkDeleteUserConnectionOnSpecificClusterNode
+POST	/api/mstrAppConfig/search	Misc	internal	mstrAppConfigSearch
+POST	/api/mstrClients/auth/oidc/iams	System Administration	internal	create
+POST	/api/mstrClients/auth/saml/registrations	System Administration	internal	createRegistration
+POST	/api/mstrServices/collabServerSettings/{path}	System Administration	internal	collaborationProxyPostApi
+POST	/api/mstrServices/library/iServer/trustRelationship	System Administration	public	createIServerTrustStoreRelationship
+POST	/api/mstrServices/library/oauth2/secrets	System Administration	internal	generateClientSecret
+POST	/api/mstrServices/library/restart	System Administration	internal	restartLibraryServer
+POST	/api/mstrServices/library/scim/bearer	SCIM	internal	generateBearerToken
+POST	/api/mstrServices/library/security/trustedEnvironments	System Administration	internal	addTrustedEnvironments
+POST	/api/mstrServices/library/storage/sharedFileStore/files	Shared File Store	public	createSharedFileMeta
+POST	/api/mstrServices/library/storage/validation	System Administration	public	validateStorageDetail
+POST	/api/mstrServices/library/telemetryProducer/send	System Administration	internal	sendTelemetry
+POST	/api/mstrServices/searchEngine/indices/query	System Administration	public	listSearchIndicesWithProjectIds
+POST	/api/mstrServices/telemetryServer/connectionTest	System Administration	internal	runConnectionTest
+POST	/api/multitenant/tenant	Multi Tenant	public	createTenant
+POST	/api/multitenant/tenant/removeMembers	Multi Tenant	public	removeTenantMembers
+POST	/api/multitenant/tenant/{tenantId}/addMembers	Multi Tenant	public	addTenantMembers
+POST	/api/notifications	Notifications	internal	sendPushNotification
+POST	/api/nuggets	Agent	public	createNuggets
+POST	/api/nuggets/orphans	Auto Bots	public	getOrphans
+POST	/api/nuggets/status/query	Agent	internal	bulkGetNuggetsStatus
+POST	/api/nuggets/{id}/deleteRequest	Auto Bots	internal	bulkDeleteNuggets
+POST	/api/objects	Object Management	internal	createSearch_1
+POST	/api/objects/all/translations	Object Management	public	fetchTranslations
+POST	/api/objects/deleteConfigurationObjects	Object Management	internal	deleteConfigurationObjects
+POST	/api/objects/deleteObjects	Object Management	internal	bulkDeleteObjects
+POST	/api/objects/inspection	Object Management	internal	postObjectsInspectionJob
+POST	/api/objects/translations	Object Management	public	fetchTranslationsByObjects
+POST	/api/objects/{id}/copy	Object Management	public	copyObject
+POST	/api/objects/{id}/invite	Object Management	internal	invite
+POST	/api/objects/{id}/type/{type}/shortcuts	Object Management	public	creatShortcut
+POST	/api/ontology/vocabularies/fields/{fieldName}/values	Ontology	public	addValue
+POST	/api/openSemanticLayer/cubes/{cubeId}/metrics	Open Semantic Layer	internal	getCubeMetricInfo
+POST	/api/packages	Packages	public	createEmptyPackage
+POST	/api/packages/imports	Packages	public	create_2
+POST	/api/palettes	Palettes	public	createPalette
+POST	/api/pendo/metadata	Misc	internal	generatePendoMetadata
+POST	/api/privileges/bulkUpdate	Privilege Management	public	bulkUpdatePrivileges
+POST	/api/projectDuplications	Project Duplications	public	createDuplication
+POST	/api/projectDuplications/restoration	Project Duplications	public	triggerDuplicationByPackage
+POST	/api/projectDuplications/validations	Project Duplications	public	validateProjectDuplication
+POST	/api/projects	Projects	public	createProject
+POST	/api/projects/deleteUnusedManagedObjects	Projects	public	deleteUnusedManagedObjects
+POST	/api/projects/warehouseExecutionSettings/bulkRead	Projects	public	bulkReadWarehouseExecutionSettings
+POST	/api/projects/warehouseExecutionSettings/bulkWrite	Projects	public	bulkWriteWarehouseExecutionSettings
+POST	/api/prompts/{promptId}/personalAnswers	Prompts	public	createPromptAnswers
+POST	/api/questionSets	QuestionSet	internal	createQuestionSet
+POST	/api/questions	Agent	public	createQuestion_1
+POST	/api/questions/collections	Agent	public	createQuestions
+POST	/api/questions/suggestions	Agent	public	createSuggestions_1
+POST	/api/questions/withImage	Agent	public	createQuestionWithImage
+POST	/api/questions/{questionId}/fulldata	Agent	internal	exportFullData
+POST	/api/questions/{questionId}/transformsql	Agent	public	getTransformedSql
+POST	/api/recommendations	Recommendations	internal	postRecommendations
+POST	/api/recommendations/jobs/{jobId}/cancel	Recommendations	internal	cancelTrainingJob
+POST	/api/recommendations/objects/description	Recommendations	internal	updateObjectDescription
+POST	/api/recommendations/regenerateEmbeddings	Recommendations	internal	regenerateRecommendationEmbeddings
+POST	/api/reports	Reports	public	saveReport
+POST	/api/reports/{reportId}/bulkExport/transform	Reports	public	transformToBulkExport
+POST	/api/reports/{reportId}/instances	Reports	public	createReportInstance
+POST	/api/reports/{reportId}/instances/{instanceId}/drill	Reports	internal	createDrillInstance
+POST	/api/reports/{reportId}/instances/{instanceId}/excel	Reports	internal	exportReportToExcel
+POST	/api/reports/{reportId}/instances/{instanceId}/promptsAnswers	Reports	internal	answerPrompt_1
+POST	/api/runtimes	Runtimes	public	createScriptRuntime
+POST	/api/runtimes/{id}/warmup	Runtimes	internal	warmUpScriptRuntime
+POST	/api/schedules	Schedules	public	createSchedule
+POST	/api/schedules/results	Schedules	public	listSchedulesByContents
+POST	/api/scim/v2/Groups	SCIM	public	create_3
+POST	/api/scim/v2/Users	SCIM	public	create_4
+POST	/api/scripts	Scripts	public	createCommandManagerScript
+POST	/api/scripts/conversion	Scripts	public	convertCommandManagerScript
+POST	/api/scripts/conversion/bulk	Scripts	public	convertCommandManagerScriptsBulk
+POST	/api/scripts/evaluation	Scripts	public	evaluateCommandManagerScript
+POST	/api/scripts/{id}/evaluation	Scripts	public	evaluateCommandManagerScriptWithId
+POST	/api/scripts/{id}/variables/answers	Scripts	public	saveScriptVariablesAnswer
+POST	/api/searchObjects	Browsing	public	createSearchObject
+POST	/api/searchObjects/{searchObjectId}/translations	Browsing	public	fetchTranslationsBySearchObject
+POST	/api/searches/dependents/count	Browsing	public	getDependentCount
+POST	/api/searches/dependents/relationships/query	Browsing	public	getRelationshipUsedBy
+POST	/api/searches/documentContent	Browsing	internal	searchDocumentContent
+POST	/api/searches/library/shortcuts	Browsing	internal	getDocumentShortcutInfos
+POST	/api/searches/objects	Browsing	public	searchObjects
+POST	/api/searches/recommendation/icons	Browsing	internal	getKpiIcons
+POST	/api/searches/recommendation/models	Browsing	public	recommendModels
+POST	/api/searches/recommendation/models/attributeLinking	Browsing	public	getRecommendedModelAttributeLinking
+POST	/api/searches/subqueries	Browsing	internal	filterOnSubQueries
+POST	/api/securityRoles	Security Roles	public	createSecurityRole
+POST	/api/sessions	Authentication	internal	sessionPost
+POST	/api/subscriptions	Subscriptions	public	createSubscription
+POST	/api/subscriptions/images	Subscriptions	public	createImage
+POST	/api/subscriptions/query	Subscriptions	public	getSubscriptionsCrossProjects
+POST	/api/subscriptions/recipients/results	Subscriptions	public	getRecipientsSharedList
+POST	/api/subscriptions/{id}/send	Subscriptions	public	sendSubscription
+POST	/api/subscriptions/{subscriptionId}/content/{contentId}/instances	Subscriptions	public	createInstance_1
+POST	/api/tasks	Tasks	public	createTask
+POST	/api/tasks/{id}/activation	Tasks	public	activateTask
+POST	/api/tasks/{id}/trigger	Tasks	public	triggerTask
+POST	/api/teamsApp/messages	Microsoft Teams App	internal	collaborationProxyPostApi_2
+POST	/api/teamsApp/testConnection	Microsoft Teams App	internal	testConnection
+POST	/api/telemetry/admin/multitenantMetadata/enable	Telemetry	public	enableMultitenantMetadata
+POST	/api/telemetry/admin/restore	Telemetry	public	startRestore
+POST	/api/telemetry/objects/statistics	Telemetry	public	getObjectsStatistics
+POST	/api/telemetry/sentinel/replay/date-range	Telemetry	public	replayAnomalyDetectionByDateRange
+POST	/api/telemetry/sentinel/replay/instance/{instanceId}	Telemetry	public	replayAnomalyDetectionByInstanceId
+POST	/api/testCenter/files	Test Center - File Store	internal	createSharedFileMeta_1
+POST	/api/testCenters/integrityComparisons	Comparison Test (Test Center)	public	createIntegrityComparison
+POST	/api/testCenters/integrityComparisons/bulkDelete	Comparison Test (Test Center)	public	bulkDeleteIntegrityComparisons
+POST	/api/testCenters/integrityComparisons/comparisons/bulkDelete	Comparison Test (Test Center)	public	bulkDeleteIntegrityComparisonResults
+POST	/api/testCenters/integrityComparisons/{integrityComparisonId}/comparisons	Comparison Test (Test Center)	public	createIntegrityComparison_1
+POST	/api/testCenters/integrityComparisons/{integrityComparisonId}/comparisons/{comparisonId}/cancel	Comparison Test (Test Center)	public	cancelIntegrityTestBaseline_1
+POST	/api/testCenters/integrityComparisons/{integrityComparisonId}/comparisons/{comparisonId}/rename	Comparison Test (Test Center)	public	renameIntegrityComparison
+POST	/api/testCenters/integrityComparisons/{integrityComparisonId}/comparisons/{comparisonId}/resume	Comparison Test (Test Center)	public	resumeAbortedComparison
+POST	/api/testCenters/integrityTests	Baseline Test (Test Center)	public	createIntegrityTest
+POST	/api/testCenters/integrityTests/baselines/bulkDelete	Baseline Test (Test Center)	public	bulkDeleteIntegrityTestBaselines
+POST	/api/testCenters/integrityTests/bulkDelete	Baseline Test (Test Center)	public	bulkDeleteIntegrityTests
+POST	/api/testCenters/integrityTests/{integrityTestId}/baselines	Baseline Test (Test Center)	public	createIntegrityTestBaseline
+POST	/api/testCenters/integrityTests/{integrityTestId}/baselines/{baselineId}/cancel	Baseline Test (Test Center)	public	cancelIntegrityTestBaseline
+POST	/api/testCenters/integrityTests/{integrityTestId}/baselines/{baselineId}/rename	Baseline Test (Test Center)	public	renameIntegrityTestBaseline
+POST	/api/testCenters/integrityTests/{integrityTestId}/baselines/{baselineId}/resume	Baseline Test (Test Center)	public	resumeAbortedBaseline
+POST	/api/testCenters/integrityTests/{integrityTestId}/baselines/{baselineId}/storageSync	Baseline Test (Test Center)	public	syncIntegrityTestBaselineResult
+POST	/api/testCenters/storageSyncFiles/cleanUp	Storage Sync File (Test Center)	public	cleanUpStorageSyncFiles
+POST	/api/themes	Themes	public	createThemes
+POST	/api/themes/dossiers/{dossierId}/instances/{instanceId}/saveAs	Themes	public	saveThemes
+POST	/api/transmitters	Transmitters	public	createTransmitter
+POST	/api/usergroups	User Management	public	createUserGroup
+POST	/api/usergroups/integrityCheck/jobs	User Management	internal	startBulkCheck
+POST	/api/usergroups/integrityCheck/jobs/{jobId}/fix	User Management	internal	fixJob
+POST	/api/usergroups/{id}/integrityFix	User Management	internal	fixGroupIntegrity
+POST	/api/users	User Management	public	createUser_1
+POST	/api/users/changePassword	User Management	public	changePassword
+POST	/api/users/merge	User Management	public	mergeUsersAndGroups
+POST	/api/users/{id}/addresses	User Management	public	createNewAddress
+POST	/api/users/{id}/integrityFix	User Management	internal	fixUserIntegrity
+POST	/api/users/{userId}/profile	User Management	public	createUserProfile
+POST	/api/users/{userId}/systemprompts	User Management	public	updateSystemPrompts
+POST	/api/v2/applications	Applications	public	createApplication_1
+POST	/api/v2/auth/identityToken	Authentication	public	createIdentityTokenInReponseBody
+POST	/api/v2/bots	Agent	internal	createBot
+POST	/api/v2/bots/cubes/status	Agent	public	getCubeStatus_1
+POST	/api/v2/bots/descriptions	Agent	internal	getBulkDescriptions
+POST	/api/v2/bots/telemetry	Agent	internal	sendTelemetry_1
+POST	/api/v2/bots/{botId}/caches/questionGroups	Agent	internal	createQuestionGroups
+POST	/api/v2/bots/{botId}/caches/questionGroups/interpretation	Agent	internal	regenerateInterpretation
+POST	/api/v2/bots/{botId}/caches/questionGroups/{groupId}/suggest/sql	Agent	internal	suggestSql
+POST	/api/v2/bots/{botId}/caches/questionGroups/{groupId}/validate	Agent	internal	validateSql
+POST	/api/v2/bots/{botId}/caches/temp/check	Agent	public	checkTempCache
+POST	/api/v2/bots/{botId}/caches/temp/promote	Agent	public	promoteTempCache
+POST	/api/v2/bots/{botId}/chats	Agent	internal	createChat_2
+POST	/api/v2/bots/{botId}/chats/{chatId}/duplicate	Agent	internal	duplicateChat
+POST	/api/v2/bots/{botId}/copy	Agent	internal	copyBot
+POST	/api/v2/bots/{botId}/description	Agent	internal	postBotDesc
+POST	/api/v2/bots/{botId}/evaluationJobs	Agent	internal	createEvaluationJob
+POST	/api/v2/bots/{botId}/nerElements/searches	Agent	internal	getNerElements
+POST	/api/v2/bots/{botId}/nerIndexStatus/query	Agent	internal	queryNerIndexStatus
+POST	/api/v2/bots/{botId}/trainingjobs	Agent	internal	startTrainingJob
+POST	/api/v2/bots/{botId}/tuning/jobs	Agent	internal	createTuningJob
+POST	/api/v2/changeJournal	Change Journal	public	createChangeJournalSearch_1
+POST	/api/v2/cubes	Cubes	public	createCube
+POST	/api/v2/cubes/{cubeId}	Cubes	public	publishCube_2
+POST	/api/v2/cubes/{cubeId}/instances	Cubes	public	createCubeInstance_1
+POST	/api/v2/devices	Devices	public	createDevice
+POST	/api/v2/dossiers/{dossierId}/instances/{instanceId}/themes/{themeId}	Dashboards(Dossiers) and Documents	public	applyTheme
+POST	/api/v2/emails	Emails	public	sendEmails_1
+POST	/api/v2/historyList/bulk	History List	public	bulkSendToHistoryList
+POST	/api/v2/historyList/query	History List	internal	getHistoryListByIds
+POST	/api/v2/iserver/fences	System Administration	public	createFence_1
+POST	/api/v2/library	Library	public	publishObject_1
+POST	/api/v2/metadataSearches/results	Browsing	public	createSearch_2
+POST	/api/v2/monitors/cancelJobs	Monitors	public	bulkDeleteJobs_1
+POST	/api/v2/projects	Projects	public	createProject_1
+POST	/api/v2/reports/{reportId}/instances	Reports	public	createReportInstance_1
+POST	/api/v2/searches/results	Browsing	public	doQuickSearch_1
+POST	/api/v2/subscriptions/{id}/send	Subscriptions	public	sendSubscription_1
+POST	/api/v2/users/{userId}/addresses	User Management	public	createAddress
+POST	/api/workflows/files	Workflows	internal	createWorkflowFileMeta
+POST	/api/{path}	(untagged)	internal	postMultipart
+POST	/api/{service}/dataModels/osi/import	Model Server	internal	importDataModelFromOsi
+POST	/api/{service}/dataModels/{dataModelId}/export	Model Server	internal	exportDataModel
+POST	/api/{service}/dataModels/{dataModelId}/osi/export	Model Server	internal	exportDataModelToOsi
+POST	/api/{service}/dataModels/{dataModelId}/restore	Model Server	internal	restoreDataModel
+POST	/api/{service}/{path}	Model Server	internal	modelServicePost
+PUT	/api/admin/aiServerSettings/{path}	System Administration	internal	aiProxyPutApi
+PUT	/api/admin/collabServerSettings/{path}	System Administration	internal	collaborationProxyPutApi_1
+PUT	/api/admin/mstrClients/auth/oidc/iams/{id}	System Administration	internal	update_1
+PUT	/api/admin/mstrClients/auth/saml/idpmetadata	System Administration	internal	saveIdpMetadata_1
+PUT	/api/admin/mstrClients/auth/saml/spmetadata	System Administration	internal	createSpMetadata
+PUT	/api/admin/mstrClients/library/configs/{configID}	Client Configurations	internal	updateClientConfig
+PUT	/api/admin/mstrServices/library/orgDirectory/settings	System Administration	internal	updateSettings_2
+PUT	/api/admin/restServerSettings/aiServer	System Administration	public	updateAiServerSettings
+PUT	/api/admin/restServerSettings/auth	System Administration	public	updateAuthSettings_1
+PUT	/api/admin/restServerSettings/collaboration	System Administration	public	updateCollaborationSettings_1
+PUT	/api/admin/restServerSettings/contentGroup	System Administration	public	updateContentGroupSettings
+PUT	/api/admin/restServerSettings/globalSearch	System Administration	public	updateGlobalSearchSettings_1
+PUT	/api/admin/restServerSettings/iServer	System Administration	public	updateIServerSettings_1
+PUT	/api/admin/restServerSettings/iServer/{serverName}	System Administration	internal	updateIServerNodeSettings
+PUT	/api/admin/restServerSettings/microStrategyWeb	System Administration	public	updateMicroStrategyWebSettings_1
+PUT	/api/admin/restServerSettings/modelService	System Administration	public	updateModelServiceSettings_1
+PUT	/api/admin/restServerSettings/pluginSettings	System Administration	public	updatePluginSettings_1
+PUT	/api/admin/restServerSettings/relatedContent	System Administration	internal	updateRecommendationSettings_1
+PUT	/api/admin/restServerSettings/security	System Administration	public	updateSecuritySettings_1
+PUT	/api/bookmarks/{id}	Library	public	updateBookmark
+PUT	/api/bots/{id}/instances/{instanceId}/configuration	Auto Bots	internal	updateConfiguration
+PUT	/api/bots/{id}/instances/{instanceId}/nuggets	Auto Bots	internal	updateNuggets
+PUT	/api/bots/{id}/instances/{instanceId}/palette	Auto Bots	internal	updatePalettes
+PUT	/api/bots/{id}/instances/{instanceId}/renderMode	Auto Bots	internal	updateBotRenderMode
+PUT	/api/chats/{chatId}/bot	Auto Bots	internal	linkChatAndBot
+PUT	/api/conceptGroups/{id}	Ontology	internal	updateConceptGroup
+PUT	/api/concepts/{id}	Ontology	internal	updateConcept
+PUT	/api/configurations/featureFlags/{id}	Configurations	internal	updateFeatureFlag
+PUT	/api/configurations/historyMessageExpirationDay	Configurations	public	updateHistoryMessageExpirationDay
+PUT	/api/configurations/repository	Configurations	internal	updateConfigurationProperties
+PUT	/api/contactGroups/{id}	Contact Groups	public	updateContactGroup
+PUT	/api/contacts/{id}	Contacts	public	updateContact
+PUT	/api/datasetContainers/{id}	Agent	internal	saveDatasetContainer
+PUT	/api/datasets/{datasetId}/uploadSessions/{uploadSessionId}	Datasets	public	pushApiV2AddData
+PUT	/api/datasets/{id}/securityFilterViewsPerUser/{userId}	Datasets	internal	saveCubeSecurityFilters
+PUT	/api/datasources/{id}/oauth/token	Datasource Management	public	retrieveTokens
+PUT	/api/documents/{id}/instances/{instanceId}/prompts/answers	Dashboards(Dossiers) and Documents	public	answerPrompts
+PUT	/api/documents/{id}/instances/{instanceId}/refresh	Dashboards(Dossiers) and Documents	public	refreshDocumentInstance
+PUT	/api/dossier/{dossierId}/instance/{dossierInstanceId}	Dashboard(Dossier)_ToBeDeprecated_Use_Dashboards(Dossiers)	public	updateDossierInstanceDetails
+PUT	/api/dossier/{dossierId}/instance/{dossierInstanceId}/page/{pageKey}/instance/{pageInstanceId}	Dashboard(Dossier)_ToBeDeprecated_Use_Dashboards(Dossiers)	public	updateDossierPageInstanceDetails
+PUT	/api/dossierPersonalView	Dashboard(Dossier) Personal View	public	updateDossierPersonalView
+PUT	/api/dossiers/{dossierId}/instances/{instanceId}/filters	Dashboards(Dossiers) and Documents	public	setFilters
+PUT	/api/dossiers/{dossierId}/instances/{instanceId}/manipulations	Dashboards(Dossiers) and Documents	public	applyDossierManipulations
+PUT	/api/dossiers/{dossierId}/instances/{instanceId}/renderMode	Dashboards(Dossiers) and Documents	internal	updateDossierRenderMode
+PUT	/api/dynamicRecipientLists/{id}	Subscriptions	public	updateDynamicRecipientList
+PUT	/api/events/{id}	Events	public	updateEvent
+PUT	/api/excelTemplates/{id}	Subscriptions	public	updateExcelTemplate
+PUT	/api/explorer/chats/settings	Explorer	internal	updateSettings
+PUT	/api/explorer/config	Explorer	public	updateConfig
+PUT	/api/explorer/features/settings	Explorer	internal	updateFeatureSettings
+PUT	/api/explorer/mcp/servers/{name}	Explorer	public	updateServer
+PUT	/api/explorer/webSearch/config	Explorer	public	updateConfig_1
+PUT	/api/hyper/cards/{cardId}/defaultCardStatus	Hyper	internal	setCardStatus
+PUT	/api/hyper/cards/{cardId}/instances/{instanceId}	Hyper	internal	manipulateHyperCardReportInstance
+PUT	/api/insight/{path}	Insight Engine	internal	insightServicePut
+PUT	/api/iserver/clusterStartupMembership	System Administration	public	updateClusterStartupMembership
+PUT	/api/iserver/dataGateway/client/clusters/{id}	System Administration	internal	patchDataGatewayClientsClusters
+PUT	/api/iserver/ldap/import	System Administration	public	stopBatchImport
+PUT	/api/iserver/lock	System Administration	public	lockProject
+PUT	/api/iserver/logging/config	System Administration	public	updateIserverConfigLogs
+PUT	/api/iserver/logging/destinations	System Administration	public	updateIserverLogDestinations
+PUT	/api/iserver/neoengineConfigurations	System Administration	internal	putNeoEngineConfigurations
+PUT	/api/iserver/settings	System Administration	internal	setServerSettings
+PUT	/api/maps/customShape/areaLayers/{id}	Maps	internal	updateAreaLayer
+PUT	/api/maps/customShape/shapes/{id}	Maps	internal	updateGeoShape
+PUT	/api/migrationGroups/transformation/migrations/{migrationId}	Migration Groups	internal	transformMigrationGroup
+PUT	/api/migrationGroups/{migrationGroupId}	Migration Groups	public	triggerImport
+PUT	/api/migrations	Migrations	public	cleanUp
+PUT	/api/migrations/transformation/migrationGroups/{migrationGroupId}	Migrations	internal	transformMigration
+PUT	/api/migrations/{migrationId}	Migrations	public	triggerImport_1
+PUT	/api/migrations/{migrationId}/packageInfo	Migrations	public	editMigration
+PUT	/api/migrations/{migrationId}/validation	Migrations	public	triggerValidate
+PUT	/api/model/attributes/{attributeId}/smartAttributes	Attributes	public	ms-editSmartAttribute
+PUT	/api/model/calendars/{calendarId}	Calendars	public	ms-updateCalendar
+PUT	/api/model/consolidations/{consolidationId}	Consolidations	public	ms-putConsolidation
+PUT	/api/model/cubes/{cubeId}	Cubes	public	ms-replaceCube
+PUT	/api/model/customGroups/{customGroupId}	Custom Groups	public	ms-putCustomGroup
+PUT	/api/model/dataModels/{dataModelId}/attributes/{attributeId}/relationships	Data Models	public	ms-putDataModelAttributeRelationships
+PUT	/api/model/dataModels/{dataModelId}/attributes/{attributeId}/smartAttributes	Data Models	public	ms-updateDataModelSmartAttributes
+PUT	/api/model/dataModels/{dataModelId}/links	Data Models	public	ms-putDataModelLinks
+PUT	/api/model/dataModels/{dataModelId}/metrics/{metricId}	Data Models	public	ms-updateDataModelMetric
+PUT	/api/model/dataModels/{dataModelId}/metrics/{metricId}/embeddedObjects/{embeddedObjectId}	Data Models	public	ms-updateDataModelMetricEmbeddedObject
+PUT	/api/model/dataModels/{dataModelId}/securityFilters/{securityFilterId}	Data Models	public	ms-putDataModelSecurityFilter
+PUT	/api/model/datamarts/{datamartId}	Datamarts	public	ms-putDatamart
+PUT	/api/model/datasources/{datasourceId}	Datasource Management	public	ms-putDatasource
+PUT	/api/model/derivedElements/{derivedElementId}	Derived Elements	public	ms-putDerivedElement
+PUT	/api/model/drillMaps/{drillMapId}	Drill Maps	public	ms-putDrillMap
+PUT	/api/model/facts/{factId}	Facts	public	ms-putFact
+PUT	/api/model/filters/{filterId}	Filters	public	ms-putFilter
+PUT	/api/model/formulas/{formulaId}	Base Formulas	public	ms-putFormula
+PUT	/api/model/incrementalRefresh/{incrementalRefreshReportId}	Cubes	public	ms-putIncrementalRefreshReport
+PUT	/api/model/metrics/{metricId}	Metrics	public	ms-putMetric
+PUT	/api/model/projects/{projectId}	Projects	public	ms-putProject
+PUT	/api/model/prompts/{promptId}	Prompts	public	ms-putPrompt
+PUT	/api/model/reports/{reportId}	Reports	public	ms-putReport
+PUT	/api/model/reports/{reportId}/derivedElements/{derivedElementId}	Reports	public	ms-putReportDerivedElement
+PUT	/api/model/scopeFilters/{scopeFilterId}	Scope Filters	public	ms-putScopeFilter
+PUT	/api/model/securityFilters/{securityFilterId}	Security Filters	public	ms-putSecurityFilter
+PUT	/api/model/subtotals/{subtotalId}	Subtotals	public	ms-putSubtotal
+PUT	/api/model/systemHierarchy/attributes/{attributeId}/relationships	System Hierarchy	public	ms-putAttributeRelationships
+PUT	/api/model/tables/{tableId}/prompts/{promptId}	Tables	public	ms-putTablePrompt
+PUT	/api/model/transactionReports/{transactionReportId}	Transaction Reports	public	ms-putTransactionReport
+PUT	/api/monitors/iServer/nodes/{name}	Monitors	public	addServerClusterMember
+PUT	/api/monitors/libraryServer/status	Monitors	internal	restartServer
+PUT	/api/mstrClients/auth/jwt	System Administration	internal	updateJwtConfig
+PUT	/api/mstrClients/auth/oidc/iams/{id}	System Administration	internal	update
+PUT	/api/mstrClients/auth/saml/idpmetadata	System Administration	internal	saveIdpMetadata
+PUT	/api/mstrClients/auth/saml/registrations/{id}	System Administration	internal	updateRegistration
+PUT	/api/mstrClients/auth/saml/registrations/{id}/idpmetadata	System Administration	internal	saveRegistrationIdpMetadata
+PUT	/api/mstrClients/auth/saml/spmetadata	System Administration	internal	createServerRegistration
+PUT	/api/mstrServices/collabServerSettings/{path}	System Administration	internal	collaborationProxyPutApi
+PUT	/api/mstrServices/library/auth	System Administration	public	updateAuthSettings
+PUT	/api/mstrServices/library/collaboration	System Administration	public	updateCollaborationSettings
+PUT	/api/mstrServices/library/configurations	System Administration	internal	updateLibraryConfigurations
+PUT	/api/mstrServices/library/cookies	System Administration	public	updateCookieSettings
+PUT	/api/mstrServices/library/globalSearch	System Administration	public	updateGlobalSearchSettings
+PUT	/api/mstrServices/library/iServer	System Administration	public	updateIServerSettings
+PUT	/api/mstrServices/library/mcp/settings	System Administration	internal	updateMcpSettings
+PUT	/api/mstrServices/library/microStrategyWeb	System Administration	public	updateMicroStrategyWebSettings
+PUT	/api/mstrServices/library/modelService	System Administration	public	updateModelServiceSettings
+PUT	/api/mstrServices/library/mosaic	System Administration	internal	updateMosaicSettings
+PUT	/api/mstrServices/library/oauth2/settings	System Administration	internal	updateOAuth2Settings
+PUT	/api/mstrServices/library/pluginSettings	System Administration	public	updatePluginSettings
+PUT	/api/mstrServices/library/relatedContent	System Administration	internal	updateRecommendationSettings
+PUT	/api/mstrServices/library/scim	SCIM	internal	updateScimConfig
+PUT	/api/mstrServices/library/security	System Administration	public	updateSecuritySettings
+PUT	/api/mstrServices/library/storage/sharedFileStore/files/{fileId}/binary	Shared File Store	public	uploadSharedFileBinary
+PUT	/api/mstrServices/library/telemetryProducer/settings	System Administration	internal	setClientTelemetrySettings
+PUT	/api/mstrServices/searchEngine	System Administration	public	updateSearchEngine
+PUT	/api/mstrServices/telemetryServer/settings	System Administration	internal	setTelemetryServerSettings
+PUT	/api/nuggets/{id}	Agent	public	updateNuggets_1
+PUT	/api/nuggets/{id}/categories	Agent	public	updateCategories
+PUT	/api/objects	Object Management	internal	updateObjects
+PUT	/api/objects/{id}	Object Management	public	updateObject
+PUT	/api/objects/{id}/certify	Object Management	public	certifyObject
+PUT	/api/objects/{id}/type/{type}/ontology	Object Management	internal	setObjectOntologyContext
+PUT	/api/objects/{id}/type/{type}/propertySets	Object Management	internal	setObjectExtendedProperties
+PUT	/api/objects/{id}/vldb/propertySets/{name}	Object Management	internal	setVLDBSetting
+PUT	/api/ontology/vocabularies/fields/{fieldName}	Ontology	public	updateFieldVocabulary
+PUT	/api/packages/{packageId}	Packages	public	updatePackagePerSpec
+PUT	/api/packages/{packageId}/binary	Packages	public	uploadPackageBinary
+PUT	/api/palettes/{id}	Palettes	public	updatePalette
+PUT	/api/preferences/project/{projectId}/iserverLanguage	Preferences	public	setLocaleMsgsProjectPreference
+PUT	/api/preferences/project/{projectId}/numberAndDateFormat	Preferences	public	setSLocProjectPreference
+PUT	/api/preferences/project/{projectId}/schedules	Preferences	public	setScheduleProjectPreference
+PUT	/api/preferences/project/{projectId}/units	Preferences	public	setUnitsProjectPreference
+PUT	/api/preferences/user/adminhub	Preferences	internal	replaceAllUserPreferences
+PUT	/api/preferences/user/{name}	Preferences	internal	setSingleUserPreference
+PUT	/api/preferences/user/{userId}/units	Preferences	public	setUnitsUserPreference
+PUT	/api/projectDuplications/{id}	Project Duplications	public	createDuplicationOnTarget
+PUT	/api/projectDuplications/{id}/status	Project Duplications	public	cancelDuplication
+PUT	/api/projects/{id}/primaryDatasources	Datasource Management	public	updateProjectPrimaryDatasource
+PUT	/api/projects/{id}/quotas	Projects	public	setProjectQuota
+PUT	/api/projects/{id}/users/{userId}/quotas	Projects	public	setUserQuotas
+PUT	/api/projects/{projectId}/lock	Projects	public	lockProject_1
+PUT	/api/projects/{projectId}/properties/cubes	Projects	internal	setCubesProperties
+PUT	/api/projects/{projectId}/settings	Projects	internal	setServerSettings_1
+PUT	/api/questions/{questionId}/answers/data/{dataId}	Agent	public	updateMessageViz
+PUT	/api/recommendations/orgDirectory/settings	Recommendations	internal	updateSettings_1
+PUT	/api/reports/{reportId}/bulkExport	Reports	public	updateBulkExportConfig
+PUT	/api/reports/{reportId}/cacheInvalidationSchedule	Reports	public	updateCacheInvalidationSchedule
+PUT	/api/reports/{reportId}/instances/{instanceId}	Reports	public	manipulateReportInstance
+PUT	/api/reports/{reportId}/instances/{instanceId}/dataset	Reports	public	manipulateReportDataset
+PUT	/api/reports/{reportId}/instances/{instanceId}/prompts/answers	Reports	public	answerPrompts_2
+PUT	/api/schedules/{id}	Schedules	public	updateSchedule
+PUT	/api/scim/v2/Groups/{id}	SCIM	public	update_2
+PUT	/api/scim/v2/Users/{id}	SCIM	public	update_3
+PUT	/api/scripts/settings/logRetention	Scripts	public	updateScriptLogRetentionSettings
+PUT	/api/scripts/{id}	Scripts	public	modifyCommandManagerScript
+PUT	/api/sessions	Authentication	public	sessionSessionIdPut
+PUT	/api/stats	Performance Statistics	internal	changeStatsMode
+PUT	/api/subscriptions/images/{id}	Subscriptions	public	updateImage
+PUT	/api/subscriptions/{id}	Subscriptions	public	updateSubscription
+PUT	/api/tasks/{id}	Tasks	public	modifyTask
+PUT	/api/teamsApp/configuration	Microsoft Teams App	internal	updateConfiguration_1
+PUT	/api/telemetry/admin/runtime-config/{key}	Telemetry	public	updateRuntimeConfig
+PUT	/api/telemetry/alerts/{alertId}/actions	Telemetry	public	putAlertActions
+PUT	/api/testCenter/files/{fileId}	Test Center - File Store	internal	uploadSharedFileBinary_1
+PUT	/api/testCenters/integrityComparisons/{integrityComparisonId}	Comparison Test (Test Center)	public	replaceIntegrityComparison
+PUT	/api/testCenters/integrityComparisons/{integrityComparisonId}/managedTests/{integrityTestId}	Comparison Test (Test Center)	public	replaceManagedIntegrityTest
+PUT	/api/testCenters/integrityTests/{integrityTestId}	Baseline Test (Test Center)	public	replaceIntegrityTest
+PUT	/api/transmitters/{id}	Transmitters	public	updateTransmitter
+PUT	/api/usergroups/{id}	User Management	public	updateUserGroup
+PUT	/api/users/aiSettings	User Management	public	updateCurrentUserAiSettings
+PUT	/api/users/{userId}/addresses/{addressId}	User Management	public	updateUserAddresses
+PUT	/api/v2/applications/{id}	Applications	public	updateApplication
+PUT	/api/v2/bots/{botId}/trainingsets	Agent	internal	updateTrainingSet
+PUT	/api/v2/bots/{botId}/userContext	Agent	internal	putUserAgentContext
+PUT	/api/v2/bots/{botId}/userContext/prompts/{promptId}	Agent	internal	putPersonalPrompt
+PUT	/api/v2/cubes/{cubeId}	Cubes	public	updateCube
+PUT	/api/v2/devices/{id}	Devices	public	updateDevice
+PUT	/api/v2/iserver/settings	System Administration	public	setAllIserverSettings
+PUT	/api/v2/projects/{projectId}/settings	Projects	public	setAllServerSettings
+PUT	/api/v2/reports/{reportId}/instances/{instanceId}	Reports	public	manipulateReportInstance_1
+PUT	/api/v2/users/{userId}/addresses/{addressId}	User Management	public	updateAddress
+PUT	/api/workflows/files/{fileId}	Workflows	internal	uploadWorkflowFileBinary
+PUT	/api/{path}	(untagged)	internal	putMultipart
+PUT	/api/{service}/{path}	Model Server	internal	modelServicePut

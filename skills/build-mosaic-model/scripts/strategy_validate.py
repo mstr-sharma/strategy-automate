@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_PLATFORM = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir, "strategy-platform", "scripts"))
+sys.path.insert(0, _PLATFORM)   # shared core: sign-in, API client, MCP
 from _client import (  # noqa: E402
     SEARCH_LIST_KEYS, BaseMSTR, add_auth_args, ancestor_names, client_from_args, write_private_json,
     compact_json, items_from_payload, normalize_id, normalize_name, now_id,

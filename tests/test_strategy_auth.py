@@ -11,7 +11,7 @@ import urllib.request
 from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(__file__))
-sys.path.insert(0, os.path.join(ROOT, "skills", "build-mosaic-model", "scripts"))
+sys.path.insert(0, os.path.join(ROOT, "skills", "strategy-platform", "scripts"))
 
 import requests  # noqa: E402
 from requests.structures import CaseInsensitiveDict  # noqa: E402
@@ -273,6 +273,21 @@ class SecretStoreTests(unittest.TestCase):
         self.assertIsNone(sa.load_cached_session(dead, BASE))
         self.assertNotIn("X-MSTR-AuthToken", dead.headers)
         self.assertIsNone(sa.secret_get(f"session:{BASE}"))
+
+    def test_reused_password_session_is_cached_and_not_logged_out(self):
+        routes = {("POST", "/api/auth/login"): Resp(204, {"X-MSTR-AuthToken": "TOK"}),
+                  ("GET", "/api/sessions"): Resp(200, body={})}
+        c = sa.AuthConfig.from_env(base=BASE, username="u", password="p", reuse=True)
+        first = FakeSession(routes)
+        r1 = sa.sign_in(first, c)
+        self.assertEqual((r1.method, r1.owns_session), ("password", False))
+        second = FakeSession(routes)
+        r2 = sa.sign_in(second, c)
+        self.assertTrue(r2.method.startswith("cached:"))
+        self.assertFalse(any(path == "/api/auth/login" for _, path, _ in second.calls))
+        other_user = sa.AuthConfig.from_env(base=BASE, username="someone-else", password="p", reuse=True)
+        third = FakeSession(routes)
+        self.assertEqual(sa.sign_in(third, other_user).method, "password")   # separate cache slot
 
     def test_expired_saved_api_token_is_ignored(self):
         sa.secret_set(f"api-token:{BASE}", json.dumps({"apiToken": "OLD", "expireTime": "2000-01-01T00:00:00Z"}))

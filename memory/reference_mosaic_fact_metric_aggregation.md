@@ -22,7 +22,7 @@ Body (partial; the server keeps every field you omit):
 ```
 
 - The field is literally `function`. `aggregation` or `defaultAggregation` returns 200 and changes nothing.
-- Format tokens and the `number_category` enum: use the verified table in `feedback_mosaic_ship_bar.md` ("Metric formats"): 0=Fixed, 1=Currency, 2=Date, 3=Time, 4=Percentage, 5=Fraction, 6=Scientific, 7=Special, 8=Custom, 9=General. The May 2026 version of this note listed 2=Currency, 3=Percent and 4=Scientific. That table is wrong and renders currency as dates.
+- Format tokens and the `number_category` enum: use the verified table in `feedback_mosaic_ship_bar.md` ("Metric formats"): 0=Fixed, 1=Currency, 2=Date, 3=Time, 4=Percentage, 5=Fraction, 6=Scientific, 7=Custom, 8=Special, 9=General. The May 2026 version of this note listed 2=Currency, 3=Percent and 4=Scientific. That table is wrong and renders currency as dates.
 - A column stored as 0–100 must not use category 4, which multiplies by 100 (94.44 → "9444%"). Use Fixed with a literal suffix: `#,##0.0"%"` (preset `percent_0_100`).
 - `metricFormatType: "reserved"` was sent in May 2026 runs because a format PATCH seemed to no-op without it. The September 2026 runs patched formats without it and the change rendered. Add it only if a format PATCH reads back unchanged.
 - Function and format edits apply at query time. No republish is needed (`reference_mosaic_publish_path.md`).

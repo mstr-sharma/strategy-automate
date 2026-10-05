@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_PLATFORM = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir, "strategy-platform", "scripts"))
+sys.path.insert(0, _PLATFORM)   # shared core: sign-in, API client, MCP
 from _client import (  # noqa: E402
     BaseMSTR, add_auth_args, client_from_args, items_from_payload, response_json,
     normalize_id as oid,  # flat accessor — search rows expose `id`, never `information.objectId`
