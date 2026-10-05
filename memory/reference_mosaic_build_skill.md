@@ -54,3 +54,4 @@ Invoke directly; auto-reads tenant defaults and requires `MSTR_PASSWORD` (or `--
 - `create-compound-metric --model-id M --name N --formula 'METRIC_ID1 - METRIC_ID2'`
 - `create-conditional-metric --model-id M --name N --source-metric "<fact metric>" --attribute "<attribute>" --elements V1 [V2 ...] [--function Sum|Avg] [--description D]` — names or objectIds; `--elements` are ID-form values. Creates the derived metric, embeds an element-list filter, and binds it in one changeset (verified path: `reference_mosaic_derived_metrics.md` §0c).
 - `attach-transformation --model-id M --name N --source-metric M --transformation T`
+- `patch-fact-metrics --model-id M --spec spec.json [--dry-run]` — bulk `function` + number-format fix in one changeset with read-back verify; built-in presets `currency|percent|percent_0_100|integer|fixed2|scientific` (`reference_mosaic_fact_metric_aggregation.md`).
