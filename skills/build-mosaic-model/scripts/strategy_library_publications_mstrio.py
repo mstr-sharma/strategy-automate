@@ -51,9 +51,21 @@ import getpass
 import os
 import re
 import sys
+import types
+from typing import TYPE_CHECKING
 
-from mstrio.connection import Connection
-from mstrio.project_objects import list_dashboards, list_documents, list_reports
+_PLATFORM = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                          os.pardir, os.pardir, "strategy-platform", "scripts"))
+if _PLATFORM not in sys.path:
+    sys.path.insert(0, _PLATFORM)
+import strategy_auth  # noqa: E402  (platform core: the base-URL policy every script shares)
+
+if TYPE_CHECKING:  # mstrio-py is imported late (load_mstrio) so --help works without it
+    from mstrio.connection import Connection
+
+# The documented minimum (group recipients, publish semantics; see the docstring). It has
+# list_dashboards / list_documents / list_reports, which older releases lack.
+MIN_MSTRIO = "11.5.7.101"
 
 ID_RE = re.compile(r"^[0-9A-Fa-f]{32}$")
 RECIPIENT_TYPE = {8704: "user", 8705: "group"}
@@ -74,6 +86,24 @@ def csv_unsafe(v: str) -> str:
     return v[1:] if v.startswith("'") and v[1:].startswith(_ESCAPE_START) else v
 
 
+def private_open(path: str, **kw):
+    """open(path, "w") for a file readable only by this user (0600), also when it already
+    existed: the mapping carries recipient names (same rule as strategy_library_publications.py)."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    if hasattr(os, "fchmod"):   # POSIX; O_CREAT's mode only applies to a new file
+        os.fchmod(fd, 0o600)
+    return os.fdopen(fd, "w", **kw)
+
+
+def load_mstrio() -> types.SimpleNamespace:
+    """Import mstrio-py on demand, so --help works without it. Raises ImportError when
+    mstrio-py is missing or older than MIN_MSTRIO."""
+    from mstrio.connection import Connection
+    from mstrio.project_objects import list_dashboards, list_documents, list_reports
+    return types.SimpleNamespace(Connection=Connection, list_dashboards=list_dashboards,
+                                 list_documents=list_documents, list_reports=list_reports)
+
+
 def list_agents_compat(conn, **kw):
     """list_agents arrived in mstrio-py 11.5.10.101; older releases call them bots."""
     try:
@@ -83,30 +113,43 @@ def list_agents_compat(conn, **kw):
     return list_agents(conn, **kw)
 
 
-# --types value -> (kind, object type, mstrio lister)
+# --types value -> (kind, object type, name of the mstrio lister; None = list_agents_compat)
 LISTERS = {
-    "dashboards": ("dashboard", 55, list_dashboards),
-    "documents": ("document", 55, list_documents),
-    "agents": ("agent", 55, list_agents_compat),
+    "dashboards": ("dashboard", 55, "list_dashboards"),
+    "documents": ("document", 55, "list_documents"),
+    "agents": ("agent", 55, None),
     # list_reports keeps the report subtypes mstrio's Report class supports
     # (grid, graph, grid+graph, datamart, transaction, ...); cubes are excluded.
-    "reports": ("report", 3, list_reports),
+    "reports": ("report", 3, "list_reports"),
 }
 
 
-def connect() -> Connection:
+def parse_types(value: str) -> list:
+    """--types -> list of LISTERS keys; exits on anything else (before any network call)."""
+    types_ = list(LISTERS) if value == "all" else [t.strip() for t in value.split(",") if t.strip()]
+    if not types_ or set(types_) - set(LISTERS):
+        print("--types takes a comma list of %s, or all" % ",".join(LISTERS), file=sys.stderr)
+        raise SystemExit(2)   # usage error, like argparse's own
+    return types_
+
+
+def connect(ms: types.SimpleNamespace) -> Connection:
     base = os.environ.get("MSTR_BASE") or sys.exit("Set MSTR_BASE")
+    try:   # same policy as every other script: https (localhost aside), no credentials in the URL
+        strategy_auth.check_base(base.rstrip("/"))
+    except strategy_auth.AuthError as err:
+        sys.exit(str(err))
     mode = int(os.environ.get("MSTR_LOGIN_MODE", "1"))
     ssl = os.environ.get("MSTR_SSL_VERIFY", "1").strip()
     tls = {"ssl_verify": False} if ssl.lower() in ("0", "false", "no", "off") else \
         {"ssl_verify": True} if ssl.lower() in ("", "1", "true", "yes", "on") else \
         {"ssl_verify": True, "certificate_path": ssl}
     if mode == 4096:
-        return Connection(base, api_token=os.environ.get("MSTR_API_TOKEN") or sys.exit("Set MSTR_API_TOKEN"),
-                          request_timeout=120, **tls)
+        return ms.Connection(base, api_token=os.environ.get("MSTR_API_TOKEN") or sys.exit("Set MSTR_API_TOKEN"),
+                             request_timeout=120, **tls)
     user = os.environ.get("MSTR_USER") or sys.exit("Set MSTR_USER")
     password = os.environ.get("MSTR_PASSWORD") or getpass.getpass("Password for %s: " % user)
-    return Connection(base, user, password, login_mode=mode, request_timeout=120, **tls)
+    return ms.Connection(base, user, password, login_mode=mode, request_timeout=120, **tls)
 
 
 def resolve_project(conn: Connection, ref: str):
@@ -151,14 +194,13 @@ def object_exists(conn: Connection, project_id: str, object_id: str, obj_type: i
     return False if (r.status_code == 404 and code == "ERR004") else "%s %s" % (r.status_code, r.text[:150])
 
 
-def cmd_export(conn: Connection, args) -> int:
+def cmd_export(conn: Connection, args, ms: types.SimpleNamespace) -> int:
+    wanted_types = parse_types(args.types)
     project_id, project_name = resolve_project(conn, args.project)
-    types = list(LISTERS) if args.types == "all" else [t.strip() for t in args.types.split(",") if t.strip()]
-    if not types or set(types) - set(LISTERS):
-        sys.exit("--types takes a comma list of %s, or all" % ",".join(LISTERS))
     objects = []
-    for t in types:
-        kind, obj_type, lister = LISTERS[t]
+    for t in wanted_types:
+        kind, obj_type, lister_name = LISTERS[t]
+        lister = getattr(ms, lister_name) if lister_name else list_agents_compat
         for o in lister(conn, project_id=project_id, to_dictionary=True):
             objects.append({"id": o["id"], "name": o["name"], "kind": kind, "type": obj_type,
                             "subtype": o.get("subtype")})
@@ -180,7 +222,7 @@ def cmd_export(conn: Connection, args) -> int:
         if i % 100 == 0:
             print("  %d/%d" % (i, len(objects)), file=sys.stderr)
 
-    with open(args.out, "w", newline="", encoding="utf-8-sig") as f:
+    with private_open(args.out, newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
         w.writeheader()
         w.writerows({k: csv_safe(v) for k, v in row.items()} for row in rows)
@@ -284,7 +326,7 @@ def cmd_replicate(conn: Connection, args) -> int:
     return 3 if (counts["object_missing"] or counts["lookup_error"] or counts["read_error"] or skipped) else 0
 
 
-def main() -> int:
+def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="command", required=True)
     e = sub.add_parser("export", help="who has each dashboard/document (read-only)")
@@ -296,11 +338,19 @@ def main() -> int:
     r.add_argument("--mapping", required=True, help="the .csv written by export")
     r.add_argument("--target-project", required=True)
     r.add_argument("--apply", action="store_true")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
+    if args.command == "export":
+        parse_types(args.types)      # bad --types fails before mstrio is loaded or anyone signs in
 
-    conn = connect()
     try:
-        return cmd_export(conn, args) if args.command == "export" else cmd_replicate(conn, args)
+        ms = load_mstrio()
+    except ImportError as err:
+        print("FATAL: needs mstrio-py >= %s (pip install -U mstrio-py): %s" % (MIN_MSTRIO, err),
+              file=sys.stderr)
+        return 2
+    conn = connect(ms)
+    try:
+        return cmd_export(conn, args, ms) if args.command == "export" else cmd_replicate(conn, args)
     finally:
         conn.close()   # POST /api/auth/logout
 

@@ -1,3 +1,8 @@
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import _hermetic  # noqa: E402,F401  (scrub MSTR_*/proxy env, private secret store)
+
 import json
 import os
 import sys
@@ -126,7 +131,7 @@ class TokenTests(McpTestCase):
     def setUp(self):
         super().setUp()
         self.meta = dict(META, resource=RESOURCE)
-        self.store = sm.Tokens(RESOURCE, "http://127.0.0.1:8753/oauth/callback")
+        self.store = sm.Tokens(RESOURCE, "http://127.0.0.1:8753/oauth/callback", ISSUER)
         self.store.save_client({"client_id": "CID", "client_secret": "CS"})
 
     def test_cached_token_is_reused(self):
@@ -149,7 +154,9 @@ class TokenTests(McpTestCase):
         http.on("POST", META["token_endpoint"], lambda **kw: Resp(400, {"error": "invalid_grant"}))
 
         def fake_login(h, meta, c):
-            self.store.save_tokens({"access_token": "A3", "refresh_token": "R3", "expires_in": 60})
+            tokens = {"access_token": "A3", "refresh_token": "R3", "expires_in": 60}
+            self.store.save_tokens(tokens)
+            return tokens
 
         with mock.patch.object(sm, "login", fake_login):
             self.assertEqual(sm.access_token(http, self.meta, cfg()), "A3")
@@ -159,7 +166,7 @@ class McpClientTests(McpTestCase):
     def setUp(self):
         super().setUp()
         self.meta = dict(META, resource=RESOURCE)
-        store = sm.Tokens(RESOURCE, "http://127.0.0.1:8753/oauth/callback")
+        store = sm.Tokens(RESOURCE, "http://127.0.0.1:8753/oauth/callback", ISSUER)
         store.save_client({"client_id": "CID", "client_secret": "CS"})
         store.save_tokens({"access_token": "A1", "refresh_token": "R1", "expires_in": 3600})
 
@@ -221,6 +228,96 @@ class McpClientTests(McpTestCase):
 
     def test_structured_content_is_preferred(self):
         self.assertEqual(sm.tool_text({"structuredContent": {"rows": 2}}), json.dumps({"rows": 2}, indent=2))
+
+
+class McpSafetyTests(McpTestCase):
+    """Regression tests for the round-2 adversarial review."""
+
+    def test_challenge_rejects_look_alike_origins(self):
+        for evil in ("https://tenant.example.com.attacker.example/meta", "https://tenant.example.com@10.0.0.5/meta",
+                     "http://tenant.example.com/meta"):
+            http = FakeHttp()
+            http.on("POST", RESOURCE, lambda evil=evil, **kw: Resp(
+                401, {}, {"WWW-Authenticate": f'Bearer resource_metadata="{evil}"'}))
+            self.assertEqual(sm._metadata_from_challenge(http, RESOURCE), "", evil)
+
+    def test_resource_on_another_origin_is_refused(self):
+        http = FakeHttp()
+        http.on("GET", f"{HOST}/collaboration/.well-known/oauth-protected-resource/mcp/agent",
+                lambda **kw: Resp(body={"resource": "https://victim.example/collaboration/mcp/agent",
+                                        "authorization_servers": [ISSUER]}))
+        with self.assertRaisesRegex(sm.McpError, "another origin"):
+            sm.discover(http, base=f"{HOST}/MicroStrategyLibrary", server="agent")
+
+    def test_plain_http_token_endpoint_is_refused(self):
+        http = FakeHttp()
+        http.on("GET", f"{HOST}/collaboration/.well-known/oauth-protected-resource/mcp/agent",
+                lambda **kw: Resp(body={"resource": RESOURCE, "authorization_servers": [ISSUER]}))
+        http.on("GET", f"{HOST}/.well-known/oauth-authorization-server/collaboration",
+                lambda **kw: Resp(body=dict(META, token_endpoint="http://tenant.example.com/token")))
+        with self.assertRaisesRegex(sm.McpError, "not an https URL"):
+            sm.discover(http, base=f"{HOST}/MicroStrategyLibrary", server="agent")
+
+    def test_stored_tokens_are_never_offered_to_another_issuer(self):
+        real = sm.Tokens(RESOURCE, "http://127.0.0.1:8753/oauth/callback", ISSUER)
+        real.save_client({"client_id": "CID", "client_secret": "REAL-SECRET"})
+        real.save_tokens({"access_token": "A0", "refresh_token": "REAL-REFRESH", "expires_at": 0})
+        evil_meta = dict(META, issuer="https://evil.example", token_endpoint="https://evil.example/token",
+                         resource=RESOURCE)
+        http = FakeHttp()
+        with mock.patch.object(sm, "login", lambda h, m, c: {"access_token": "NEW"}) as fake:
+            self.assertEqual(sm.access_token(http, evil_meta, cfg()), "NEW")
+        self.assertTrue(fake)
+        self.assertEqual(http.calls, [])   # nothing was sent to the other issuer's token endpoint
+
+    def test_login_token_is_used_even_when_it_cannot_be_stored(self):
+        with mock.patch.dict(os.environ, {"MSTR_SECRET_STORE": "none"}), \
+                mock.patch.object(sm, "login", lambda h, m, c: {"access_token": "EPHEMERAL"}):
+            self.assertEqual(sm.access_token(FakeHttp(), dict(META, resource=RESOURCE), cfg()), "EPHEMERAL")
+
+    def test_server_initiated_request_with_the_same_id_is_not_the_reply(self):
+        lines = ['data: {"jsonrpc": "2.0", "id": 1, "method": "roots/list"}', "",
+                 'data: {"jsonrpc": "2.0", "id": 1, "result": {"tools": [{"name": "query"}]}}', ""]
+        msgs = [m for m in sm._sse_messages(lines) if sm._is_reply(m, 1)]
+        self.assertEqual(msgs, [{"jsonrpc": "2.0", "id": 1, "result": {"tools": [{"name": "query"}]}}])
+
+    def test_event_stream_is_utf8_even_without_a_charset(self):
+        import http.server
+        import threading
+        text = "Café São Paulo — 東京"
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if "id" not in body:
+                    self.send_response(202)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                reply = {"jsonrpc": "2.0", "id": body["id"],
+                         "result": {"content": [{"type": "text", "text": text}]}}
+                payload = ("data: " + json.dumps(reply, ensure_ascii=False) + "\n\n").encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")   # no charset, as servers send it
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        url = f"http://127.0.0.1:{server.server_address[1]}/collaboration/mcp/mosaic"
+        meta = dict(META, resource=url, mcp_url=url)
+        sm.Tokens.for_meta(meta, "http://127.0.0.1:8753/oauth/callback").save_tokens(
+            {"access_token": "A1", "expires_in": 3600})
+        with sa.SafeSession(retries=0) as http_session:
+            client = sm.McpClient(http_session, meta, cfg())
+            client.start()
+            self.assertEqual(sm.tool_text(client.call("query", {})), text)
 
 
 if __name__ == "__main__":

@@ -25,6 +25,8 @@ from _client import (  # noqa: E402
 )
 
 
+EXIT_PARTIAL = 3   # some definition reads failed (same code as strategy_library_publications.py)
+
 FAMILIES = {
     "attributes": {"type": 12, "path": "/api/model/attributes/{id}", "singular": "attribute"},
     "facts": {"type": 13, "path": "/api/model/facts/{id}", "singular": "fact"},
@@ -309,8 +311,20 @@ def family_analysis(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+def failed_reads(inventory: dict[str, Any]) -> dict[str, int]:
+    """Failed definition reads per family, plus 'systemHierarchy' when that read failed.
+    Empty dict = complete inventory."""
+    failed = {family: a["definitionReadFailed"] for family, a in (inventory.get("analysis") or {}).items()
+              if a.get("definitionReadFailed")}
+    hierarchy = inventory.get("systemHierarchy")
+    if hierarchy is not None and not hierarchy.get("definitionOk"):
+        failed["systemHierarchy"] = 1
+    return failed
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     epilog="Exit codes: 0 complete, 3 some reads failed (see failedReads).")
     add_auth_args(parser)
     parser.add_argument("--families", nargs="*", choices=sorted(FAMILIES), default=sorted(FAMILIES))
     parser.add_argument("--search-limit", type=int, default=200)
@@ -319,11 +333,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--include-definition-bodies", action="store_true", help="Write successful definition payloads to the output JSON. Use /tmp; do not commit bulky payloads.")
     parser.add_argument("--skip-system-hierarchy", action="store_true", help="Skip the one-call /api/model/systemHierarchy summary.")
     parser.add_argument("--out", default="")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> int:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     client = client_from_args(args, Client)
     started = now_id()
     try:
@@ -371,16 +385,25 @@ def main() -> int:
             if args.include_definition_bodies and hierarchy.get("ok"):
                 inventory["systemHierarchyBody"] = hierarchy.get("body")
 
+        failures = failed_reads(inventory)
+        inventory["failedReads"] = failures
+        if args.out and os.path.isfile(args.out):
+            os.chmod(args.out, 0o600)   # dump_inventory's 0600 only applies to a file it creates
         path = dump_inventory(inventory, args.out, "strategy-semantic-inventory", started)
         print(json.dumps({
-            "ok": True,
+            "ok": not failures,
             "runId": started,
             "projectId": client.project_id,
             "out": path,
             "counts": {k: v["count"] for k, v in inventory["analysis"].items()},
             "definitionReadOk": {k: v["definitionReadOk"] for k, v in inventory["analysis"].items()},
             "definitionReadFailed": {k: v["definitionReadFailed"] for k, v in inventory["analysis"].items()},
+            "failedReads": failures,
         }, indent=2))
+        if failures:
+            print(f"WARNING: {sum(failures.values())} read(s) failed {failures}; the inventory is "
+                  f"incomplete (exit {EXIT_PARTIAL})", file=sys.stderr)
+            return EXIT_PARTIAL
         return 0
     finally:
         client.logout()

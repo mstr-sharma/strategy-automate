@@ -37,6 +37,7 @@ try:
     import requests
 except ImportError:  # pragma: no cover
     requests = None  # type: ignore[assignment]
+NETWORK_ERRORS: tuple = (requests.RequestException,) if requests is not None else ()
 
 PROTOCOL_VERSION = "2025-06-18"
 SCOPES = ("openid", "profile", "email", "offline_access", "mcp:stream")
@@ -64,7 +65,15 @@ def _metadata_from_challenge(http: Any, mcp_url: str) -> str:
     except Exception:
         return ""
     m = re.search(r'resource_metadata="([^"]+)"', r.headers.get("WWW-Authenticate", ""))
-    return m.group(1) if m and m.group(1).startswith(_origin(mcp_url)) else ""
+    return m.group(1) if m and sa.same_origin(m.group(1), mcp_url) else ""
+
+
+def _require_secure(url: str, what: str) -> str:
+    """OAuth endpoints carry codes, client secrets and refresh tokens: https only (loopback aside)."""
+    parts = urllib.parse.urlsplit(url or "")
+    if parts.scheme == "https" or (parts.scheme == "http" and parts.hostname in ("127.0.0.1", "localhost", "::1")):
+        return url
+    raise McpError(f"the authorization server's {what} is not an https URL: {url!r}")
 
 
 def discover(http: Any, mcp_url: str = "", base: str = "", server: str = "mosaic") -> dict:
@@ -89,44 +98,70 @@ def discover(http: Any, mcp_url: str = "", base: str = "", server: str = "mosaic
     if not resource_meta or not resource_meta.get("authorization_servers"):
         raise McpError(f"no OAuth protected-resource metadata for {mcp_url}")
     resource = resource_meta.get("resource") or mcp_url
+    if not sa.same_origin(resource, mcp_url):
+        # RFC 9728: a resource that is not the one asked about must not be used — otherwise a
+        # look-alike server could name the real tenant and collect its stored tokens.
+        raise McpError(f"{mcp_url} describes itself as {resource!r}, another origin; refusing")
     issuer = resource_meta["authorization_servers"][0].rstrip("/")
     issuer_path = urllib.parse.urlsplit(issuer).path
     for url in (f"{_origin(issuer)}/.well-known/oauth-authorization-server{issuer_path}",
                 f"{issuer}/.well-known/oauth-authorization-server"):
         r = http.get(url, timeout=30)
         if r.ok and "json" in r.headers.get("Content-Type", ""):
-            meta = r.json()
+            meta = dict(r.json())
             if meta.get("issuer", "").rstrip("/") == issuer:
+                for key in ("authorization_endpoint", "token_endpoint", "registration_endpoint",
+                            "revocation_endpoint"):
+                    if meta.get(key):
+                        _require_secure(meta[key], key)
                 meta["resource"] = resource
+                meta["mcp_url"] = mcp_url
                 return meta
     raise McpError(f"no authorization-server metadata for {issuer}")
 
 
 class Tokens:
-    """Registered client + tokens for one MCP resource, kept in the OS secret store."""
+    """Registered client + tokens for one MCP endpoint, kept in the OS secret store. Both are
+    bound to the authorization server that issued them and are never offered to another one."""
 
-    def __init__(self, resource: str, redirect_uri: str):
+    def __init__(self, resource: str, redirect_uri: str, issuer: str = ""):
         self.resource, self.redirect_uri = resource, redirect_uri
+        self.issuer = issuer.rstrip("/")
         self.client_account = f"mcp-client:{resource}|{redirect_uri}"
         self.token_account = f"mcp-token:{resource}"
 
+    @classmethod
+    def for_meta(cls, meta: dict, redirect_uri: str) -> "Tokens":
+        """Keyed by the endpoint the user asked for, bound to the issuer that answered."""
+        return cls(meta.get("mcp_url") or meta["resource"], redirect_uri, meta.get("issuer", ""))
+
+    def _load(self, account: str) -> dict | None:
+        raw = sa.secret_get(account)
+        try:
+            data = json.loads(raw) if raw else None
+        except ValueError:
+            return None
+        if not isinstance(data, dict) or str(data.get("issuer", "")).rstrip("/") != self.issuer:
+            return None
+        return data
+
     def client(self) -> dict | None:
-        raw = sa.secret_get(self.client_account)
-        return json.loads(raw) if raw else None
+        return self._load(self.client_account)
 
     def save_client(self, data: dict) -> None:
-        sa.secret_set(self.client_account, json.dumps(data))
+        sa.secret_set(self.client_account, json.dumps(dict(data, issuer=self.issuer)))
 
     def tokens(self) -> dict | None:
-        raw = sa.secret_get(self.token_account)
-        return json.loads(raw) if raw else None
+        return self._load(self.token_account)
 
-    def save_tokens(self, data: dict) -> None:
-        data = dict(data)
+    def save_tokens(self, data: dict) -> bool:
+        data = dict(data, issuer=self.issuer)
         if "expires_in" in data:
             data["expires_at"] = time.time() + int(data.pop("expires_in"))
         if not sa.secret_set(self.token_account, json.dumps(data)):
             print("[mcp] could not store the tokens; the next command will ask the browser again.", file=sys.stderr)
+            return False
+        return True
 
     def forget(self) -> None:
         sa.secret_delete(self.token_account)
@@ -172,9 +207,10 @@ def _token_request(http: Any, meta: dict, client: dict, form: dict) -> dict:
     return body
 
 
-def login(http: Any, meta: dict, cfg: sa.AuthConfig) -> None:
+def login(http: Any, meta: dict, cfg: sa.AuthConfig) -> dict:
+    """Browser sign-in; returns the token response (also stored when the store allows)."""
     redirect_uri = f"http://{cfg.sso_host}:{cfg.sso_port}/oauth/callback"
-    store = Tokens(meta["resource"], redirect_uri)
+    store = Tokens.for_meta(meta, redirect_uri)
     client = store.client()
     if client is None:
         client = register_client(http, meta, redirect_uri)
@@ -189,15 +225,17 @@ def login(http: Any, meta: dict, cfg: sa.AuthConfig) -> None:
                               "sign in to the MCP server with your browser")
     if "error" in result or not result.get("code"):
         raise McpError(f"sign-in refused: {result.get('error', 'no code')} {result.get('error_description', '')[:200]}")
-    store.save_tokens(_token_request(http, meta, client, {
+    tokens = _token_request(http, meta, client, {
         "grant_type": "authorization_code", "code": result["code"], "redirect_uri": redirect_uri,
-        "code_verifier": verifier}))
+        "code_verifier": verifier})
+    store.save_tokens(tokens)
+    return tokens
 
 
 def access_token(http: Any, meta: dict, cfg: sa.AuthConfig, force_refresh: bool = False) -> str:
     """A live access token: cached, refreshed, or (last resort) a new browser sign-in."""
     redirect_uri = f"http://{cfg.sso_host}:{cfg.sso_port}/oauth/callback"
-    store = Tokens(meta["resource"], redirect_uri)
+    store = Tokens.for_meta(meta, redirect_uri)
     tokens, client = store.tokens(), store.client()
     if tokens and not force_refresh and tokens.get("expires_at", 0) > time.time() + 60:
         return tokens["access_token"]
@@ -210,8 +248,10 @@ def access_token(http: Any, meta: dict, cfg: sa.AuthConfig, force_refresh: bool 
             return fresh["access_token"]
         except McpError:
             pass
-    login(http, meta, cfg)
-    return (store.tokens() or {})["access_token"]
+    fresh = login(http, meta, cfg)
+    if not fresh or not fresh.get("access_token"):
+        raise McpError("signed in, but the authorization server returned no access token")
+    return fresh["access_token"]
 
 
 def _sse_messages(lines: Iterable[str]) -> Iterator[dict]:
@@ -235,12 +275,18 @@ def _sse_messages(lines: Iterable[str]) -> Iterator[dict]:
     yield from flush()
 
 
+def _is_reply(msg: Any, request_id: Any) -> bool:
+    """A JSON-RPC response to our request — not a server-initiated request that reuses the id."""
+    return (isinstance(msg, dict) and msg.get("id") == request_id and "method" not in msg
+            and ("result" in msg or "error" in msg))
+
+
 class McpClient:
     """Minimal streamable-HTTP MCP client: initialize, tools/list, tools/call."""
 
     def __init__(self, http: Any, meta: dict, cfg: sa.AuthConfig):
         self.http, self.meta, self.cfg = http, meta, cfg
-        self.url = meta["resource"]
+        self.url = meta.get("mcp_url") or meta["resource"]   # the endpoint asked for, not a claimed one
         self.session_id = ""
         self._id = 0
         self._token = ""
@@ -263,14 +309,18 @@ class McpClient:
         if not r.ok:
             raise McpError(f"MCP {body['method']} failed: HTTP {r.status_code}")
         if "text/event-stream" in r.headers.get("Content-Type", ""):
+            r.encoding = "utf-8"   # SSE is always UTF-8; requests would assume ISO-8859-1 for text/*
             try:
                 for msg in _sse_messages(r.iter_lines(decode_unicode=True)):
-                    if msg.get("id") == body["id"]:
+                    if _is_reply(msg, body["id"]):
                         return self._result(body["method"], msg)
             finally:
                 r.close()
             raise McpError(f"MCP {body['method']}: the stream ended without a reply")
-        return self._result(body["method"], r.json())
+        try:
+            return self._result(body["method"], r.json())
+        except ValueError:
+            raise McpError(f"MCP {body['method']}: the reply is not JSON") from None
 
     @staticmethod
     def _result(method: str, msg: dict) -> Any:
@@ -330,15 +380,20 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"ok": True, "mcp": meta["resource"]}, indent=2))
             return 0
         if args.cmd == "logout":
-            store = Tokens(meta["resource"], f"http://{cfg.sso_host}:{cfg.sso_port}/oauth/callback")
+            store = Tokens.for_meta(meta, f"http://{cfg.sso_host}:{cfg.sso_port}/oauth/callback")
             tokens, registered = store.tokens(), store.client()
-            if tokens and registered and meta.get("revocation_endpoint") and tokens.get("refresh_token"):
-                form = {"token": tokens["refresh_token"], "token_type_hint": "refresh_token",
-                        "client_id": registered["client_id"],
-                        "client_secret": registered.get("client_secret", "")}
-                http.post(meta["revocation_endpoint"], data=form, timeout=30)
-            store.forget()
-            print(json.dumps({"ok": True, "forgotten": meta["resource"]}, indent=2))
+            revoked = None
+            try:
+                if tokens and registered and meta.get("revocation_endpoint") and tokens.get("refresh_token"):
+                    form = {"token": tokens["refresh_token"], "token_type_hint": "refresh_token",
+                            "client_id": registered["client_id"],
+                            "client_secret": registered.get("client_secret", "")}
+                    revoked = http.post(meta["revocation_endpoint"], data=form, timeout=30).ok
+            except requests.RequestException:
+                revoked = False   # the local copy is forgotten anyway; the refresh token expires on its own
+            finally:
+                store.forget()
+            print(json.dumps({"ok": True, "forgotten": meta["resource"], "revoked": revoked}, indent=2))
             return 0
         client = McpClient(http, meta, cfg)
         client.start()
@@ -349,13 +404,20 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(out, indent=2))
             return 0
         if args.cmd == "call":
-            result = client.call(args.tool, json.loads(args.args))
+            try:
+                tool_args = json.loads(args.args)
+            except ValueError as e:
+                raise McpError(f"--args is not valid JSON: {e}") from None
+            result = client.call(args.tool, tool_args)
         else:
             result = client.call("query", {"project": args.project, "query": args.sql})
         print(tool_text(result))
         return 1 if result.get("isError") else 0
     except (McpError, sa.AuthError) as e:
         print(f"FATAL: {e}", file=sys.stderr)
+        return 2
+    except NETWORK_ERRORS as e:
+        print(f"FATAL: network error: {type(e).__name__}: {e}", file=sys.stderr)
         return 2
 
 

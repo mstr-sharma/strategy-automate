@@ -34,15 +34,17 @@ from typing import Any, Iterable
 
 # ── Error parsing ────────────────────────────────────────────────────────────
 
-# Strategy iServer session cap. DELETE /api/auth/login does NOT reap these —
-# they age out on ~30 minutes of idle. See feedback_build_mosaic_session_leak.md.
+# Strategy iServer session cap. The only REST logout is POST /api/auth/logout (DELETE
+# /api/auth/login is a 404, which is how older scripts leaked sessions); orphans age out after
+# ~30 minutes idle. See feedback_build_mosaic_session_leak.md.
 SESSION_CAP_CODE = "8004cb0a"
 SESSION_CAP_ISERVER = -2147072486
 SESSION_CAP_MESSAGE = (
     "Strategy iServer interactive-session cap reached "
     f"(code={SESSION_CAP_CODE}, iServerCode={SESSION_CAP_ISERVER}). "
-    "DELETE /api/auth/login does NOT reap these; they age out on ~30 min idle. "
-    "Wait, or kill orphaned sessions on the iServer, then retry."
+    "Orphaned sessions age out after ~30 min idle; end them now with "
+    "`build_mosaic.py kill-sessions --idle-minutes 10 --yes`, or reuse one session "
+    "(MSTR_REUSE_SESSION=1), then retry."
 )
 
 # Join-table membership rule (8004ccc7): the relationship's join table must

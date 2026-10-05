@@ -5,7 +5,8 @@ reports were published to which users and user groups in a
 Strategy (MicroStrategy) project, and republish the same grants in another
 project, for example a duplicated copy of it.
 
-Requirements: Python 3.8+ and the `requests` package. Nothing else.
+Requirements: Python 3.9+, the `requests` package, and this repo's platform core
+(skills/strategy-platform/scripts: sign-in, base-URL policy, redirect-safe sessions).
 
 Connection settings (command-line flags override environment variables):
     MSTR_BASE        Library URL, e.g. https://host/MicroStrategyLibrary
@@ -73,9 +74,11 @@ import argparse
 import collections
 import csv
 import datetime as _dt
+import email.utils
 import getpass
 import json
 import os
+import random
 import re
 import sys
 import threading
@@ -86,6 +89,12 @@ try:
     import requests
 except ImportError:  # pragma: no cover
     sys.exit("This script needs the 'requests' package:  pip install requests")
+
+_PLATFORM = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                          os.pardir, os.pardir, "strategy-platform", "scripts"))
+if _PLATFORM not in sys.path:
+    sys.path.insert(0, _PLATFORM)
+import strategy_auth  # noqa: E402  (platform core: sign-in, check_base, SafeSession)
 
 __version__ = "1.0.0"
 
@@ -203,9 +212,18 @@ def _csv_unsafe(v: str) -> str:
     return v[1:] if v.startswith("'") and v[1:].startswith(_ESCAPE_START) else v
 
 
+def _private_open(path: str, **kw):
+    """open(path, "w") for a file readable only by this user (0600), also when it already
+    existed: exports carry recipient names, the exporting user's name and the tenant URL."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    if hasattr(os, "fchmod"):   # POSIX; O_CREAT's mode only applies to a new file
+        os.fchmod(fd, 0o600)
+    return os.fdopen(fd, "w", **kw)
+
+
 def write_csv(path: str, fields, rows) -> None:
     # utf-8-sig so Excel shows non-ASCII names correctly
-    with open(path, "w", newline="", encoding="utf-8-sig") as f:
+    with _private_open(path, newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
         w.writerows({k: _csv_safe(v) for k, v in row.items()} for row in rows)
@@ -217,18 +235,41 @@ def now_iso() -> str:
 
 # --------------------------------------------------------------------------- REST client
 
-def _safe_session():
-    """A requests.Session that never forwards X-MSTR-AuthToken to another origin on a
-    redirect (strategy_auth.SafeSession); plain Session if the platform core is missing."""
-    platform = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                             os.pardir, os.pardir, "strategy-platform", "scripts"))
-    if platform not in sys.path:
-        sys.path.insert(0, platform)
-    try:
-        import strategy_auth
-        return strategy_auth.SafeSession()
-    except ImportError:
-        return requests.Session()
+MAX_BACKOFF = 30.0   # seconds; also the cap on a server's Retry-After
+
+
+def _new_session(pool_size: int = 10, verify=True):
+    """strategy_auth.SafeSession: never follows a redirect to another origin with credentials
+    (raises CrossOriginRedirect). Transport retries stay off because Client._send runs its own
+    loop, and the connection pool holds one connection per worker thread."""
+    session = strategy_auth.SafeSession(retries=0)
+    adapter = requests.adapters.HTTPAdapter(pool_connections=1, pool_maxsize=max(10, int(pool_size)),
+                                            max_retries=0)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    session.headers["Accept"] = "application/json"
+    session.verify = verify
+    return session
+
+
+def _retry_delay(attempt: int, retry_after=None) -> float:
+    """Seconds to wait before retry `attempt` (0-based). The server's Retry-After (seconds or an
+    HTTP date) wins when present; otherwise exponential backoff. Jittered so parallel workers
+    don't retry in lockstep, and never more than MAX_BACKOFF."""
+    wait = None
+    value = str(retry_after or "").strip()
+    if value.isdigit():
+        wait = float(value)
+    elif value:
+        try:
+            when = email.utils.parsedate_to_datetime(value)
+            wait = (when - _dt.datetime.now(_dt.timezone.utc)).total_seconds()
+        except (TypeError, ValueError, IndexError, OverflowError):   # unparsable or naive date
+            wait = None
+    if wait is not None:
+        return min(MAX_BACKOFF, max(0.0, wait) + random.uniform(0.0, 1.0))
+    ceiling = min(MAX_BACKOFF, 2.0 ** (attempt + 1))
+    return random.uniform(ceiling / 2, ceiling)
 
 
 class ApiError(Exception):
@@ -237,13 +278,21 @@ class ApiError(Exception):
 
 class Client:
     """Thin requests-based REST client. Every project-scoped call passes its
-    project explicitly, so there is never a "currently selected" project."""
+    project explicitly, so there is never a "currently selected" project.
+
+    Thread-safe for the parallel export: every request reads `self.session` once, and a
+    (re-)login signs in on a fresh session that it publishes with one assignment, so a
+    session other threads are using is never modified."""
 
     RETRY_STATUS = {429, 502, 503, 504}
 
     def __init__(self, base_url, username=None, password=None, login_mode=1, api_token=None,
-                 verify=True, timeout=120.0, retries=4, auth_method=None):
+                 verify=True, timeout=120.0, retries=4, auth_method=None, pool_size=10):
         self.base = normalize_base_url(base_url)
+        try:   # same policy as every other script: https (localhost aside), no credentials in the URL
+            strategy_auth.check_base(self.base)
+        except strategy_auth.AuthError as err:
+            usage_error(str(err))
         self.username = username
         self._password = password
         self._api_token = api_token
@@ -254,9 +303,11 @@ class Client:
         self.login_mode = int(login_mode)
         self.timeout = timeout
         self.retries = max(0, int(retries))
-        self.session = _safe_session()
-        self.session.headers["Accept"] = "application/json"
-        self.session.verify = verify
+        self._verify = verify
+        self._pool_size = pool_size
+        self.session = _new_session(pool_size, verify)   # replaced, never modified, on (re-)login
+        self._retired = []          # sessions replaced by a re-login; closed at logout
+        self._closed = False        # after logout: no re-login, no retries
         self.user_id = None
         self.user_name = None
         self._lock = threading.Lock()
@@ -264,98 +315,102 @@ class Client:
 
     # -- auth
     def login(self) -> None:
-        if self.auth_method:
-            return self._login_via_strategy_auth()
-        body = {"loginMode": self.login_mode}
-        if self.login_mode == 4096:
-            body["username"] = self._api_token       # API-token login, same as mstrio-py
-        elif self.login_mode != 8:
-            body.update(username=self.username, password=self._password)
-        self.session.headers.pop("X-MSTR-AuthToken", None)
-        self.session.cookies.clear()
-        # retried on 502/503/504 and connect errors only; a read timeout is not
-        # retried, since the first login may have created a session (see _send)
-        r = self._send("POST", "/api/auth/login", retry=True, json=body)
-        token = r.headers.get("X-MSTR-AuthToken")
-        if r.status_code not in (200, 204) or not token:
-            raise ApiError("login failed: %s" % describe(r))
-        self.session.headers["X-MSTR-AuthToken"] = token
-        r = self._send("GET", "/api/sessions/userInfo", retry=True)
-        if r.ok:
-            info = r.json()
-            self.user_id, self.user_name = info.get("id"), info.get("fullName")
-
-    def _login_via_strategy_auth(self) -> None:
-        sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                                         os.pardir, os.pardir, "strategy-platform", "scripts")))
-        import strategy_auth
-        self.session.headers.pop("X-MSTR-AuthToken", None)
-        self.session.cookies.clear()
+        """Sign in on a fresh session, then swap it in with one assignment."""
+        session, signin = _new_session(self._pool_size, self._verify), None
         try:
-            self._signin = strategy_auth.sign_in(self.session, strategy_auth.AuthConfig.from_env(
-                base=self.base, method=self.auth_method))
-        except strategy_auth.AuthError as e:
-            raise ApiError("sign-in failed: %s" % e) from None
-        r = self._send("GET", "/api/sessions/userInfo", retry=True)
-        if r.ok:
-            info = r.json()
-            self.user_id, self.user_name = info.get("id"), info.get("fullName")
+            if self.auth_method:
+                try:
+                    signin = strategy_auth.sign_in(session, strategy_auth.AuthConfig.from_env(
+                        base=self.base, method=self.auth_method))
+                except strategy_auth.AuthError as e:
+                    raise ApiError("sign-in failed: %s" % e) from None
+            else:
+                body = {"loginMode": self.login_mode}
+                if self.login_mode == 4096:
+                    body["username"] = self._api_token       # API-token login, same as mstrio-py
+                elif self.login_mode != 8:
+                    body.update(username=self.username, password=self._password)
+                # retried on 502/503/504 and connect errors only; a read timeout is not
+                # retried, since the first login may have created a session (see _send)
+                r = self._send("POST", "/api/auth/login", retry=True, json=body, session=session)
+                token = r.headers.get("X-MSTR-AuthToken")
+                if r.status_code not in (200, 204) or not token:
+                    raise ApiError("login failed: %s" % describe(r))
+                session.headers["X-MSTR-AuthToken"] = token   # not yet visible to other threads
+            r = self._send("GET", "/api/sessions/userInfo", retry=True, session=session)
+            if r.ok:
+                info = r.json()
+                self.user_id, self.user_name = info.get("id"), info.get("fullName")
+        except BaseException:
+            session.close()
+            raise
+        old, self._signin = self.session, signin
+        self.session = session          # the swap: requests started earlier keep their own session
+        self._retired.append(old)
 
     def logout(self) -> None:
-        if self._signin is not None and not self._signin.owns_session:
-            self.session.close()   # shared with a browser or cached for the next command
+        if self._closed:
             return
-        if "X-MSTR-AuthToken" in self.session.headers:
-            try:
-                self.session.post(self.base + "/api/auth/logout", timeout=30)  # POST, not DELETE
-            except requests.RequestException:
-                pass
-            self.session.headers.pop("X-MSTR-AuthToken", None)
-        self.session.close()
+        self._closed = True
+        session = self.session
+        try:
+            if self._signin is not None and not self._signin.owns_session:
+                return     # shared with a browser or cached for the next command
+            if "X-MSTR-AuthToken" in session.headers:
+                try:
+                    session.post(self.base + "/api/auth/logout", timeout=30)  # POST, not DELETE
+                except requests.RequestException:
+                    pass
+        finally:
+            for s in self._retired + [session]:
+                s.close()
+            self._retired = []
 
     # -- transport
-    def _send(self, method, path, project_id=None, retry=True, headers=None, **kw):
+    def _send(self, method, path, project_id=None, retry=True, headers=None, session=None, **kw):
         hdrs = dict(headers or {})
         if project_id:
             hdrs["X-MSTR-ProjectID"] = project_id
         attempts = self.retries + 1 if retry else 1
         for attempt in range(attempts):
             try:
-                r = self.session.request(method, self.base + path, headers=hdrs, timeout=self.timeout, **kw)
+                r = (session or self.session).request(method, self.base + path, headers=hdrs,
+                                                      timeout=self.timeout, **kw)
             except requests.RequestException as err:
                 # Retry transient network errors only. A non-GET is re-sent only when it
                 # cannot have reached the server (connect-phase failure), so a login is
                 # never repeated after the server may already have created a session.
+                # A redirect to another origin (strategy_auth.CrossOriginRedirect) is final.
                 transient = isinstance(err, (requests.ConnectionError, requests.Timeout,
                                              requests.exceptions.ChunkedEncodingError))
                 unsent = isinstance(err, requests.ConnectionError)   # includes ConnectTimeout
-                if not transient or (method != "GET" and not unsent) or attempt + 1 >= attempts:
+                if self._closed or not transient or (method != "GET" and not unsent) or attempt + 1 >= attempts:
                     raise ApiError("%s %s: %s: %s" % (method, path, type(err).__name__, err)) from err
                 self._backoff(attempt, type(err).__name__)
                 continue
-            if r.status_code in self.RETRY_STATUS and attempt + 1 < attempts:
-                self._backoff(attempt, str(r.status_code))
+            if r.status_code in self.RETRY_STATUS and attempt + 1 < attempts and not self._closed:
+                self._backoff(attempt, str(r.status_code), r.headers.get("Retry-After"))
                 continue
             return r
         raise ApiError("%s %s: no response" % (method, path))  # not reached
 
     @staticmethod
-    def _backoff(attempt, why):
-        delay = min(30, 2 ** (attempt + 1))
-        log("  ... %s, retrying in %ss" % (why, delay))
+    def _backoff(attempt, why, retry_after=None):
+        delay = _retry_delay(attempt, retry_after)
+        log("  ... %s, retrying in %.1fs" % (why, delay))
         time.sleep(delay)
 
     def request(self, method, path, project_id=None, retry=None, **kw):
-        """GETs are retried on 429/502/503/504 and network errors; writes are not
-        (their effect is verified by reading back instead). On 401 (session
+        """GETs are retried on 429/502/503/504 (honouring Retry-After) and network errors;
+        writes are not (their effect is verified by reading back instead). On 401 (session
         expired) the client logs in again once and repeats the call."""
         if retry is None:
             retry = method == "GET"
-        token = self.session.headers.get("X-MSTR-AuthToken")
-        r = self._send(method, path, project_id, retry=retry, **kw)
-        if r.status_code == 401:
+        session = self.session
+        r = self._send(method, path, project_id, retry=retry, session=session, **kw)
+        if r.status_code == 401 and not self._closed:
             with self._lock:
-                if self.session.headers.get("X-MSTR-AuthToken") == token:
+                if self.session is session and not self._closed:   # no other thread re-logged in yet
                     if self._relogins >= 3:
                         return r
                     self._relogins += 1
@@ -454,7 +509,10 @@ def get_recipients(client: Client, project_id: str, object_id: str):
     try:
         r = client.request("GET", "/api/library/%s" % object_id, project_id)
         if r.status_code == 200:
-            return r.json().get("recipients") or [], None
+            body = r.json()
+            if not isinstance(body, dict):
+                return None, "GET /api/library/%s: expected a JSON object, got %s" % (object_id, type(body).__name__)
+            return body.get("recipients") or [], None
     except (ApiError, ValueError) as err:
         return None, str(err)
     return None, describe(r)
@@ -580,9 +638,10 @@ def cmd_export(args, client: Client) -> int:
                                for x in recips]
             published.append(o)
 
-    if not args.no_paths:
-        for o in published:
-            info, _status, _err = get_object(client, project_id, o["id"], o["type"])
+    if not args.no_paths:   # one GET /api/objects per published object: same worker pool
+        infos = run_parallel(lambda o: get_object(client, project_id, o["id"], o["type"]),
+                             published, args.workers, "folder paths")
+        for o, (info, _status, _err) in zip(published, infos):
             o["path"] = folder_path(info.get("ancestors")) if info else ""
 
     rows = [{"document_id": o["id"], "document_name": o["name"], "document_kind": o["kind"],
@@ -617,7 +676,7 @@ def cmd_export(args, client: Client) -> int:
         "distinct_recipients": len(by_recipient),
         "read_errors": len(errors),
     }
-    with open(json_path, "w", encoding="utf-8") as f:
+    with _private_open(json_path, encoding="utf-8") as f:
         json.dump({"tool": "strategy_library_publications.py %s" % __version__, "generated_at": now_iso(),
                    "base_url": client.base, "exported_by": client.user_name,
                    "source_project": {"id": project_id, "name": project_name},
@@ -1125,7 +1184,7 @@ def main(argv=None) -> int:
 
     client = Client(args.base_url, args.username, password, login_mode, api_token,
                     verify=ssl_setting(args.ssl_verify), timeout=args.timeout, retries=args.retries,
-                    auth_method=method if sso_like else None)
+                    auth_method=method if sso_like else None, pool_size=getattr(args, "workers", 1))
     try:
         client.login()
         log("Logged in to %s as %s" % (client.base, client.user_name or args.username or "API token"))

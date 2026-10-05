@@ -95,6 +95,30 @@ def exact_user(users: Any, wanted: str) -> dict[str, Any]:
     return hits[0]
 
 
+def element_names(e: dict[str, Any]) -> set[str]:
+    """Every display string of an attribute element (each form value, name, display), casefolded."""
+    vals = e.get("formValues")
+    names: list[str] = []
+    if isinstance(vals, dict):
+        names += [str(v) for v in vals.values()]
+    elif isinstance(vals, list):
+        names += [str(v.get("value", "")) if isinstance(v, dict) else str(v) for v in vals]
+    names += [str(e[k]) for k in ("name", "display") if e.get(k)]
+    return {n.strip().casefold() for n in names if n.strip()}
+
+
+def exact_element(candidates: list[dict[str, Any]], wanted: str, attr_name: str) -> dict[str, Any]:
+    """The one element whose name (or one of its form values) equals `wanted`, ignoring case.
+    A substring match ("eBooks" for "Books") or the first search hit is never accepted."""
+    needle = (wanted or "").strip().casefold()
+    hits = [e for e in candidates if isinstance(e, dict) and needle in element_names(e)]
+    if len(hits) != 1:
+        seen = sorted({n for e in candidates if isinstance(e, dict) for n in element_names(e)})[:10]
+        raise RuntimeError(f"{attr_name} element {wanted!r}: {len(hits)} exact matches among "
+                           f"{len(candidates)} search results (seen: {seen}); set MSTR_VALIDATE_ELEMENT")
+    return hits[0]
+
+
 @dataclass
 class StepResult:
     workflow: int
@@ -226,8 +250,11 @@ class Runner:
         )
 
     def resolve_category_and_books(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        """The validation attribute (MSTR_VALIDATE_ATTR) and its ONE element named exactly
+        MSTR_VALIDATE_ELEMENT. Workflow 9 writes a security filter on that element, so a
+        missing or ambiguous element raises instead of falling back to another one."""
         attr = self.cache.get("category_attr")
-        if attr and normalize_name(attr).casefold() != "category":
+        if attr and normalize_name(attr).casefold() != VALIDATE_ATTR.casefold():
             attr = None
         if not attr:
             attrs = self.m.search(VALIDATE_ATTR, obj_type=12, limit=100)
@@ -235,22 +262,13 @@ class Runner:
         if not attr:
             raise RuntimeError(f"{VALIDATE_ATTR} attribute not found")
         attr_id = normalize_id(attr)
-        elems = response_json(self.m.request("GET", f"/api/attributes/{attr_id}/elements", params={"searchTerm": VALIDATE_ELEMENT, "limit": 20}))
+        elems = response_json(self.m.request("GET", f"/api/attributes/{attr_id}/elements", params={"searchTerm": VALIDATE_ELEMENT, "limit": 200}))
         candidates = items_from_search(elems)
         if isinstance(elems, dict) and isinstance(elems.get("elements"), list):
             candidates = elems["elements"]
         if not candidates and isinstance(elems, list):
             candidates = elems
-        def elem_name(e: dict[str, Any]) -> str:
-            vals = e.get("formValues")
-            if isinstance(vals, dict):
-                return " ".join(str(v) for v in vals.values())
-            if isinstance(vals, list):
-                return " ".join(str(v.get("value", "")) if isinstance(v, dict) else str(v) for v in vals)
-            return str(e.get("name") or e.get("display") or e.get("elementId") or e.get("id") or "")
-        books = next((e for e in candidates if VALIDATE_ELEMENT in elem_name(e)), candidates[0] if candidates else None)
-        if not books:
-            raise RuntimeError(f"{VALIDATE_ELEMENT} element not found: {compact_json(elems)}")
+        books = exact_element(candidates, VALIDATE_ELEMENT, VALIDATE_ATTR)
         self.cache["category_attr"] = attr
         self.cache["books_element"] = books
         return attr, books

@@ -5,6 +5,11 @@ column names are prefixed per table (i_item_sk vs ss_item_sk). The end-to-end
 flow requires a live Modeling Service, but the parsing and lock-recovery
 helpers are pure and worth covering.
 """
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import _hermetic  # noqa: E402,F401  (scrub MSTR_*/proxy env, private secret store)
+
 import json
 import os
 import sys

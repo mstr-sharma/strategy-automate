@@ -1,3 +1,8 @@
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import _hermetic  # noqa: E402,F401  (scrub MSTR_*/proxy env, private secret store)
+
 import os
 import sys
 import tempfile
@@ -42,7 +47,8 @@ class PptxToMarkdownTests(unittest.TestCase):
         path = self.deck({"ppt/slides/slide2.xml": slide("Second", "b1", "b2"),
                           "ppt/slides/slide1.xml": slide("First", "only line")})
         out = pptx_to_md.convert(path, os.path.join(self.tmp.name, "deck.md"), doc_title="Deck")
-        text = open(out, encoding="utf-8").read()
+        with open(out, encoding="utf-8") as f:
+            text = f.read()
         self.assertTrue(text.startswith("# Deck"))
         self.assertLess(text.index("First"), text.index("Second"))
         self.assertIn("- b1", text)
@@ -53,6 +59,34 @@ class PptxToMarkdownTests(unittest.TestCase):
         path = self.deck({"ppt/slides/slide1.xml": slide("x", "&lol;", prolog=bomb)})
         with self.assertRaisesRegex(ValueError, "DTD or entities"):
             pptx_to_md.convert(path, os.path.join(self.tmp.name, "out.md"))
+
+    def test_entity_declarations_are_refused_in_utf16_too(self):
+        bomb = '<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE lolz [<!ENTITY lol "lol">]>'
+        xml = slide("x", "&lol;", prolog=bomb).decode()
+        for encoded in (xml.encode("utf-16"), xml.encode("utf-16-le"), xml.encode("utf-16-be")):
+            path = self.deck({"ppt/slides/slide1.xml": encoded})
+            with self.assertRaisesRegex(ValueError, "DTD or entities"):
+                pptx_to_md.convert(path, os.path.join(self.tmp.name, "out.md"))
+
+    def test_utf16_and_bom_parts_without_a_dtd_convert(self):
+        xml = slide("Título", "naïve café").decode()
+        for encoded in (xml.encode("utf-16"), b"\xef\xbb\xbf" + xml.encode("utf-8")):
+            path = self.deck({"ppt/slides/slide1.xml": encoded})
+            out = pptx_to_md.convert(path, os.path.join(self.tmp.name, "u.md"))
+            with open(out, encoding="utf-8") as f:
+                self.assertIn("naïve café", f.read())
+
+    def test_notes_with_an_absolute_target_are_found(self):
+        notes = (f'<p:notes xmlns:a="{A}" xmlns:p="{P}"><p:cSld><p:spTree><p:sp><p:txBody>'
+                 f'<a:p><a:r><a:t>Say this</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:notes>')
+        rels = ('<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/'
+                'notesSlide" Target="/ppt/notesSlides/notesSlide7.xml"/></Relationships>')
+        path = self.deck({"ppt/slides/slide1.xml": slide("T", "b"), "ppt/slides/_rels/slide1.xml.rels": rels,
+                          "ppt/notesSlides/notesSlide7.xml": notes})
+        out = pptx_to_md.convert(path, os.path.join(self.tmp.name, "n.md"), include_notes=True)
+        with open(out, encoding="utf-8") as f:
+            self.assertIn("> Notes: Say this", f.read())
 
     def test_oversized_parts_are_refused(self):
         path = self.deck({"ppt/slides/slide1.xml": slide("x", "y" * 2000)})

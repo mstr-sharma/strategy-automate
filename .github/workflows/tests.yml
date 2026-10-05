@@ -4,19 +4,37 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "23 6 * * 1"   # weekly, so a new runner image or Python patch release can't break main unnoticed
+  workflow_dispatch:
 
 # Read-only token: the jobs only check out and run tests.
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  UV_VERSION: "0.11.8"
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: unit (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        # 3.9 = oldest supported (pyproject requires-python); 3.13 = newest.
-        python-version: ["3.9", "3.11", "3.13"]
+        # 3.9 = oldest supported (pyproject requires-python); 3.10 = where the dependency floors
+        # split (pyproject markers); 3.14 = newest. macOS covers the Keychain-side code paths.
+        os: [ubuntu-latest]
+        python-version: ["3.9", "3.10", "3.12", "3.13", "3.14"]
+        include:
+          - os: macos-latest
+            python-version: "3.13"
     steps:
       # Actions pinned to commit SHAs (tag in the comment) so a moved tag can't change CI.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -25,19 +43,62 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
-        run: python -m pip install "requests>=2.31,<3"
-      - name: Run unit tests
-        run: python -m unittest discover -s tests -v
+      - name: Install the locked dependencies (hash-checked)
+        run: |
+          python -m pip install "uv==${UV_VERSION}"
+          python -m uv export --frozen --no-dev --no-emit-project --all-extras --format requirements-txt \
+            -o "$RUNNER_TEMP/requirements.txt"
+          python -m pip install --require-hashes -r "$RUNNER_TEMP/requirements.txt"
+      - name: Unit, integration and fake-tenant tests
+        run: python -m unittest discover -s tests
+      - name: Same suite under a hostile environment (must stay hermetic)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
+        env:
+          MSTR_BASE: https://unreachable.invalid/MicroStrategyLibrary
+          MSTR_API_TOKEN: not-a-token
+          MSTR_AUTH_METHOD: api-token
+          MSTR_LOGIN_MODE: "16"
+          HTTP_PROXY: http://127.0.0.1:9
+          HTTPS_PROXY: http://127.0.0.1:9
+        run: python -m unittest discover -s tests
 
-  lint:
+  macos-system-python:
+    # README suggests /usr/bin/python3 when another Python's OpenSSL misbehaves: macOS's own
+    # 3.9 build (LibreSSL, older expat) must keep working.
+    name: unit (macOS /usr/bin/python3)
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install the locked dependencies (hash-checked, user site)
+        run: |
+          /usr/bin/python3 --version
+          /usr/bin/python3 -m pip install --user "uv==${UV_VERSION}"
+          /usr/bin/python3 -m uv export --frozen --no-dev --no-emit-project --all-extras --format requirements-txt \
+            -o "$RUNNER_TEMP/requirements.txt"
+          /usr/bin/python3 -m pip install --user --require-hashes -r "$RUNNER_TEMP/requirements.txt"
+      - name: Unit, integration and fake-tenant tests
+        run: /usr/bin/python3 -m unittest discover -s tests
+
+  checks:
+    name: lint, types, security, coverage
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
-          python-version: "3.12"
-      - name: Ruff
-        run: python -m pip install "ruff==0.16.10" && ruff check .
+          python-version: "3.13"
+      - name: Install the locked dependencies (hash-checked)
+        run: |
+          python -m pip install "uv==${UV_VERSION}"
+          python -m uv export --frozen --no-dev --no-emit-project --all-extras --format requirements-txt \
+            -o "$RUNNER_TEMP/requirements.txt"
+          python -m pip install --require-hashes -r "$RUNNER_TEMP/requirements.txt"
+      # The same gates as `python3 tests/tools/check.py` locally; tool versions are pinned there.
+      - name: ruff, mypy, bandit, coverage gate
+        run: python tests/tools/check.py --install lint types security coverage

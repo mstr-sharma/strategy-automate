@@ -9,12 +9,14 @@ Live source adapters should reduce to the same row-list shape.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import getpass
 import urllib.parse
 import json
 import math
 import os
+import re
 import sys
 import time
 from typing import Any
@@ -75,14 +77,41 @@ def _trino_query(host: str, username: str, password: str,
         "X-Trino-Schema": schema,
         "Accept": "application/json",
     }
-    http = requests.Session()          # one connection for the POST and every page
-    http.auth = (username, password)
+    http: Any
+    try:
+        import strategy_auth   # default timeouts + Trino-friendly retries of 502/503/504 page GETs
+        http = strategy_auth.SafeSession()
+    except ImportError:
+        http = requests.Session()
+    http.auth = (username, password)   # one connection for the POST and every page
     http.headers.update(headers)
+    with http:
+        return _trino_follow(http, url, sql, timeout)
+
+
+def _trino_follow(http: Any, url: str, sql: str, timeout: int) -> list[dict[str, Any]]:
+    """POST the statement and follow nextUri; a query we stop following (error, timeout,
+    Ctrl-C, page cap) is cancelled so it doesn't keep running on the warehouse."""
     resp = http.post(url, data=sql.encode("utf-8"), timeout=timeout)
     if not resp.ok:
         raise SystemExit(f"Trino POST /v1/statement → {resp.status_code}: {resp.text[:400]}")
-    payload = resp.json()
+    cursor: dict[str, Any] = {"next": None}
+    try:
+        return _trino_pages(http, url, resp.json(), timeout, cursor)
+    except BaseException:
+        nxt = cursor["next"]
+        if nxt and _same_trino_origin(nxt, url):   # the password rides along: never elsewhere
+            with contextlib.suppress(Exception):
+                http.delete(nxt, timeout=10)
+        raise
 
+
+def _same_trino_origin(nxt: str, url: str) -> bool:
+    parts, home = urllib.parse.urlsplit(nxt), urllib.parse.urlsplit(url)
+    return parts.scheme == "https" and parts.hostname == home.hostname and parts.port == home.port
+
+
+def _trino_pages(http: Any, url: str, payload: dict, timeout: int, cursor: dict) -> list[dict[str, Any]]:
     columns: list[str] | None = None
     rows: list[dict[str, Any]] = []
     safety = 1000  # hard cap on follow-next redirects; Trino pages are typically <50
@@ -96,24 +125,22 @@ def _trino_query(host: str, username: str, password: str,
         err = payload.get("error")
         if err:
             raise SystemExit(f"Trino query error: {err.get('message') or err}")
-        nxt = payload.get("nextUri")
+        nxt = cursor["next"] = payload.get("nextUri")
         if not nxt:
-            break
+            return rows
         safety -= 1
         if safety <= 0:
-            http.delete(nxt, timeout=30)   # cancel the query instead of leaving it running
-            raise SystemExit("Trino query: exceeded nextUri follow cap (1000)")
+            raise SystemExit("Trino query: exceeded nextUri follow cap (1000)")   # the caller cancels it
         # The password rides on every page request: follow nextUri only over https to the
         # host we posted to (a proxy may hand back http:// or another host).
-        parts = urllib.parse.urlsplit(nxt)
-        if parts.scheme != "https" or parts.hostname != urllib.parse.urlsplit(url).hostname:
+        if not _same_trino_origin(nxt, url):
+            parts = urllib.parse.urlsplit(nxt)
             raise SystemExit(f"Trino nextUri points at {parts.scheme}://{parts.netloc}; refusing to send "
                              "credentials there")
         fr = http.get(nxt, timeout=timeout)
         if not fr.ok:
             raise SystemExit(f"Trino GET {nxt} → {fr.status_code}: {fr.text[:300]}")
         payload = fr.json()
-    return rows
 
 
 def _resolve_trino_creds(args: argparse.Namespace) -> tuple[str, str, str, str]:
@@ -218,8 +245,14 @@ def index_rows(rows: list[dict[str, Any]], key_cols: list[str], label: str) -> t
 
 def compare_rows(model_rows: list[dict[str, Any]], reference_rows: list[dict[str, Any]],
                  key_cols: list[str], measure_cols: list[str], tolerance: float,
-                 query_name: str) -> dict[str, Any]:
+                 query_name: str, allow_empty: bool = False) -> dict[str, Any]:
     started = time.monotonic()
+    if not model_rows and not reference_rows and not allow_empty:
+        # Nothing on either side proves nothing: a wrong filter, schema or model name empties
+        # both queries just as well as a correct one. Never a pass unless asked for.
+        return {"query_name": query_name, "status": "empty", "row_count_model": 0, "row_count_reference": 0,
+                "note": "both sides returned no rows; check the query, or pass --allow-empty if expected",
+                "elapsed_model_ms": None, "elapsed_reference_ms": None, "elapsed_compare_ms": 0}
     if not measure_cols:
         measure_cols = infer_measures(model_rows, reference_rows, key_cols)
     if not measure_cols:
@@ -285,6 +318,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--measures", default="", help="comma-separated numeric measure columns; inferred when omitted")
     parser.add_argument("--query-name", default="model_comparison")
     parser.add_argument("--tolerance", type=float, default=1e-6)
+    parser.add_argument("--allow-empty", action="store_true",
+                        help="treat 'both sides returned no rows' as a pass (default: exit 2, it proves nothing)")
     parser.add_argument("--out", help="write structured JSON result")
 
     # Live Mosaic adapter (Trino). Use these together: --model + --reference-mosaic + --query.
@@ -293,9 +328,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--reference-mosaic",
                         help="Mosaic model name to compare against (live adapter via Trino)")
     parser.add_argument("--query",
-                        help="SQL run against BOTH models. Use %%s or {{MODEL}} as the "
+                        help="SQL run against BOTH models. Use {{MODEL}} (or a bare %%s) as the "
                              "model-as-table placeholder. The placeholder gets replaced "
-                             "with the correctly-quoted model name per side.")
+                             "with the correctly-quoted model name per side; LIKE '%%x%%' patterns are left alone.")
     parser.add_argument("--model-query",
                         help="Override SQL for the --model side only (otherwise --query is used).")
     parser.add_argument("--reference-query",
@@ -319,6 +354,16 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def inject_model(sql: str, model_name: str) -> str:
+    """Put the quoted model name where the query says: {{MODEL}} (preferred), else a bare %s.
+    A %s inside a LIKE pattern such as '%south%' is not a placeholder and is left alone."""
+    quoted = _quote_model_name(model_name.lower())
+    if "{{MODEL}}" in sql:
+        return sql.replace("{{MODEL}}", quoted)
+    # no placeholder at all: the caller embedded the model name already
+    return re.sub(r"(?<![\w'%])%s(?![\w%'])", lambda _m: quoted, sql)
+
+
 def _run_mosaic_adapter(args: argparse.Namespace) -> dict[str, Any]:
     """Live Mosaic-to-Mosaic comparison via Trino. Runs one SQL against each
     side, quoting the model name as the table reference, then passes the rows
@@ -332,16 +377,8 @@ def _run_mosaic_adapter(args: argparse.Namespace) -> dict[str, Any]:
 
     host, user, password, schema = _resolve_trino_creds(args)
 
-    # Substitute the placeholder with the correctly-quoted model name per side.
-    # We accept either literal `%s` or double curly `{{MODEL}}` for readability.
     def _inject(sql: str, model_name: str) -> str:
-        quoted = _quote_model_name(model_name.lower())
-        if "%s" in sql:
-            return sql.replace("%s", quoted)
-        if "{{MODEL}}" in sql:
-            return sql.replace("{{MODEL}}", quoted)
-        # If no placeholder, assume the caller has already embedded the model name.
-        return sql
+        return inject_model(sql, model_name)
 
     t0 = time.monotonic()
     model_rows = _trino_query(host, user, password, schema,
@@ -359,6 +396,7 @@ def _run_mosaic_adapter(args: argparse.Namespace) -> dict[str, Any]:
         split_cols(args.measures),
         args.tolerance,
         args.query_name,
+        allow_empty=args.allow_empty,
     )
     result["elapsed_model_ms"] = model_ms
     result["elapsed_reference_ms"] = ref_ms
@@ -410,14 +448,18 @@ def main() -> int:
             split_cols(args.measures),
             args.tolerance,
             args.query_name,
+            allow_empty=args.allow_empty,
         )
 
     text = json.dumps(result, indent=2)
     if args.out:
-        with open(args.out, "w", encoding="utf-8") as f:
+        fd = os.open(args.out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)   # rows can be business data
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text + "\n")
     print(text)
-    return 0 if result["status"] == "ok" else 1
+    return {"ok": 0, "mismatch": 1}.get(result["status"], 2)   # empty or anything else: 2
 
 
 if __name__ == "__main__":

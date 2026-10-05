@@ -246,6 +246,7 @@ class BaseMSTR:
         cached sessions stay open for the next command."""
         import strategy_auth
         strategy_auth.sign_out(self.session, self.base, self.signin)
+        self.session.close()   # release pooled connections; the session still works if reused
 
     # Project ──────────────────────────────────────────────────────────────
 
@@ -301,6 +302,7 @@ class BaseMSTR:
         `request`); rows are NOT deduped — wrap with dedupe_by_id when needed."""
         out: list[dict[str, Any]] = []
         offset = 0
+        previous_first = None
         while True:
             params: dict[str, Any] = {"name": name, "pattern": pattern, "limit": limit}
             if obj_type is not None:
@@ -310,10 +312,16 @@ class BaseMSTR:
             if get_ancestors:
                 params["getAncestors"] = "true"
             resp = self.request("GET", "/api/searches/results", params=params, timeout=timeout)
-            rows = items_from_payload(response_json(resp), keys)
+            payload = response_json(resp)
+            rows = items_from_payload(payload, keys)
+            first = rows[0].get("id") if rows and isinstance(rows[0], dict) else None
+            if paginate and offset and first is not None and first == previous_first:
+                return out   # the server ignored offset and repeated the page; don't loop forever
             out.extend(rows)
-            if not paginate or len(rows) < limit:
+            total = payload.get("totalItems") if isinstance(payload, dict) else None
+            if not paginate or len(rows) < limit or (isinstance(total, int) and offset + limit >= total):
                 return out
+            previous_first = first
             offset += limit
 
 
@@ -376,6 +384,8 @@ def write_private_json(data: Any, path: str = "", prefix: str = "strategy") -> s
     Inventories and ledgers carry security-filter definitions, SQL and owners."""
     if path:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, 0o600)   # an existing file keeps its old mode otherwise
     else:
         fd, path = tempfile.mkstemp(prefix=f"{prefix}-", suffix=".json")
     with os.fdopen(fd, "w", encoding="utf-8") as f:

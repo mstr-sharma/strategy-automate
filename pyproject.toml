@@ -9,7 +9,14 @@ description = "Agent skills, field-verified notes and Python REST helpers for au
 readme = "README.md"
 keywords = ["microstrategy", "strategy-one", "mosaic", "semantic-layer", "semantic-model", "dimensional-modeling", "rest-api", "sso", "ai-agents", "agent-skills"]
 requires-python = ">=3.9"
-dependencies = ["requests"]
+# Security floors. requests 2.33 (CVE-2026-25645) and urllib3 2.8 (five 2026 advisories) need
+# Python >= 3.10; on 3.9 the newest releases are requests 2.32.5 / urllib3 2.6.3, whose open
+# advisories are reviewed and accepted in tests/tools/osv_audit.py until 3.9 support ends.
+dependencies = [
+    "requests>=2.33; python_version >= '3.10'",
+    "requests>=2.32.5; python_version < '3.10'",
+    "urllib3>=2.8; python_version >= '3.10'",
+]
 
 [project.optional-dependencies]
 # Optional: build_mosaic._load_yaml prefers PyYAML and, when it is absent, falls
@@ -27,3 +34,11 @@ select = ["F", "E9"]
 # Pre-existing F541 (f-string without placeholders) / F841 (unused variable)
 # findings in build_mosaic.py; scoped here so `ruff check` is clean repo-wide.
 "skills/build-mosaic-model/scripts/build_mosaic.py" = ["F541", "F841"]
+
+[tool.coverage.run]
+branch = true
+source = ["skills"]
+
+[tool.coverage.report]
+# Script folders have no __init__.py; without this, scripts no test imports vanish from the report.
+include_namespace_packages = true

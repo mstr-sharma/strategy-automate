@@ -221,26 +221,23 @@ def friendly_table(tname: str) -> str:
 
 
 # ── Session helpers ───────────────────────────────────────────────────────────
-class _TimeoutSession(strategy_auth.SafeSession):
-    """requests.Session with a default (connect, read) timeout — requests waits forever
-    otherwise, which can hang a build while it holds a changeset lock. Override per call
-    with timeout=..., or for all calls with MSTR_HTTP_TIMEOUT (read seconds)."""
-    default_timeout = (15, float(os.environ.get("MSTR_HTTP_TIMEOUT") or 300))
-
-    def request(self, method, url, **kw):
-        kw.setdefault("timeout", self.default_timeout)
-        return super().request(method, url, **kw)
+# Default (connect, read) timeout, safe retries and no cross-origin token forwarding all live
+# in strategy_auth.SafeSession. Override per call with timeout=..., or for all calls with
+# MSTR_HTTP_TIMEOUT (read seconds) / MSTR_HTTP_RETRIES.
+_TimeoutSession = strategy_auth.SafeSession
 
 
 class MSTR:
     def __init__(self, args):
         self.base    = (args.base or "").rstrip("/")
-        # A scheme-less / empty MSTR_BASE otherwise crashes deep in requests with a
-        # cryptic MissingSchema traceback, far from the cause. Fail clearly here.
-        if not self.base.startswith(("http://", "https://")):
-            die(f"MSTR_BASE must be an absolute URL with scheme and the Library path, "
-                f"e.g. https://<host>/MicroStrategyLibrary — got {args.base!r}. "
-                f"Fix MSTR_BASE (or --base).")
+        # Same rules as every other sign-in path (strategy_auth.check_base): an absolute
+        # http(s) Library URL, no credentials in it, and no plain http except localhost or
+        # MSTR_ALLOW_HTTP=1. Borrowed tokens and cookies would otherwise travel in cleartext,
+        # and a scheme-less MSTR_BASE would crash deep in requests far from the cause.
+        try:
+            strategy_auth.check_base(self.base)
+        except strategy_auth.AuthError as e:
+            die(f"{e} (MSTR_BASE / --base).")
         self.project = args.project_id
         self.user    = args.user
         self.pw      = args.password
@@ -354,8 +351,9 @@ class MSTR:
         strategy_auth.sign_out(self.s, self.base, self.signin)
         self.logged_in = False
 
-    def try_candidates(self, kind, **fmt) -> tuple[str, Any]:
-        """Walk ENDPOINT_CANDIDATES[kind]; return (path_used, json_body) on first 2xx."""
+    def try_candidates(self, kind, *, required: bool = True, **fmt) -> tuple[str, Any]:
+        """Walk ENDPOINT_CANDIDATES[kind]; return (path_used, json_body) on first 2xx.
+        With required=False, return (None, None) instead of stopping the run."""
         last_err = None
         for tmpl in ENDPOINT_CANDIDATES[kind]:
             path = tmpl.format(**fmt)
@@ -365,6 +363,9 @@ class MSTR:
             last_err = (path, r.status_code, r.text[:200])
             if self.verbose:
                 print(f"[probe] {path} -> {r.status_code}", file=sys.stderr)
+        if not required:
+            print(f"  WARN {kind}: no working endpoint. last attempt: {last_err}", file=sys.stderr)
+            return None, None
         die(f"{kind}: no working endpoint. last attempt: {last_err}")
 
 
@@ -536,55 +537,94 @@ def cmd_kill_sessions(m: MSTR, args):
     connections too: filter with --project / --idle-minutes before --yes.
     """
     m.login()
-    info = m.get("/api/sessions/userInfo").json() or {}   # id + fullName; no login name here
+    info = _json_or(m.get("/api/sessions/userInfo"), {})   # id + fullName; no login name here
     me, me_full = "", str(info.get("fullName") or "")
     if info.get("id"):
         u = m.get(f"/api/users/{info['id']}")
         if u.ok:
-            me = str((u.json() or {}).get("username") or "")
+            me = str(_json_or(u, {}).get("username") or "")
+    if args.yes and not me:
+        # Without the login name the only key left is the display name, which other users can
+        # share — disconnecting by it could end someone else's sessions.
+        die("could not read your login name (GET /api/users/{id} failed); refusing to disconnect "
+            "connections matched by display name only. Run without --yes to list them.")
     nodes_r = m.get("/api/monitors/iServer/nodes")
     if nodes_r.status_code in (401, 403):
         die("listing user connections needs a monitoring privilege on this tenant; stale sessions "
             "will end on the idle timer (~30 min)")
-    nodes = [n.get("name") for n in ((nodes_r.json() or {}).get("nodes") or []) if n.get("name")] or [None]
+    nodes = [n.get("name") for n in (_json_or(nodes_r, {}).get("nodes") or [])
+             if isinstance(n, dict) and n.get("name")] or [None]
     conns = []
     for node in nodes:
-        params: dict = {"limit": 1000}
-        if me:
-            params["username"] = me
-        if node:
-            params["clusterNode"] = node
-        r = m.get("/api/monitors/userConnections", params=params)
-        if r.status_code in (401, 403):
-            die("listing user connections needs a monitoring privilege on this tenant")
-        if not r.ok:
-            die(f"list user connections: {format_mstr_error(r)}")
-        conns.extend((r.json() or {}).get("userConnections") or [])
+        offset = 0
+        for _page in range(50):                     # the monitor pages at `limit` (1000) rows
+            params: dict = {"limit": 1000, "offset": offset}
+            if me:
+                params["username"] = me
+            if node:
+                params["clusterNode"] = node
+            r = m.get("/api/monitors/userConnections", params=params)
+            if r.status_code in (401, 403):
+                die("listing user connections needs a monitoring privilege on this tenant")
+            if not r.ok:
+                die(f"list user connections: {format_mstr_error(r)}")
+            body = _json_or(r, {})
+            page = body.get("userConnections") or []
+            conns.extend(page)
+            offset += len(page)
+            if len(page) < 1000 or offset >= int(body.get("totalFiltered") or 0):
+                break
     now = time.time()
-
-    def idle_minutes(c: dict) -> float | None:
-        last = c.get("dateLastJobSubmitted") or c.get("dateConnectionCreated") or ""
-        stamp = strategy_auth._epoch(str(last)[:19] + "Z") if last else None
-        return (now - stamp) / 60 if stamp else None
 
     def mine(c: dict) -> bool:
         if me:
             return (c.get("username") or "").lower() == me.lower()
         return bool(me_full) and (c.get("userFullName") or "") == me_full
 
+    def idle(c: dict) -> float:
+        minutes = _connection_idle_minutes(c, now)
+        return minutes if minutes is not None else 0.0
+
     picked = [c for c in conns if mine(c)
               and (not args.project or args.project in (c.get("projectName"), c.get("projectId")))
-              and (idle_minutes(c) or 0) >= args.idle_minutes]
+              and idle(c) >= args.idle_minutes]
     rows = [{"id": c.get("id"), "project": c.get("projectName"), "application": c.get("applicationType"),
-             "created": c.get("dateConnectionCreated"), "idle_minutes": round(idle_minutes(c) or 0),
+             "created": c.get("dateConnectionCreated"), "idle_minutes": round(idle(c)),
              "open_jobs": c.get("openJobsCount")} for c in picked]
     disconnected = 0
     if args.yes:
         for c in picked:
             if m.delete(f"/api/monitors/userConnections/{c.get('id')}").status_code in (200, 204):
                 disconnected += 1
-    print(json.dumps({"user": me or me_full, "connections": rows, "disconnected": disconnected,
+    print(json.dumps({"user": me or me_full, "matched_by": "login" if me else "display_name",
+                      "connections": rows, "disconnected": disconnected,
                       "dry_run": not args.yes}, indent=2))
+
+
+def _json_or(r, default: Any = None) -> Any:
+    """r.json(), or `default` (an empty dict when omitted) when the body is empty, not JSON,
+    or not the expected kind of value."""
+    if default is None:
+        default = {}
+    try:
+        body = r.json() if getattr(r, "text", "x") else None
+    except ValueError:
+        return default
+    if body is None or not isinstance(body, type(default)):
+        return default
+    return body
+
+
+def _connection_idle_minutes(c: dict, now: float) -> float | None:
+    """Minutes since a user connection's last job (or its creation). The monitor's timestamps
+    carry a UTC offset (…+0000, …-0500); it must be kept — dropping it skews idle time by the
+    offset (hours), which once made every connection look stale. No offset means UTC. None when
+    the stamp can't be read."""
+    last = str(c.get("dateLastJobSubmitted") or c.get("dateConnectionCreated") or "").strip()
+    if not last:
+        return None
+    stamp = strategy_auth._epoch(last.replace(" ", "T", 1))
+    return (now - stamp) / 60 if stamp is not None else None
 
 
 def cmd_release_locks(m: MSTR, args):
@@ -595,9 +635,12 @@ def cmd_release_locks(m: MSTR, args):
     project and every subsequent open returns 8004cc41 until it ages out.
     There is no way to enumerate "all open changesets" via the public API, so
     this helper provokes the lock conflict, parses the LOCKID out of the error,
-    verifies the lock belongs to the current user, and DELETEs the changeset.
-    Repeats until open succeeds (in which case it discards the freshly-opened
-    one too, leaving the project clean).
+    and releases it only when GET /api/model/schema/lock says the current user owns
+    it (see _release_own_lock). Repeats until open succeeds (in which case it
+    discards the freshly-opened one too, leaving the project clean).
+
+    "Owned by the current user" means the same account, not this process: run it only
+    when no other job is using this account against the project.
     """
     m.login()
     released: list[str] = []
@@ -607,30 +650,21 @@ def cmd_release_locks(m: MSTR, args):
         # a non-schema changeset that never collides with the stale lock.
         r = m.post("/api/model/changesets?schemaEdit=true", json={"schemaEdit": True})
         if r.ok:
-            cs = r.json().get("id")
+            cs = _json_or(r, {}).get("id")
             if cs:
+                if isinstance(getattr(m, "open_changesets", None), set):
+                    m.open_changesets.add(cs)        # discarded on any exit path
                 discard_cs(m, cs)
             break
-        try:
-            body = r.json()
-        except ValueError:
+        body = _json_or(r, {})
+        if not body:
             print(f"release-locks: unexpected response {r.status_code}: {r.text[:200]}", file=sys.stderr)
             break
-        lockid = _extract_lockid_from_error(body)
-        my_uid = (body or {}).get("errors", [{}])[0].get("additionalProperties", {}).get("userId")
+        lockid = _release_own_lock(m, body)
         if not lockid:
-            print(f"release-locks: no LOCKID in error: {format_mstr_error(r)}", file=sys.stderr)
             break
-        if not _lock_owned_by_self(body, my_uid):
-            print(f"release-locks: lock {lockid} not owned by current user; will age out", file=sys.stderr)
-            break
-        dr = m.delete(f"/api/model/changesets/{lockid}")
-        if dr.status_code in (200, 204):
-            released.append(lockid)
-            print(f"release-locks: released {lockid}", file=sys.stderr)
-        else:
-            print(f"release-locks: failed to release {lockid}: {dr.status_code} {dr.text[:200]}", file=sys.stderr)
-            break
+        released.append(lockid)
+        print(f"release-locks: released {lockid}", file=sys.stderr)
     print(json.dumps({"released": released, "count": len(released)}, indent=2))
 
 
@@ -681,8 +715,7 @@ def cmd_openapi_summary(m: MSTR, args):
         die(f"no OpenAPI spec found. last attempt: {last}")
 
     if args.out:
-        with open(args.out, "w", encoding="utf-8") as f:
-            f.write(spec_text)
+        _write_private(args.out, spec_text)
 
     title = _re.search(r"^\s*title:\s*(.+)$", spec_text, _re.MULTILINE)
     version = _re.search(r"^\s*version:\s*[\"']?([^\"'\n]+)", spec_text, _re.MULTILINE)
@@ -810,14 +843,43 @@ def cmd_api_call(m: MSTR, args):
         out["body"] = r.text[: args.text_limit]
         out["body_truncated"] = len(r.text) > args.text_limit
     if args.out:
-        mode = "w"
-        with open(args.out, mode, encoding="utf-8") as f:
-            if isinstance(out.get("body"), (dict, list)):
-                json.dump(out["body"], f, indent=2)
-            else:
-                f.write(str(out.get("body", "")))
+        # The file keeps the full body (tokens included) and is readable by this user only.
+        _write_private(args.out, out.get("body", ""))
         out["saved_to"] = args.out
+    if not getattr(args, "show_secrets", False):
+        # Some responses carry credentials in the body (POST /api/v2/auth/identityToken,
+        # POST /api/auth/apiTokens); terminal output and logs must not.
+        out["body"] = _redact_body_secrets(out.get("body"))
     print(json.dumps(out, indent=2))
+
+
+_SECRET_BODY_KEYS = {"apitoken", "identitytoken", "authtoken", "accesstoken", "refreshtoken", "idtoken",
+                     "token", "password", "newpassword", "oldpassword", "clientsecret"}
+
+
+def _redact_body_secrets(value):
+    """Copy of a JSON value with credential-looking fields replaced by "<redacted>"."""
+    if isinstance(value, dict):
+        return {k: ("<redacted>" if str(k).lower() in _SECRET_BODY_KEYS and v not in (None, "")
+                    else _redact_body_secrets(v)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_body_secrets(v) for v in value]
+    return value
+
+
+def _write_private(path: str, data) -> None:
+    """Write JSON (dict/list) or text to `path`, readable by this user only (0600): responses
+    and reports can carry tokens or user data."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.fchmod(fd, 0o600)          # an existing file keeps its old mode otherwise
+    except (AttributeError, OSError):
+        pass
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        if isinstance(data, (dict, list)):
+            json.dump(data, f, indent=2, default=str)
+        else:
+            f.write(str(data))
 
 
 # ── Build ─────────────────────────────────────────────────────────────────────
@@ -909,8 +971,10 @@ def load_erd(path: str) -> list[dict]:
         return d
     with open(path, encoding="utf-8") as f: txt = f.read()
     rels = []
+    # Every pattern below starts at a word boundary (lookbehind): an unanchored leading
+    # `\w+` / `Ref` makes the scan quadratic on long tokens (a 40 KB word took 15 s).
     # DBML:  Ref: "posts"."user_id" > "users"."id"   or  Ref: posts.user_id > users.id
-    for m in _re.finditer(r'Ref:?\s*"?([^".\s]+)"?\."?([^".\s]+)"?\s*([<>\-]+)\s*"?([^".\s]+)"?\."?([^".\s]+)"?', txt):
+    for m in _DBML_REF.finditer(txt):
         src_t, src_c, op, dst_t, dst_c = m.groups()
         if op == "<":     # src is the one side, dst the many side
             rels.append({"parent": f"{src_t}.{src_c}", "child": f"{dst_t}.{dst_c}",
@@ -923,18 +987,104 @@ def load_erd(path: str) -> list[dict]:
                          "relationship_table": src_t,
                          "type": "one_to_one" if op == "-" else "one_to_many"})
     # Mermaid: TABLE1 ||--o{ TABLE2 : label   (one-to-many)
-    for m in _re.finditer(r'(\w+)\s*\|\|--o\{\s*(\w+)\s*:\s*"?([\w_]+)"?', txt):
+    for m in _MERMAID_ONE_TO_MANY.finditer(txt):
         parent_t, child_t, col = m.groups()
         rels.append({"parent": f"{parent_t}.{col}", "child": f"{child_t}.{col}",
                      "relationship_table": child_t, "type": "one_to_many"})
-    # SQL DDL: REFERENCES parent(col) embedded in CREATE TABLE child
-    for table_m in _re.finditer(r'CREATE\s+TABLE\s+"?(\w+)"?[^;]+?(?=;|$)', txt, _re.IGNORECASE|_re.DOTALL):
-        child_t = table_m.group(1)
-        for col_m in _re.finditer(r'"?(\w+)"?\s+[\w\(\)]+\s+REFERENCES\s+"?(\w+)"?\s*\(\s*"?(\w+)"?\s*\)',
-                                  table_m.group(0), _re.IGNORECASE):
-            child_c, parent_t, parent_c = col_m.groups()
-            rels.append({"parent": f"{parent_t}.{parent_c}", "child": f"{child_t}.{child_c}",
-                         "relationship_table": child_t, "type": "one_to_many"})
+    rels.extend(_ddl_foreign_keys(txt))
+    return rels
+
+
+_DBML_REF = _re.compile(
+    r'(?<![\w"])Ref:?\s*"?([^".\s]+)"?\."?([^".\s]+)"?\s*([<>\-]+)\s*"?([^".\s]+)"?\."?([^".\s]+)"?')
+_MERMAID_ONE_TO_MANY = _re.compile(r'(?<!\w)(\w+)\s*\|\|--o\{\s*(\w+)\s*:\s*"?(\w+)"?')
+_DDL_IDENT = r'(?:"[^"\n]+"|`[^`\n]+`|\[[^\]\n]+\]|\w+)'
+_DDL_QNAME = rf'(?:{_DDL_IDENT}\s*\.\s*){{0,2}}({_DDL_IDENT})'     # [db.][schema.]name -> name
+_DDL_CREATE = _re.compile(
+    rf'(?<!\w)CREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:GLOBAL|LOCAL)\s+)?(?:TEMP(?:ORARY)?\s+)?(?:EXTERNAL\s+)?'
+    rf'TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?{_DDL_QNAME}\s*\(', _re.I)
+_DDL_ALTER_FK = _re.compile(
+    rf'(?<!\w)ALTER\s+TABLE\s+(?:ONLY\s+)?(?:IF\s+EXISTS\s+)?{_DDL_QNAME}\s+ADD\s+(?:CONSTRAINT\s+{_DDL_IDENT}\s+)?'
+    rf'FOREIGN\s+KEY\s*\(\s*({_DDL_IDENT})\s*\)\s*REFERENCES\s+{_DDL_QNAME}\s*\(\s*({_DDL_IDENT})\s*\)', _re.I)
+_DDL_TABLE_FK = _re.compile(
+    rf'^(?:CONSTRAINT\s+{_DDL_IDENT}\s+)?FOREIGN\s+KEY\s*\(\s*({_DDL_IDENT})\s*\)\s*'
+    rf'REFERENCES\s+{_DDL_QNAME}\s*\(\s*({_DDL_IDENT})\s*\)', _re.I)
+_DDL_COLUMN_FK = _re.compile(
+    rf'^({_DDL_IDENT})\s.*?\bREFERENCES\s+{_DDL_QNAME}\s*\(\s*({_DDL_IDENT})\s*\)', _re.I | _re.S)
+_DDL_CONSTRAINT_WORDS = {"constraint", "primary", "foreign", "unique", "check", "key", "index", "exclude", "like"}
+
+
+def _ddl_name(ident: str) -> str:
+    ident = ident.strip()
+    if len(ident) >= 2 and ident[0] + ident[-1] in ('""', "``", "[]"):
+        return ident[1:-1]
+    return ident
+
+
+def _ddl_split_items(body: str) -> list[str]:
+    """Top-level comma-separated items of a CREATE TABLE body (parentheses and quotes respected)."""
+    items, cur, depth, quote = [], [], 0, None
+    for ch in body:
+        if quote:
+            quote = None if ch == quote else quote
+        elif ch in "'\"`":
+            quote = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            items.append("".join(cur).strip())
+            cur = []
+            continue
+        cur.append(ch)
+    items.append("".join(cur).strip())
+    return [i for i in items if i]
+
+
+def _ddl_foreign_keys(txt: str) -> list[dict]:
+    """Single-column foreign keys from SQL DDL: column-level REFERENCES and table-level
+    FOREIGN KEY clauses inside CREATE TABLE (with IF NOT EXISTS, schema-qualified and quoted
+    names, statements with or without `;`), and ALTER TABLE … ADD … FOREIGN KEY. Composite
+    keys are skipped: one attribute relationship can't express them."""
+    txt = _re.sub(r"/\*.*?\*/", " ", txt, flags=_re.S)
+    txt = _re.sub(r"--[^\n]*", " ", txt)
+    rels = []
+
+    def add(child_t, child_c, parent_t, parent_c):
+        child_t, child_c, parent_t, parent_c = map(_ddl_name, (child_t, child_c, parent_t, parent_c))
+        rels.append({"parent": f"{parent_t}.{parent_c}", "child": f"{child_t}.{child_c}",
+                     "relationship_table": child_t, "type": "one_to_many"})
+
+    for tm in _DDL_CREATE.finditer(txt):
+        child_t = tm.group(1)
+        depth, quote, end = 1, None, len(txt)        # body = text up to the matching ")"
+        for i in range(tm.end(), len(txt)):
+            ch = txt[i]
+            if quote:
+                quote = None if ch == quote else quote
+            elif ch in "'\"`":
+                quote = ch
+            elif ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        for item in _ddl_split_items(txt[tm.end():end]):
+            fk = _DDL_TABLE_FK.match(item)
+            if fk:
+                add(child_t, fk.group(1), fk.group(2), fk.group(3))
+                continue
+            first = item.split(None, 1)[0].lower() if item.split() else ""
+            if first in _DDL_CONSTRAINT_WORDS:
+                continue
+            col = _DDL_COLUMN_FK.match(item)
+            if col:
+                add(child_t, col.group(1), col.group(2), col.group(3))
+    for am in _DDL_ALTER_FK.finditer(txt):
+        add(am.group(1), am.group(2), am.group(3), am.group(4))
     return rels
 
 
@@ -1039,10 +1189,15 @@ def _format_matches(current: dict | None, want: list[dict]) -> bool:
     return all(have.get(t["type"]) == t["value"] for t in want)
 
 
-def fetch_table_metadata(m: MSTR, ds_id: str, namespace: str, tname: str) -> dict:
+def fetch_table_metadata(m: MSTR, ds_id: str, namespace: str, tname: str, *,
+                         required: bool = True) -> dict | None:
+    """Catalog columns of a warehouse table. required=False returns None instead of
+    stopping the run when no describe endpoint answers."""
     ns_id = resolve_namespace_id(m, ds_id, namespace)
     tb_id = encode_tb_id(namespace, tname)
-    path, body = m.try_candidates("describe_table", id=ds_id, ns_id=ns_id, tb_id=tb_id)
+    path, body = m.try_candidates("describe_table", required=required, id=ds_id, ns_id=ns_id, tb_id=tb_id)
+    if body is None:
+        return None
     cols = body.get("columns") or body.get("physicalTable",{}).get("columns") or []
     # Sanitize the catalog's INT32_MIN sentinel in dataType before any consumer
     # forwards these columns into a model-body create/patch. See
@@ -1142,9 +1297,11 @@ def open_cs(m: MSTR, *, schema_edit: bool = False, release_self_locks: bool = Fa
                         write.
 
     release_self_locks=True — if open fails with 8004cc41 (schemaEdit lock
-                              conflict) and the existing lock is owned by the
-                              current user, delete it and retry once. Useful
-                              after a previous script crash left a stale lock.
+                              conflict) and GET /api/model/schema/lock says the
+                              current user owns the lock, release it and retry
+                              once (see _release_own_lock). Opt-in only: the same
+                              account running another job against the project
+                              owns that lock too.
 
     Implementation note: Strategy ignores `schemaEdit: true` in the JSON body
     on this endpoint; it has to be passed as a query param (`?schemaEdit=true`)
@@ -1158,21 +1315,10 @@ def open_cs(m: MSTR, *, schema_edit: bool = False, release_self_locks: bool = Fa
         path = "/api/model/changesets?schemaEdit=true"
     r = m.post(path, json=body)
     if not r.ok:
-        # Lock-conflict recovery path — 8004cc41 with a self-owned existing lock.
-        try:
-            err_body = r.json()
-        except Exception:
-            err_body = None
-        if release_self_locks:
-            lockid = _extract_lockid_from_error(err_body)
-            my_uid = (((err_body or {}).get("errors") or [{}])[0].get("additionalProperties") or {}).get("userId")
-            if lockid and _lock_owned_by_self(err_body, my_uid):
-                print(f"[open_cs] releasing self-owned stale lock {lockid}", file=sys.stderr)
-                try:
-                    m.delete(f"/api/model/changesets/{lockid}")
-                except Exception:
-                    pass
-                r = m.post(path, json=body)
+        # Lock-conflict recovery path — 8004cc41 with a lock this user provably owns.
+        err_body = _json_or(r, {})
+        if release_self_locks and _extract_lockid_from_error(err_body) and _release_own_lock(m, err_body):
+            r = m.post(path, json=body)
         if not r.ok:
             hint = ""
             try:
@@ -1181,7 +1327,7 @@ def open_cs(m: MSTR, *, schema_edit: bool = False, release_self_locks: bool = Fa
             except Exception:
                 pass
             die(f"open_cs: {format_mstr_error(r)}{hint}")
-    d = r.json()
+    d = _json_or(r, {})
     cs = d.get("id") or d.get("changesetId", "")
     if not cs:
         die(f"open_cs: {d}")
@@ -1192,13 +1338,89 @@ def open_cs(m: MSTR, *, schema_edit: bool = False, release_self_locks: bool = Fa
 
 
 def commit_cs(m: MSTR, cs: str):
-    r = m.post(f"/api/model/changesets/{cs}/commit")
+    try:
+        r = m.post(f"/api/model/changesets/{cs}/commit")
+    except requests.ReadTimeout:
+        # The commit reached the server (connect failures are retried; read timeouts are
+        # not) and may still be applying. Discarding it now could race the commit, so stop
+        # tracking it and say so instead.
+        m.s.headers.pop("X-MSTR-MS-Changeset", None)
+        if isinstance(getattr(m, "open_changesets", None), set):
+            m.open_changesets.discard(cs)
+        die(f"commit {cs} timed out; it may still be applying. Check the model before retrying "
+            f"(raise MSTR_HTTP_TIMEOUT for large models); if the changes are missing, "
+            f"`build_mosaic.py release-locks` frees a lock left behind.")
     m.s.headers.pop("X-MSTR-MS-Changeset", None)
     if not r.ok:
         discard_cs(m, cs)   # a failed commit leaves the changeset (and any schema lock) open
         die(f"commit {cs}: {format_mstr_error(r)}")
     if isinstance(getattr(m, "open_changesets", None), set):
         m.open_changesets.discard(cs)
+
+
+def _lock_owner_from_error(body) -> str:
+    try:
+        errs = (body or {}).get("errors") or []
+        return str((((errs[0] or {}).get("additionalProperties") or {}).get("existingLock") or {})
+                   .get("ownerId") or "") if errs else ""
+    except (AttributeError, TypeError):
+        return ""
+
+
+def _my_user_id(m: MSTR) -> str:
+    """The signed-in user's id (GET /api/sessions/userInfo); '' when it can't be read."""
+    cached = getattr(m, "_user_id", None)
+    if cached is None:
+        r = m.get("/api/sessions/userInfo")
+        cached = str(_json_or(r, {}).get("id") or "") if r.ok else ""
+        try:
+            m._user_id = cached
+        except AttributeError:
+            pass
+    return cached
+
+
+def _release_own_lock(m: MSTR, err_body) -> str | None:
+    """Release the stale schema lock named in an 8004cc41 error, but only when the lock is
+    provably this user's (GET /api/model/schema/lock owner == GET /api/sessions/userInfo id)
+    and is not one of this run's own changesets. Tries DELETE /api/model/changesets/{lockId}
+    first, then DELETE /api/model/schema/lock: a committed schemaEdit changeset's lock
+    outlives its session, and deleting that changeset from a new session fails (8004cb15).
+    Returns the released LOCKID, or None after saying why on stderr.
+
+    Ownership is per account, not per process: another job signed in as the same user owns
+    the lock too, so callers make this opt-in."""
+    lockid = _extract_lockid_from_error(err_body)
+    if not lockid:
+        print("  [locks] the lock-conflict error names no LOCKID; nothing released", file=sys.stderr)
+        return None
+    if lockid in (getattr(m, "open_changesets", None) or set()):
+        print(f"  [locks] {lockid} is one of this run's own changesets; not releasing it", file=sys.stderr)
+        return None
+    me = _my_user_id(m)
+    lock_r = m.get("/api/model/schema/lock")
+    lock = _json_or(lock_r, {}) if lock_r.ok else {}
+    owner = str(lock.get("ownerId") or "") or _lock_owner_from_error(err_body)
+    held = _re.search(r"<LOCKID>([A-F0-9]+)</LOCKID>", str(lock.get("comment") or ""))
+    if not me or owner != me:
+        who = lock.get("ownerName") or owner or "an unknown user"
+        print(f"  [locks] lock {lockid} belongs to {who}, not the signed-in user; it ages out on its own",
+              file=sys.stderr)
+        return None
+    print(f"  [locks] releasing lock {lockid} held by this user since {lock.get('dateCreated') or '?'}",
+          file=sys.stderr)
+    dr = m.delete(f"/api/model/changesets/{lockid}")
+    if dr.status_code in (200, 204):
+        return lockid
+    if held and held.group(1) != lockid:
+        print(f"  [locks] the schema lock is now {held.group(1)}, not {lockid}; leaving it", file=sys.stderr)
+        return None
+    lr = m.delete("/api/model/schema/lock")
+    if lr.status_code in (200, 204):
+        return lockid
+    print(f"  [locks] could not release {lockid}: changeset {format_mstr_error(dr)}; "
+          f"schema lock {format_mstr_error(lr)}", file=sys.stderr)
+    return None
 
 
 def format_mstr_error(response, prefix: str = "") -> str:
@@ -1212,16 +1434,19 @@ def format_mstr_error(response, prefix: str = "") -> str:
 
 
 def discard_cs(m: MSTR, cs: str) -> None:
-    """Best-effort discard of a changeset. Used in error paths."""
+    """Best-effort discard of a changeset. Used in error paths. A changeset this run tracks
+    but has already committed or discarded is not DELETEd again."""
     if not cs:
         return
-    try:
-        m.delete(f"/api/model/changesets/{cs}")
-    except Exception:
-        pass
+    tracked = getattr(m, "open_changesets", None)
+    if not isinstance(tracked, set) or cs in tracked:
+        try:
+            m.delete(f"/api/model/changesets/{cs}")
+        except Exception:
+            pass
     m.s.headers.pop("X-MSTR-MS-Changeset", None)
-    if isinstance(getattr(m, "open_changesets", None), set):
-        m.open_changesets.discard(cs)
+    if isinstance(tracked, set):
+        tracked.discard(cs)
 
 
 # ── Relationship safety: merge-aware PUT + join-table preflight ──────────────
@@ -1236,16 +1461,31 @@ def get_attribute_relationships(
     m: MSTR, model_id: str, attr_id: str,
 ) -> list[dict] | None:
     """Read the current set of relationships on a Mosaic attribute. Returns []
-    when the attribute has none and None when the read fails — callers must not
-    treat a failed read as "no relationships" before a destructive PUT."""
+    when the attribute has none and None when the read fails or the answer has a
+    shape this helper doesn't know — callers must not treat either as "no
+    relationships" before a destructive PUT.
+
+    Accepts `relationships` as a list (what tenants return today) or wrapped as
+    {"relationships": [...]} (how the spec types ms-DataModelAttribute.relationships)."""
     r = m.get(f"/api/model/dataModels/{model_id}/attributes/{attr_id}")
     if not r.ok:
         if m.verbose:
             print(f"[rel-merge] read {attr_id}: {format_mstr_error(r)}", file=sys.stderr)
         return None
-    body = r.json() if r.text else {}
-    rels = body.get("relationships") or []
-    return rels if isinstance(rels, list) else []
+    try:
+        body = r.json() if r.text else {}
+    except ValueError:
+        return None
+    if not isinstance(body, dict):
+        return None
+    rels = body.get("relationships")
+    if isinstance(rels, dict):
+        rels = rels.get("relationships")
+    if rels is None:
+        return []
+    if not isinstance(rels, list) or not all(isinstance(x, dict) for x in rels):
+        return None
+    return rels
 
 
 def _rel_key(rel: dict) -> tuple[str, str, str]:
@@ -1278,6 +1518,11 @@ def put_relationships_merged(
 
     Set `replace=True` only when you explicitly want the wipe (e.g. cleanup).
 
+    Refuses (no PUT) when a new relationship contradicts the set: its reverse
+    (child → parent) already exists or is also being added — the pair would form a
+    cycle — or the same parent/child/table already exists with a different
+    relationshipType. Those need a deliberate decision (`--replace`), not a merge.
+
     Returns (ok, added_count, total_count, error_or_empty). `added_count` is
     the number of relationships actually new; `total_count` is the size of the
     final set written.
@@ -1293,6 +1538,9 @@ def put_relationships_merged(
         if existing is None:
             return (False, 0, 0, f"could not read {attr_id}'s current relationships; refusing a PUT "
                                  "that would replace them")
+        problem = _relationship_conflicts(existing, new_rels)
+        if problem:
+            return False, 0, len(existing), problem
         existing_keys = {_rel_key(r) for r in existing}
         merged = list(existing)
         added = 0
@@ -1304,14 +1552,38 @@ def put_relationships_merged(
             added += 1
 
     body = {"relationships": merged}
-    r = m.put(
-        f"/api/model/dataModels/{model_id}/attributes/{attr_id}/relationships"
-        f"?changesetId={cs_id}",
-        json=body,
-    )
+    r = m.put(f"/api/model/dataModels/{model_id}/attributes/{attr_id}/relationships",
+              json=body, headers={"X-MSTR-MS-Changeset": cs_id})
     if not r.ok:
         return False, added, len(merged), format_mstr_error(r)
     return True, added, len(merged), ""
+
+
+def _relationship_conflicts(existing: list[dict], new_rels: list[dict]) -> str:
+    """'' when new_rels merge cleanly into existing; otherwise what contradicts what."""
+    def ends(rel):
+        key = _rel_key(rel)
+        return key[0], key[1]
+
+    have = {}
+    for rel in existing:
+        have.setdefault(_rel_key(rel), rel.get("relationshipType"))
+    pairs = {ends(rel) for rel in existing}
+    for rel in new_rels:
+        parent, child = ends(rel)
+        if parent and parent == child:
+            return f"{parent} → {child} relates an attribute to itself (8004ccdb); refusing"
+        if (child, parent) in pairs:
+            return (f"{parent} → {child} would reverse the existing {child} → {parent}; "
+                    "refusing to write a cycle")
+        key = _rel_key(rel)
+        if key in have and rel.get("relationshipType") and have[key] \
+                and rel.get("relationshipType") != have[key]:
+            return (f"{parent} → {child} already exists as {have[key]}, not {rel.get('relationshipType')}; "
+                    "change it with --replace")
+        pairs.add((parent, child))
+        have.setdefault(key, rel.get("relationshipType"))
+    return ""
 
 
 # ── Post-build topology validation ───────────────────────────────────────────
@@ -1341,11 +1613,53 @@ def _attribute_is_isolated(relationships: list, expression_table_names: set[str]
     return not relationships and len(expression_table_names) < 2
 
 
+_PAGE_SIZE = 1000
+
+
+def _list_all(m: MSTR, path: str, key: str, *, page_size: int = _PAGE_SIZE,
+              params: dict | None = None):
+    """Every item of a Modeling list endpoint (the `key` array), paging with limit/offset so
+    large models are never silently truncated. Stops at the reported `total` when there is one
+    (a server may cap its page size below `limit`), otherwise on a short page, and always when
+    a page adds nothing new (a server that ignores offset). Returns (items, None), or
+    (items_so_far, failed_response)."""
+    items: list = []
+    seen: set = set()
+    offset = 0
+    for _ in range(500):
+        r = m.get(path, params={**(params or {}), "limit": page_size, "offset": offset})
+        if not r.ok:
+            return items, r
+        body = _json_or(r, {})
+        page = body.get(key) or body.get("items") or []
+        fresh = 0
+        for it in page:
+            ident = ((it.get("information") or {}).get("objectId") or it.get("id")) if isinstance(it, dict) else None
+            if ident is not None:
+                if ident in seen:
+                    continue
+                seen.add(ident)
+            items.append(it)
+            fresh += 1
+        offset += len(page)
+        total = body.get("total")
+        if not fresh:
+            break
+        if isinstance(total, int) and not isinstance(total, bool):
+            if offset >= total:
+                break
+        elif len(page) < page_size:
+            break
+    return items, None
+
+
 def post_build_validate_topology(
     m: MSTR,
     model_id: str,
     *,
     expected_tables: list[str] | None = None,
+    attrs: list | None = None,
+    tables: list | None = None,
 ) -> dict:
     """Return a structured report on model topology health.
 
@@ -1389,17 +1703,17 @@ def post_build_validate_topology(
 
     Any caller can use this — it does not exit the process. Pair with
     cmd_validate_model for CLI usage with non-zero exit-on-failure semantics.
+    Pass `attrs` / `tables` when the caller already listed them (saves the reads).
     """
-    attrs_r = m.get(f"/api/model/dataModels/{model_id}/attributes?limit=2000")
-    if not attrs_r.ok:
-        return {
-            "ok": False,
-            "error": format_mstr_error(attrs_r, "topology attributes read"),
-        }
-    attrs = (attrs_r.json() or {}).get("attributes", []) or []
-
-    tables_r = m.get(f"/api/model/dataModels/{model_id}/tables")
-    tables = (tables_r.json() or {}).get("tables", []) if tables_r.ok else []
+    if attrs is None:
+        attrs, failed = _list_all(m, f"/api/model/dataModels/{model_id}/attributes", "attributes")
+        if failed is not None:
+            return {
+                "ok": False,
+                "error": format_mstr_error(failed, "topology attributes read"),
+            }
+    if tables is None:
+        tables, _failed = _list_all(m, f"/api/model/dataModels/{model_id}/tables", "tables")
 
     rel_count = 0
     by_table_rels: dict[str, int] = {}
@@ -1511,8 +1825,10 @@ def batch_call(
     atomic=True  → allowPartialSuccess=false (rollback on any failure).
     atomic=False → allowPartialSuccess=true  (207 Multi-Status, per-op results).
 
-    Returns (passed, failed). Falls back to per-op individual POSTs if the
-    tenant returns 404 on /api/model/batch.
+    Returns (passed, failed); each result carries `_index`, the position of its op, or None
+    when it can't be told (a result that names no object and doesn't line up with the ops).
+    The endpoint is a UI internal absent from the spec, so it is opt-in (create_objects);
+    when the tenant has no such route (404/405/501) the ops go out one by one instead.
     """
     allow_partial = "false" if atomic else "true"
     r = m.post(
@@ -1520,23 +1836,50 @@ def batch_call(
         headers={"X-MSTR-MS-Changeset": changeset_id},
         json={"operations": ops},
     )
-    if r.status_code == 404:
+    if r.status_code in (404, 405, 501):
         if m.verbose:
-            print("[batch] endpoint 404 — falling back to per-op individual calls",
+            print(f"[batch] endpoint {r.status_code} — falling back to per-op individual calls",
                   file=sys.stderr)
         return _batch_fallback(m, model_id, changeset_id, ops)
     if r.status_code not in (200, 207, 400):
         raise RuntimeError(f"batch_call HTTP {r.status_code}: {r.text[:400]}")
-    body = r.json() if r.text else {}
+    body = _json_or(r, {})
     results = body.get("results") or body.get("operations") or body.get("ops") or []
     if r.status_code == 400 and not results:   # atomic batch rejected as a whole
         return [], [{"_index": i, "op": op, "status": 400, "error": str(body)[:400]} for i, op in enumerate(ops)]
-    for i, res in enumerate(results):          # results come back in op order; keep the index
-        if isinstance(res, dict):
-            res.setdefault("_index", i)
+    # Map each result to its op by the object name it reports; fall back to position only when
+    # the counts line up. A partial-success answer that omits results must not shift IDs onto
+    # the wrong objects.
+    names: dict[str, int | None] = {}
+    for i, op in enumerate(ops):
+        name = ((op.get("value") or {}).get("information") or {}).get("name") if isinstance(op, dict) else None
+        if name:
+            names[name] = None if name in names else i          # duplicate names are ambiguous
+    aligned = len(results) == len(ops)
+    for i, res in enumerate(results):
+        if not isinstance(res, dict) or "_index" in res:
+            continue
+        resp = res.get("response") if isinstance(res.get("response"), dict) else res
+        name = (resp.get("information") or {}).get("name") if isinstance(resp.get("information"), dict) else None
+        if name and names.get(name) is not None:
+            res["_index"] = names[name]
+        else:
+            res["_index"] = i if aligned else None
+    if not aligned:
+        print(f"  WARN batch: {len(results)} result(s) for {len(ops)} op(s); results matched by name only",
+              file=sys.stderr)
     passed = [res for res in results if isinstance(res, dict) and 200 <= res.get("status", 500) < 300]
     failed = [res for res in results if res not in passed]
     return passed, failed
+
+
+def create_objects(m: MSTR, model_id: str, changeset_id: str, ops: list[dict], *,
+                   use_batch: bool = False) -> tuple[list[dict], list[dict]]:
+    """Create model objects in one changeset: one documented POST per object by default, or
+    the UI's undocumented POST /api/model/batch when use_batch is set."""
+    if use_batch:
+        return batch_call(m, model_id, changeset_id, ops, atomic=False)
+    return _batch_fallback(m, model_id, changeset_id, ops)
 
 
 def _batch_fallback(
@@ -1545,7 +1888,8 @@ def _batch_fallback(
     changeset_id: str,
     ops: list[dict],
 ) -> tuple[list[dict], list[dict]]:
-    """Individual POST fallback for tenants without /api/model/batch."""
+    """One documented POST per op (the default write path; also the fallback for tenants
+    without /api/model/batch). Results carry `_index`, the op's position."""
     PATH_MAP = {
         "/attributes":  f"/api/model/dataModels/{model_id}/attributes",
         "/factMetrics": f"/api/model/dataModels/{model_id}/factMetrics",
@@ -1582,9 +1926,8 @@ def _make_pipeline_table_body(
     cannot be fetched. Datatypes are normalized via schema_object_translator
     so the resulting model is publishable in-memory.
     """
-    try:
-        md = fetch_table_metadata(m, ds_id, schema, tname)
-    except SystemExit:
+    md = fetch_table_metadata(m, ds_id, schema, tname, required=False)
+    if md is None:
         return None
     cols_raw = md.get("columns", [])
     outer_cols, pipe_cols = [], []
@@ -1869,17 +2212,23 @@ def cmd_build(m: MSTR, args):
     # on the table; they just don't become attributes or metrics.
     skip_set = {c.lower() for c in (getattr(args, "skip_cols", None) or [])}
 
+    # Everything the post-build steps can fail on — security-filter syntax and members, ACL
+    # rights and trustee types, translation entries — is checked now, before any write, so a
+    # bad spec can't leave a half-configured model behind.
+    post_build = _prepare_post_build(m, args)
+
     # ── Create model ──
     print(f"→ Creating model '{args.name}'…", file=sys.stderr)
     dest_folder_id = resolve_dest_folder(m, args.dest_folder)   # may die(); before any changeset
-    failures = {"tables": 0, "attributes": 0, "metrics": 0, "relationships": 0, "post_build": 0}
+    failures = {"tables": 0, "attributes": 0, "displays": 0, "metrics": 0, "relationships": 0,
+                "post_build": 0}
     cs = open_cs(m)
     r = m.post("/api/model/dataModels", json={
         "information": {"name": args.name, "destinationFolderId": dest_folder_id},
         "dataServeMode": args.data_serve_mode,
     })
-    if not r.ok: die(f"create model: {r.status_code} {r.text[:400]}")
-    model_id = r.json()["information"]["objectId"]
+    model_id = (_json_or(r, {}).get("information") or {}).get("objectId") if r.ok else None
+    if not model_id: die(f"create model: {r.status_code} {r.text[:400]}")
     print(f"  model_id={model_id}", file=sys.stderr)
 
     # ── Add tables (pipeline/importSource shape) ──
@@ -1940,11 +2289,11 @@ def cmd_build(m: MSTR, args):
             },
         }
         r = m.post(f"/api/model/dataModels/{model_id}/tables", json=body)
-        if not r.ok:
+        new_tid = (_json_or(r, {}).get("information") or {}).get("objectId") if r.ok else None
+        if not new_tid:
             print(f"  WARN add table {h['table']}: {r.status_code} {r.text[:400]}", file=sys.stderr)
             failures["tables"] += 1
             continue
-        new_tid = r.json()["information"]["objectId"]
         key = (h["instance_id"], h["schema"], h["table"])
         table_id_map[key] = new_tid
         table_cols_map[key] = cols_raw
@@ -2044,15 +2393,32 @@ def cmd_build(m: MSTR, args):
     created_attrs = {}          # column_lower -> list of {id, table, table_id, name, role: "entity"|"descriptor"}
     total_attrs = total_metrics = 0
 
+    # Case-insensitive "TABLE.COLUMN" lookups, built once (first spelling wins, as before).
+    attr_overrides: dict = {}
+    for k, v in dictionary["attributes"].items():
+        attr_overrides.setdefault(str(k).lower(), v)
+    metric_overrides: dict = {}
+    for k, v in dictionary["metrics"].items():
+        metric_overrides.setdefault(str(k).lower(), v)
+
     def _dict_override(dkey):
-        for k,v in dictionary["attributes"].items():
-            if k.lower() == dkey.lower(): return v
-        return {}
+        return attr_overrides.get(dkey.lower()) or {}
+
+    def _patch_displays(aid: str, fids: list) -> None:
+        """Report and browse displays on the attribute's forms; a failure leaves blank labels."""
+        if not fids:
+            return
+        rd = m.patch(f"/api/model/dataModels/{model_id}/attributes/{aid}",
+                     json={"displays": {"reportDisplays": [{"id": f} for f in fids],
+                                        "browseDisplays": [{"id": f} for f in fids]}})
+        if not rd.ok:
+            print(f"    WARN displays on attribute {aid}: {format_mstr_error(rd)}", file=sys.stderr)
+            failures["displays"] += 1
 
     # 1) Create entity attributes for each unique PK column, expressions on all occurrences
     # Build a case-insensitive reverse map so Postgres (lowercase) col names match UPPERCASE entity_pks.
     col_tables_upper = {c.upper(): c for c in col_tables}
-    for pk_col in entity_pks:
+    for pk_col in sorted(entity_pks):          # sorted: the same build every run
         actual_col = col_tables_upper.get(pk_col)
         if actual_col is None: continue
         occs = col_tables[actual_col]
@@ -2080,17 +2446,13 @@ def cmd_build(m: MSTR, args):
             "attributeLookupTable": {"objectId": home["table_id"], "subType":"logical_table", "name": home["table"]},
         }
         r = m.post(f"/api/model/dataModels/{model_id}/attributes", json=attr_body)
-        if not r.ok:
+        resp = _json_or(r, {}) if r.ok else {}
+        aid = (resp.get("information") or {}).get("objectId")
+        if not aid:
             print(f"    WARN entity attr {name}: {r.status_code} {r.text[:200]}", file=sys.stderr)
             failures["attributes"] += 1
             continue
-        resp = r.json(); aid = resp["information"]["objectId"]
-        # displays PATCH
-        fids = [f["id"] for f in resp.get("forms",[]) if f.get("id")]
-        if fids:
-            m.s.patch(f"{m.base}/api/model/dataModels/{model_id}/attributes/{aid}",
-                      json={"displays": {"reportDisplays":[{"id":f} for f in fids],
-                                          "browseDisplays": [{"id":f} for f in fids]}})
+        _patch_displays(aid, [f["id"] for f in resp.get("forms",[]) if f.get("id")])
         entity_attr_of_table[home["table"]] = aid
         created_attrs[pk_col.lower()] = [{"id": aid, "table": home["table"],
                                           "table_id": home["table_id"], "name": name, "role":"entity"}]
@@ -2098,7 +2460,7 @@ def cmd_build(m: MSTR, args):
         print(f"  + entity attr '{name}' on {len(occs)} tables (lookup={friendly_table(home['table'])})", file=sys.stderr)
 
     # 1b) Conformed dimensions: one multi-table attribute per shared descriptor column.
-    for col in conformed_cols:
+    for col in sorted(conformed_cols):
         occs = col_tables[col]
         home = occs[0]   # first occurrence wins for lookup
         name = friendly_col(col)
@@ -2123,16 +2485,13 @@ def cmd_build(m: MSTR, args):
             "attributeLookupTable": {"objectId": home["table_id"], "subType":"logical_table", "name": home["table"]},
         }
         r = m.post(f"/api/model/dataModels/{model_id}/attributes", json=attr_body)
-        if not r.ok:
+        resp = _json_or(r, {}) if r.ok else {}
+        aid = (resp.get("information") or {}).get("objectId")
+        if not aid:
             print(f"    WARN conformed {name}: {r.status_code} {r.text[:200]}", file=sys.stderr)
             failures["attributes"] += 1
             continue
-        resp = r.json(); aid = resp["information"]["objectId"]
-        fids = [f["id"] for f in resp.get("forms",[]) if f.get("id")]
-        if fids:
-            m.s.patch(f"{m.base}/api/model/dataModels/{model_id}/attributes/{aid}",
-                      json={"displays":{"reportDisplays":[{"id":f} for f in fids],
-                                         "browseDisplays":[{"id":f} for f in fids]}})
+        _patch_displays(aid, [f["id"] for f in resp.get("forms",[]) if f.get("id")])
         created_attrs[col.lower()] = [{"id": aid, "table": home["table"],
                                         "table_id": home["table_id"], "name": name, "role":"conformed"}]
         total_attrs += 1
@@ -2197,6 +2556,8 @@ def cmd_build(m: MSTR, args):
                         {"id": existing["id"], "table": tname, "table_id": tid,
                          "name": name, "role": "conformed_by_name"})
                     print(f"  + conformed-by-name '{name}' += {tname}.{cname}", file=sys.stderr)
+                else:
+                    failures["attributes"] += 1      # the column is not modeled at all
                 continue
 
             attr_body = {
@@ -2214,16 +2575,13 @@ def cmd_build(m: MSTR, args):
                 "attributeLookupTable": {"objectId": tid, "subType":"logical_table", "name": tname},
             }
             r = m.post(f"/api/model/dataModels/{model_id}/attributes", json=attr_body)
-            if not r.ok:
+            resp = _json_or(r, {}) if r.ok else {}
+            aid = (resp.get("information") or {}).get("objectId")
+            if not aid:
                 print(f"    WARN attr {tname}.{cname}: {r.status_code} {r.text[:200]}", file=sys.stderr)
                 failures["attributes"] += 1
                 continue
-            resp = r.json(); aid = resp["information"]["objectId"]
-            fids = [f["id"] for f in resp.get("forms",[]) if f.get("id")]
-            if fids:
-                m.s.patch(f"{m.base}/api/model/dataModels/{model_id}/attributes/{aid}",
-                          json={"displays": {"reportDisplays":[{"id":f} for f in fids],
-                                              "browseDisplays":[{"id":f} for f in fids]}})
+            _patch_displays(aid, [f["id"] for f in resp.get("forms",[]) if f.get("id")])
             attrs_by_resolved_name[name.lower()] = {"id": aid, "table_id": tid}
             created_attrs.setdefault(cname.lower(), []).append(
                 {"id": aid, "table": tname, "table_id": tid, "name": name, "role":"descriptor"})
@@ -2241,13 +2599,12 @@ def cmd_build(m: MSTR, args):
             metric_desc = f"SUM of {cname} from the {short_table} table."
             metric_func = "sum"
             metric_fmt = None
-            for k,v in dictionary["metrics"].items():
-                if k.lower() == f"{tname}.{cname}".lower():
-                    if v.get("name"):        metric_name = v["name"]
-                    if v.get("description"): metric_desc = v["description"]
-                    if v.get("function"):    metric_func = v["function"].lower()
-                    if v.get("format"):      metric_fmt = _resolve_metric_format(v["format"])
-                    break
+            v = metric_overrides.get(f"{tname}.{cname}".lower())
+            if v:
+                if v.get("name"):        metric_name = v["name"]
+                if v.get("description"): metric_desc = v["description"]
+                if v.get("function"):    metric_func = v["function"].lower()
+                if v.get("format"):      metric_fmt = _resolve_metric_format(v["format"])
             if not metric_fmt:
                 metric_fmt = _default_metric_format(metric_name, dt_obj, metric_func)
             metric_body = {
@@ -2284,43 +2641,11 @@ def cmd_build(m: MSTR, args):
                 continue
             total_metrics += 1
 
-    # Snowflake support: auto-create a user-defined hierarchy object walking the
-    # longest parent→child entity chain (most common drill path). Skipped if the
-    # entity graph has no chains of length ≥ 3.
-    hierarchy_path = []
-    if total_attrs >= 3:
-        # Build entity adjacency: parent_attr_id -> [child_attr_id, ...]
-        adj = {}
-        for col, entries in created_attrs.items():
-            if not entries or entries[0].get("role") != "entity": continue
-            parent = entries[0]
-            # Anything with its PK column in another table: that other table's entity is a child
-            occs = col_tables.get(col.upper(), []) + col_tables.get(col, [])
-            for o in occs:
-                if o["table"] == parent["table"]: continue
-                child = next((info for entries2 in created_attrs.values() for info in entries2
-                              if info.get("role")=="entity" and info["table"]==o["table"]), None)
-                if child and child["id"] != parent["id"]:
-                    adj.setdefault(parent["id"], set()).add(child["id"])
-        # Find longest simple path via DFS
-        id_to_name = {info["id"]: info["name"] for entries in created_attrs.values()
-                      for info in entries if info.get("role")=="entity"}
-        best = []
-        def dfs(node, path, seen):
-            nonlocal best
-            if len(path) > len(best): best = list(path)
-            for nxt in adj.get(node, ()):
-                if nxt in seen: continue
-                path.append(nxt); seen.add(nxt)
-                dfs(nxt, path, seen)
-                path.pop(); seen.discard(nxt)
-        for start in adj:
-            dfs(start, [start], {start})
-        if len(best) >= 3:
-            hierarchy_path = [{"id": nid, "name": id_to_name.get(nid,"?")} for nid in best]
-
+    # (No auto-created hierarchy object: the data-model hierarchy endpoints this used to call are
+    # not in the spec and answered 404 8004cc04; relationships alone drive drilling.)
     print("→ Committing model changeset…", file=sys.stderr)
     commit_cs(m, cs)
+    print(f"[build] model {model_id} committed", file=sys.stderr)
 
     # ── Relationships (entity-first pattern) ──
     # 1) descriptor → entity: within each table, every descriptor attribute is a parent
@@ -2358,80 +2683,86 @@ def cmd_build(m: MSTR, args):
             if not child or child["id"] == parent["id"]: continue
             inferred_rels.append((parent, child, f"{parent['name']}→{child['name']}",
                                    o["table_id"], "one_to_many"))
-    # Deduplicate
-    seen = set(); deduped = []
+    # Deduplicate; drop the reverse of a pair already planned (two tables carrying each
+    # other's keys) — writing both would make a cycle, which the merge helper refuses for
+    # the whole child.
+    seen = set(); pairs = set(); deduped = []
     for p,c,label,rt,rty in inferred_rels:
         sig = (p["id"], c["id"], rt)
         if sig in seen: continue
-        seen.add(sig); deduped.append((p,c,label,rt,rty))
+        if (c["id"], p["id"]) in pairs:
+            print(f"  WARN skipped {label}: the reverse relationship is already planned "
+                  f"(the two tables carry each other's keys)", file=sys.stderr)
+            continue
+        seen.add(sig); pairs.add((p["id"], c["id"])); deduped.append((p,c,label,rt,rty))
     inferred_rels = deduped
 
     # Allow ERD/dict to override inference wholesale (only when explicitly provided)
     if explicit_rels:
         def _find_attr(ref: str):
-            t, _, col = ref.partition(".")
-            for entry in created_attrs.get(col.lower(), []):
+            t, _, col = (ref or "").partition(".")
+            entries = created_attrs.get(col.lower(), [])
+            for entry in entries:
                 if entry["table"].lower() == t.lower(): return entry
-            return (created_attrs.get(col.lower()) or [None])[0]
+            # Another table's attribute stands in only when it IS that column everywhere (an
+            # entity key or a conformed attribute spanning the tables). A same-named descriptor
+            # on a different table is a different attribute — wiring it would be wrong.
+            shared = [e for e in entries if e.get("role") in ("entity", "conformed")]
+            return shared[0] if shared else None
         inferred_rels = []
+        unmapped = []
         for rel in explicit_rels:
             p = _find_attr(rel.get("parent",""))
             c = _find_attr(rel.get("child",""))
-            if not (p and c): continue
+            if not (p and c) or p["id"] == c["id"]:
+                unmapped.append(f"{rel.get('parent')} → {rel.get('child')}"
+                                + (" (one attribute)" if p and c else ""))
+                continue
             rtbl_name = rel.get("relationship_table") or c["table"]
             rtbl_id = next((tid for (_,_,tn),tid in table_id_map.items()
                             if tn.lower()==rtbl_name.lower()), c["table_id"])
             inferred_rels.append((p, c, rel.get("parent"), rtbl_id, rel.get("type","one_to_many")))
+        if unmapped:
+            print(f"  WARN {len(unmapped)} explicit relationship(s) don't map to two model attributes "
+                  f"(table or column not modeled here, or both ends are one attribute): "
+                  f"{'; '.join(unmapped[:5])}{' …' if len(unmapped) > 5 else ''}", file=sys.stderr)
 
     rels_ok = 0
     if inferred_rels and not args.skip_relationships:
         print(f"→ Setting {len(inferred_rels)} relationships…", file=sys.stderr)
-        cs2 = open_cs(m)
-        # The relationships PUT replaces the child's whole relationship set (both
-        # directions), so one PUT per relationship keeps only the last one. Group by
-        # child and write each child once, merged with what is already there.
-        by_child: dict[str, list] = {}
-        for parent, child, label, rtbl_id, rtype in inferred_rels:
-            by_child.setdefault(child["id"], []).append((parent, child, label, {
-                "parent":{"objectId":parent["id"],"subType":"attribute"},
-                "child":{"objectId":child["id"],"subType":"attribute"},
-                "relationshipType": rtype,
-                "relationshipTable":{"objectId": rtbl_id,"subType":"logical_table"},
-            }))
-        for child_id, items in by_child.items():
-            ok, _added, _total, err = put_relationships_merged(
-                m, model_id, child_id, [rel for *_, rel in items], cs2)
-            if ok:
-                rels_ok += len(items)
-                for parent, child, label, _ in items:
-                    print(f"  {parent['table']}→{child['table']} [{label}]", file=sys.stderr)
-            else:
-                failures["relationships"] += len(items)
-                print(f"  WARN rels into {items[0][1]['name']}: {err}", file=sys.stderr)
-        commit_cs(m, cs2)
-
-    # Auto-create a hierarchy object for the longest dim chain (snowflake drill path)
-    hierarchy_id = None
-    if hierarchy_path:
-        path_name = " > ".join(n["name"] for n in hierarchy_path)
-        cs3 = open_cs(m)
-        hier_body = {
-            "information": {"name": f"Drill: {path_name}",
-                            "description": f"Auto-detected snowflake drill path: {path_name}."},
-            "attributes": [{"id": n["id"]} for n in hierarchy_path],
-            "relationships": [{"parent": hierarchy_path[i]["id"], "child": hierarchy_path[i+1]["id"]}
-                              for i in range(len(hierarchy_path)-1)],
-        }
-        for path in [f"/api/model/dataModels/{model_id}/hierarchies?changesetId={cs3}",
-                     f"/api/model/dataModels/{model_id}/userHierarchies?changesetId={cs3}"]:
-            r = m.post(path, json=hier_body)
-            if r.ok:
-                hierarchy_id = r.json().get("information",{}).get("objectId")
-                print(f"  + hierarchy '{path_name}' -> {hierarchy_id}", file=sys.stderr)
-                break
-            else:
-                print(f"    WARN hierarchy via {path}: {r.status_code} {r.text[:200]}", file=sys.stderr)
-        commit_cs(m, cs3)
+        try:
+            cs2 = open_cs(m)
+            # The relationships PUT replaces the child's whole relationship set (both
+            # directions), so one PUT per relationship keeps only the last one. Group by
+            # child and write each child once, merged with what is already there.
+            by_child: dict[str, list] = {}
+            for parent, child, label, rtbl_id, rtype in inferred_rels:
+                by_child.setdefault(child["id"], []).append((parent, child, label, {
+                    "parent":{"objectId":parent["id"],"subType":"attribute"},
+                    "child":{"objectId":child["id"],"subType":"attribute"},
+                    "relationshipType": rtype,
+                    "relationshipTable":{"objectId": rtbl_id,"subType":"logical_table"},
+                }))
+            for child_id, items in by_child.items():
+                ok, _added, _total, err = put_relationships_merged(
+                    m, model_id, child_id, [rel for *_, rel in items], cs2)
+                if ok:
+                    rels_ok += len(items)
+                    for parent, child, label, _ in items:
+                        print(f"  {parent['table']}→{child['table']} [{label}]", file=sys.stderr)
+                else:
+                    failures["relationships"] += len(items)
+                    print(f"  WARN rels into {items[0][1]['name']}: {err}", file=sys.stderr)
+            commit_cs(m, cs2)
+        except (SystemExit, requests.RequestException) as e:
+            # The model is committed; report the lost relationships instead of exiting without
+            # a summary (the run's `finally` discards the changeset if it is still open). Nothing
+            # in an uncommitted changeset survives, so every relationship counts as failed.
+            failures["relationships"] = len(inferred_rels)
+            rels_ok = 0
+            print(f"  WARN relationships not written: "
+                  f"{type(e).__name__ if isinstance(e, requests.RequestException) else 'see FATAL above'}",
+                  file=sys.stderr)
 
     summary = {
         "ok": True,
@@ -2444,8 +2775,7 @@ def cmd_build(m: MSTR, args):
         "inferred_relationships": rels_ok,
         "inferred_relationships_attempted": len(inferred_rels),
         "conformed_dimensions": len(conformed_cols),
-        "hierarchy_path": [n["name"] for n in hierarchy_path] if hierarchy_path else None,
-        "hierarchy_id": hierarchy_id,
+        "post_build": {},
         "data_validation": {
             "status": "not_run",
             "required": True,
@@ -2453,29 +2783,70 @@ def cmd_build(m: MSTR, args):
         },
     }
 
-    # ── Security filters ──
-    for sf in (args.security_filter or []):
-        _apply_security_filter(m, model_id, sf)
+    def step(label: str, fn) -> bool:
+        """One post-build step. A failure is recorded and the build goes on, so the summary —
+        with the model id — is always printed."""
+        try:
+            ok = bool(fn())
+        except (SystemExit, requests.RequestException) as e:
+            ok = False
+            print(f"  WARN {label}: "
+                  f"{type(e).__name__ if isinstance(e, requests.RequestException) else 'stopped (see FATAL above)'}",
+                  file=sys.stderr)
+        summary["post_build"][label] = "ok" if ok else "failed"
+        if not ok:
+            failures["post_build"] += 1
+        return ok
+
+    # ── Security filters (validated and members resolved before the model was created) ──
+    for prepared in post_build["security_filters"]:
+        step(f"security filter {prepared['name']}", lambda p=prepared: _create_security_filter(m, model_id, p))
     # ── ACL grants ──
     if args.grant or getattr(args, "deny", None):
-        _apply_acl(m, model_id, args.grant, model_id=model_id, sub_type="report_emma_cube",
-                   denies=getattr(args, "deny", []))
+        step("acl", lambda: _apply_acl(m, model_id, args.grant, model_id=model_id, sub_type="report_emma_cube",
+                                       denies=getattr(args, "deny", [])))
     # ── Translations ──
     if args.translate:
-        _apply_translations(m, model_id, args.translate)
-    # ── Certify ──
-    if args.certify and not _certify(m, model_id):
-        failures["post_build"] += 1
-    # ── Publish (for in_memory) ──
+        def _translate():
+            done, wanted = _apply_translations(m, model_id, args.translate)
+            return done == wanted
+        step("translations", _translate)
+    # ── Publish (for in_memory) — not over a model whose structure failed to build ──
     if args.data_serve_mode == "in_memory" and args.publish:
-        _publish(m, model_id, skip_classify=True)   # just created: known Mosaic model
-        summary["published"] = True
+        core = failures["tables"] + failures["attributes"] + failures["metrics"] + failures["relationships"]
+        if core:
+            summary["post_build"]["publish"] = "skipped: the model has build failures"
+            summary["published"] = False
+        else:
+            summary["published"] = step("publish", lambda: _publish(m, model_id, skip_classify=True) or True)
+    # ── Certify — last, and only a model that built cleanly: certified models are what the
+    #    Mosaic MCP server offers to agents ──
+    if args.certify:
+        if any(failures.values()):
+            summary["post_build"]["certify"] = "skipped: the build had failures"
+            failures["post_build"] += 1
+        else:
+            step("certify", lambda: _certify(m, model_id))
 
     summary["ok"] = not any(failures.values())
     print(json.dumps(summary, indent=2))
     if not summary["ok"]:
         print(f"[build] finished with failures: {failures} — see the WARN lines above.", file=sys.stderr)
         sys.exit(1)
+
+
+def _prepare_post_build(m: MSTR, args) -> dict:
+    """Check every post-build spec of a build before anything is created: security-filter
+    syntax and exact member resolution, ACL entries (rights, conflicts, trustees that exist),
+    translation entries. Dies on the first problem."""
+    prepared = {"security_filters": [_prepare_security_filter(m, sf)
+                                     for sf in (getattr(args, "security_filter", None) or [])]}
+    changes = _acl_changes(getattr(args, "grant", None) or [], getattr(args, "deny", None) or [])
+    for tid, ace in changes.items():
+        if not ace.get("subType"):
+            _trustee_subtype(m, tid)                      # dies when the trustee can't be typed
+    _parse_translation_entries(getattr(args, "translate", None) or [])
+    return prepared
 
 
 # ── Lifecycle / governance ops ────────────────────────────────────────────────
@@ -2589,29 +2960,65 @@ def _exact_member_matches(candidates: list[dict], raw: str) -> list[dict]:
         str(c.get(k) or "").strip().lower() == needle for k in ("id", "username", "name", "fullName", "email"))])
 
 
+def _json_any(r) -> Any:
+    """Parsed JSON body of any shape, or None when the body is empty or not JSON."""
+    try:
+        return r.json() if getattr(r, "text", "x") else None
+    except ValueError:
+        return None
+
+
+def _principal_kind(m: MSTR, object_id: str) -> str | None:
+    """'user' or 'user_group' for an existing principal id; None when both lookups say it
+    doesn't exist; 'unknown' when this account may not read users or groups (401/403), so
+    existence can't be checked."""
+    ru = m.get(f"/api/users/{object_id}")
+    if ru.ok:
+        return "user"
+    rg = m.get(f"/api/usergroups/{object_id}")
+    if rg.ok:
+        return "user_group"
+    if ru.status_code in (401, 403) or rg.status_code in (401, 403):
+        return "unknown"
+    return None
+
+
 def _resolve_member_ids(m: MSTR, names_or_ids: list[str]) -> list[str]:
     """Resolve user / user-group names to IDs. A security filter bound to the wrong
-    account leaves the intended one unrestricted, so only an exact, unique match on
-    id / login / full name / email counts; anything else stops the run."""
+    account leaves the intended one unrestricted, so only an exact match on id / login /
+    full name / email that is unique across users AND user groups counts (a user and a
+    group with the same name is ambiguous), and a literal ID must exist as a user or a
+    group; anything else stops the run."""
     ids, problems = [], []
     for raw in names_or_ids:
         name = raw.strip()
         if not name:
             continue
         if _is_mstr_id(name):
-            ids.append(name.upper())
+            kind = _principal_kind(m, name.upper())
+            if kind == "unknown":
+                print(f"  WARN member {name}: this account can't read users/groups, so the ID is used "
+                      f"as given — check it binds the intended principal", file=sys.stderr)
+            if kind:
+                ids.append(name.upper())
+            else:
+                problems.append(f"'{name}' is not the ID of a user or user group")
             continue
         candidates = _resolve_member_candidates(m, name, limit=25)
         exact = _exact_member_matches(candidates, name)
-        if not exact:
-            r = m.get("/api/usergroups", params={"nameBegins": name, "limit": 25})
-            groups = _items_from_response(r.json(), "usergroups") if r.ok else []
-            exact = [{"id": g.get("id"), "name": g.get("name")} for g in groups
-                     if (g.get("name") or "").strip().lower() == name.lower() and g.get("id")]
+        r = m.get("/api/usergroups", params={"nameBegins": name, "limit": 25})
+        if not r.ok:
+            print(f"  WARN member '{name}': user groups could not be searched ({r.status_code}); "
+                  f"a group with the same name would go unnoticed — pass IDs to be sure", file=sys.stderr)
+        groups = _items_from_response(_json_any(r), "usergroups") if r.ok else []
+        exact = _dedupe_by_id(exact + [{"id": g.get("id"), "name": g.get("name"), "type": "user_group"}
+                                       for g in groups if isinstance(g, dict) and g.get("id")
+                                       and (g.get("name") or "").strip().lower() == name.lower()])
         if len(exact) == 1:
             ids.append(exact[0]["id"])
         elif exact:
-            problems.append(f"'{name}' matches {len(exact)} accounts ({', '.join(c['id'] for c in exact[:5])}); pass the ID")
+            problems.append(f"'{name}' matches {len(exact)} users/groups "
+                            f"({', '.join(c['id'] for c in exact[:5])}); pass the ID")
         else:
             near = ", ".join(str(c.get("username") or c.get("name") or c.get("id")) for c in candidates[:5])
             problems.append(f"'{name}' has no exact user or group match" + (f" (similar: {near})" if near else ""))
@@ -2621,14 +3028,22 @@ def _resolve_member_ids(m: MSTR, names_or_ids: list[str]) -> list[str]:
     return list(dict.fromkeys(ids))
 
 
-def _assign_security_filter_members(m: MSTR, model_id: str, sf_id: str, member_ids: list[str]):
+def _assign_security_filter_members(m: MSTR, model_id: str, sf_id: str, member_ids: list[str]) -> bool:
+    """Bind members to a Mosaic security filter. The PATCH path is "/Members" on the tenant
+    family this was verified against and "/members" in the spec, so a 400 on the first is
+    retried with the second. False (and a WARN) when neither binds."""
     if not member_ids:
         return False
-    patch_body = {"operationList":[{"op":"addElements", "path":"/Members", "value": member_ids}]}
-    r = m.patch(f"/api/dataModels/{model_id}/securityFilters/{sf_id}/members", json=patch_body)
-    if r.ok:
-        return True
-    print(f"  WARN security-filter members: PATCH {format_mstr_error(r)}", file=sys.stderr)
+    url = f"/api/dataModels/{model_id}/securityFilters/{sf_id}/members"
+    errors = []
+    for op_path in ("/Members", "/members"):
+        r = m.patch(url, json={"operationList": [{"op": "addElements", "path": op_path, "value": member_ids}]})
+        if r.ok:
+            return True
+        errors.append(f"{op_path}: {format_mstr_error(r)}")
+        if r.status_code != 400:
+            break
+    print(f"  WARN security-filter members: PATCH {' | '.join(errors)}", file=sys.stderr)
     return False
 
 
@@ -2698,37 +3113,71 @@ def _parse_mosaic_security_filter_qualification(raw: str) -> dict:
         "Classic/project security filters use /api/model/securityFilters and /api/securityFilters/{id}/members.")
 
 
-def _apply_security_filter(m: MSTR, model_id: str, spec: str):
+def _security_filter_parts(spec) -> tuple[str, Any, list[str]]:
+    """(name, qualification, member names) from a CLI spec 'NAME=QUALIFICATION|USER,USER' or
+    a build-from-config mapping {name, qualification (object or string), members (list or
+    comma string)}."""
+    if isinstance(spec, dict):
+        members = spec.get("members") or []
+        if isinstance(members, str):
+            members = members.split(",")
+        return str(spec.get("name") or "").strip(), spec.get("qualification"), [str(u) for u in members]
+    parts = str(spec).split("|", 1)
+    nq, users = parts[0], (parts[1].split(",") if len(parts) > 1 else [])
+    name, _, qual = nq.partition("=")
+    return name.strip(), qual, users
+
+
+def _prepare_security_filter(m: MSTR, spec) -> dict:
+    """Every check a security filter can fail — name, qualification syntax, exact member
+    resolution — with no writes, so a build can run it before creating anything."""
+    name, qual, users = _security_filter_parts(spec)
+    if not name:
+        die(f"security filter {spec!r}: a name is required (NAME=QUALIFICATION|USERS)")
+    if qual in (None, ""):
+        die(f"security filter '{name}': a qualification is required")
+    qualification = (_normalize_mosaic_security_filter_qualification(qual) if isinstance(qual, dict)
+                     else _parse_mosaic_security_filter_qualification(str(qual)))
+    member_ids = _resolve_member_ids(m, users) if any(u.strip() for u in users) else []
+    return {"name": name, "qualification": qualification, "member_ids": member_ids}
+
+
+def _create_security_filter(m: MSTR, model_id: str, prepared: dict) -> bool:
+    """Create a prepared Mosaic security filter, then bind its members. True only when the
+    filter exists and every requested member is bound: a filter without its members
+    restricts no one, which is the failure that matters."""
+    name = prepared["name"]
+    cs = open_cs(m)
+    r = m.post(f"/api/model/dataModels/{model_id}/securityFilters",
+               json={"information": {"name": name, "subType": "md_security_filter"},
+                     "qualification": prepared["qualification"],
+                     "topLevel": [], "bottomLevel": []})
+    sf_id = (_json_or(r, {}).get("information") or {}).get("objectId") if r.ok else None
+    if not sf_id:
+        discard_cs(m, cs)
+        die(f"security filter '{name}': {format_mstr_error(r) if not r.ok else 'no objectId in the response'}")
+    commit_cs(m, cs)
+    print(f"  ✓ security filter '{name}' -> {sf_id}", file=sys.stderr)
+    if not prepared["member_ids"]:
+        return True
+    if _assign_security_filter_members(m, model_id, sf_id, prepared["member_ids"]):
+        print(f"    {len(prepared['member_ids'])} member(s) bound", file=sys.stderr)
+        return True
+    print(f"  WARN security filter '{name}' ({sf_id}) exists but its members are NOT bound, so they "
+          f"are unrestricted until they are: PATCH /api/dataModels/{model_id}/securityFilters/{sf_id}/members",
+          file=sys.stderr)
+    return False
+
+
+def _apply_security_filter(m: MSTR, model_id: str, spec) -> bool:
     """Create a Mosaic data-model security filter and optionally assign members.
+    Returns False when the filter was created but its members could not be bound.
 
     This is not the classic/project security-filter helper. Classic filters are
     created through /api/model/securityFilters and assigned through
     /api/securityFilters/{id}/members.
     """
-    parts = spec.split("|", 1)
-    nq, users = parts[0], (parts[1].split(",") if len(parts)>1 else [])
-    name, _, qual = nq.partition("=")
-    name = name.strip()
-    qualification = _parse_mosaic_security_filter_qualification(qual)
-    cs = open_cs(m)
-    r = m.post(f"/api/model/dataModels/{model_id}/securityFilters?changesetId={cs}",
-               json={"information":{"name": name, "subType": "md_security_filter"},
-                     "qualification": qualification,
-                     "topLevel":[],"bottomLevel":[]})
-    if not r.ok:
-        m.delete(f"/api/model/changesets/{cs}")
-        m.s.headers.pop("X-MSTR-MS-Changeset", None)
-        die(f"security filter '{name}': {r.status_code} {r.text[:300]}")
-    sf_id = r.json()["information"]["objectId"]
-    commit_cs(m, cs)
-    if users:
-        member_ids = _resolve_member_ids(m, users)
-        unresolved = [u.strip() for u in users if u.strip() and not _is_mstr_id(u.strip())]
-        if member_ids:
-            _assign_security_filter_members(m, model_id, sf_id, member_ids)
-        elif unresolved:
-            print(f"  WARN security filter '{name}': no members resolved from {unresolved}", file=sys.stderr)
-    print(f"  ✓ security filter '{name}' -> {sf_id}", file=sys.stderr)
+    return _create_security_filter(m, model_id, _prepare_security_filter(m, spec))
 
 
 # EnumDSSXMLAccessRightFlags (the bit order of the spec's ms-EnumAccessRight). The usual
@@ -2751,20 +3200,28 @@ def _rights_mask(rights: str) -> int:
     return mask
 
 
+_TRUSTEE_SUBTYPES = ("user", "user_group")
+
+
 def _parse_acl_entries(entries: list[str], mode: str) -> dict[str, dict]:
-    """Parse 'trusteeId:rights[:user|user_group]' specs into Data Model ACL entries."""
+    """Parse 'trusteeId:rights[:user|user_group]' specs into {trustee: {"granted", "denied",
+    "subType"}}. subType is None unless the spec names it (the current ACL or a lookup fills
+    it in later). Dies on a malformed spec, an unknown right or an unknown trustee type."""
     acl = {}
     for entry in entries or []:
         parts = entry.split(":")
         if len(parts) < 2:
             die(f"bad ACL spec '{entry}'. expected trusteeId:rights[:user|user_group]")
         trustee_id, rights = parts[0].strip(), parts[1].strip()
-        trustee_subtype = parts[2].strip() if len(parts) > 2 and parts[2].strip() else "user"
+        trustee_subtype = parts[2].strip() if len(parts) > 2 and parts[2].strip() else None
+        if trustee_subtype is not None and trustee_subtype not in _TRUSTEE_SUBTYPES:
+            die(f"bad ACL spec '{entry}'. the trustee type must be user or user_group")
         mask = _rights_mask(rights)
         if not trustee_id or not mask:
             die(f"bad ACL spec '{entry}'. trustee and non-empty rights are required")
-        cur = acl.setdefault(trustee_id, {"granted": 0, "denied": 0, "subType": trustee_subtype})
-        cur["subType"] = trustee_subtype
+        cur = acl.setdefault(trustee_id, {"granted": 0, "denied": 0, "subType": None})
+        if trustee_subtype:
+            cur["subType"] = trustee_subtype
         if mode == "deny":
             cur["denied"] |= mask
         else:
@@ -2772,8 +3229,55 @@ def _parse_acl_entries(entries: list[str], mode: str) -> dict[str, dict]:
     return acl
 
 
+def _acl_changes(grants: list[str], denies: list[str] | None) -> dict[str, dict]:
+    """Grants and denies per trustee from the command line; dies when one command both grants
+    and denies the same right to the same trustee."""
+    changes = _parse_acl_entries(grants, "grant")
+    for tid, ace in _parse_acl_entries(denies or [], "deny").items():
+        cur = changes.setdefault(tid, {"granted": 0, "denied": 0, "subType": None})
+        cur["denied"] |= ace["denied"]
+        cur["subType"] = ace["subType"] or cur["subType"]
+    for tid, ace in changes.items():
+        clash = ace["granted"] & ace["denied"]
+        if clash:
+            die(f"ACL for {tid}: rights mask {clash} is both granted and denied")
+    return changes
+
+
+def _trustee_subtype(m: MSTR, tid: str) -> str:
+    """user / user_group for an ACL trustee given without a type; dies when it can't be told."""
+    kind = _principal_kind(m, tid)
+    if kind in _TRUSTEE_SUBTYPES:
+        return kind
+    reason = ("this account can't read users or groups" if kind == "unknown"
+              else "it is neither a user nor a user group")
+    die(f"ACL trustee {tid}: {reason}; pass it as {tid}:<rights>:user or {tid}:<rights>:user_group")
+
+
+def _merge_acl(current: dict, changes: dict[str, dict], *, replace: bool = False) -> dict:
+    """The ACL to PATCH (the body is the whole ACL): `current` with each named trustee updated.
+    By default the named rights are granted (or denied) and every other right the trustee had
+    is kept; granting a right clears it from the trustee's deny set and vice versa. With
+    replace=True a named trustee's entry becomes exactly the given rights. Trustees that
+    aren't named, their names and their subtypes are left as they are."""
+    merged = {tid: dict(ace) for tid, ace in (current or {}).items() if isinstance(ace, dict)}
+    for tid, change in changes.items():
+        old = merged.get(tid, {})
+        grant, deny = change["granted"], change["denied"]
+        if replace:
+            granted, denied = grant, deny
+        else:
+            granted = (int(old.get("granted") or 0) | grant) & ~deny
+            denied = (int(old.get("denied") or 0) | deny) & ~grant
+        entry = {k: v for k, v in old.items() if k not in ("granted", "denied", "subType")}
+        entry.update({"granted": granted, "denied": denied,
+                      "subType": change.get("subType") or old.get("subType")})
+        merged[tid] = entry
+    return merged
+
+
 def _apply_acl(m: MSTR, object_id: str, grants: list[str], model_id=None,
-               sub_type: str = "report_emma_cube", denies=None):
+               sub_type: str = "report_emma_cube", denies=None, *, replace: bool = False) -> bool:
     """Apply ACLs.
 
     Data-model-contained objects use the Modeling endpoint:
@@ -2783,62 +3287,52 @@ def _apply_acl(m: MSTR, object_id: str, grants: list[str], model_id=None,
     8004e403; the classic POST /api/objects/{id}/acl returns 404 for a model).
 
     Entry syntax: 'trusteeId:rights[:user|user_group]'. Rights can be names
-    (read,browse,execute,...) or numeric masks.
+    (read,browse,execute,...) or numeric masks. Changes merge into the current ACL
+    (see _merge_acl); a trustee new to the ACL without a type is looked up.
     """
-    acl = {}
-    for tid, ace in _parse_acl_entries(grants, "grant").items():
-        acl[tid] = ace
-    for tid, ace in _parse_acl_entries(denies or [], "deny").items():
-        cur = acl.setdefault(tid, {"granted": 0, "denied": 0, "subType": ace.get("subType", "user")})
-        cur["denied"] |= ace.get("denied", 0)
-        cur["subType"] = ace.get("subType", cur["subType"])
+    changes = _acl_changes(grants, denies)
+    if not changes:
+        return True
+    if not model_id:
+        # Objects outside a data model: the REST API has no /api/objects/{id}/acl; classic ACLs
+        # are read with GET /api/objects/{id}?type=<t> and written with PUT on the same path.
+        # Not wrapped yet — say so instead of calling an endpoint that 404s.
+        die(f"set-acl without --model-id (a classic object) is not wrapped yet. Read the ACL with "
+            f"`api-call --path /api/objects/{object_id} --param type=<objectType>` and write it with "
+            f"PUT on the same path (see memory/reference_mosaic_acl.md).")
 
-    if not acl:
-        return
-
-    if model_id:
-        cs = open_cs(m)
-        # The PATCH body is the whole ACL (trustees left out are removed), so start
-        # from the current ACL and change only the trustees named on the command line.
-        acl_path = f"/api/model/dataModels/{model_id}/objects/{object_id}/acl?subType={sub_type}"
-        cur = m.get(acl_path)
-        if not cur.ok:
-            discard_cs(m, cs)
-            die(f"read current ACL of {object_id}: {format_mstr_error(cur)}")
-        merged = dict((cur.json() or {}).get("acl") or {})
-        merged.update(acl)
-        acl = merged
-        r = m.patch(acl_path, json={"acl": acl})
-        if not r.ok:
-            m.delete(f"/api/model/changesets/{cs}")
-            die(f"data model ACL on {object_id}: {r.status_code} {r.text[:300]}")
-        commit_cs(m, cs)
-        print(f"  ✓ ACL set on {object_id} ({len(acl)} trustees via data model endpoint)", file=sys.stderr)
-        return
-
-    # Objects outside a data model: the REST API has no /api/objects/{id}/acl; classic ACLs are
-    # read with GET /api/objects/{id}?type=<t> and written with PUT /api/objects/{id}?type=<t>.
-    # Not wrapped yet — say so instead of calling an endpoint that 404s.
-    die(f"set-acl without --model-id (a classic object) is not wrapped yet. Read the ACL with "
-        f"`api-call --path /api/objects/{object_id} --param type=<objectType>` and write it with "
-        f"PUT on the same path (see memory/reference_mosaic_acl.md).")
+    acl_path = f"/api/model/dataModels/{model_id}/objects/{object_id}/acl?subType={sub_type}"
+    cur = m.get(acl_path)
+    if not cur.ok:
+        die(f"read current ACL of {object_id}: {format_mstr_error(cur)}")
+    acl = _merge_acl(_json_or(cur, {}).get("acl") or {}, changes, replace=replace)
+    for tid in changes:
+        if not acl[tid].get("subType"):
+            acl[tid]["subType"] = _trustee_subtype(m, tid)
+    cs = open_cs(m)
+    r = m.patch(acl_path, json={"acl": acl})
+    if not r.ok:
+        discard_cs(m, cs)
+        die(f"data model ACL on {object_id}: {format_mstr_error(r)}")
+    commit_cs(m, cs)
+    print(f"  ✓ ACL set on {object_id} ({len(changes)} trustee(s) changed, {len(acl)} in the ACL)",
+          file=sys.stderr)
+    return True
 
 
-def _apply_translations(m: MSTR, model_id: str, entries: list[str], default_sub_type="data_model"):
-    """Apply name/description translations for data-model-contained objects.
+# The model root's subtype in the spec's ms-EnumObjectSubType; "data_model" is not in it.
+_SUBTYPE_ALIASES = {"data_model": "report_emma_cube"}
 
-    Entry syntax:
-      objectId:locale=text
-      objectId:subType:locale=text
-      objectId:subType:locale:description=text
 
-    Locale keys can be numeric Strategy locale IDs (for example 1033) or the
-    locale tokens accepted by the tenant. Field defaults to name.
-    """
-    by_obj = {}
+def _parse_translation_entries(entries: list[str], default_sub_type: str = "report_emma_cube") -> dict:
+    """{(objectId, subType): PATCH body} from 'objectId[:subType]:locale[:name|description]=text'
+    entries. Dies on a malformed entry."""
+    by_obj: dict = {}
     for entry in entries or []:
-        left, _, text = entry.partition("=")
+        left, sep, text = entry.partition("=")
         parts = left.split(":")
+        if not sep:
+            parts = []
         if len(parts) == 2:
             obj, loc = parts
             sub_type, field = default_sub_type, "name"
@@ -2851,12 +3345,30 @@ def _apply_translations(m: MSTR, model_id: str, entries: list[str], default_sub_
             die(f"bad translation entry '{entry}'. expected objectId[:subType]:locale[:field]=text")
         if field not in {"name", "description"}:
             die(f"bad translation field '{field}'. use name or description")
+        sub_type = _SUBTYPE_ALIASES.get(sub_type, sub_type)
         body = by_obj.setdefault((obj, sub_type), {})
         body.setdefault(field, {"translationValues": {}})
         body[field]["translationValues"][loc] = {"translation": text}
+    return by_obj
 
+
+def _apply_translations(m: MSTR, model_id: str, entries: list[str],
+                        default_sub_type: str = "report_emma_cube") -> tuple[int, int]:
+    """Apply name/description translations for data-model-contained objects.
+    Returns (objects updated, objects requested).
+
+    Entry syntax:
+      objectId:locale=text
+      objectId:subType:locale=text
+      objectId:subType:locale:description=text
+
+    The default subType is the model root's (report_emma_cube; "data_model" is accepted as
+    an alias). Locale keys can be numeric Strategy locale IDs (for example 1033) or the
+    locale tokens accepted by the tenant. Field defaults to name.
+    """
+    by_obj = _parse_translation_entries(entries, _SUBTYPE_ALIASES.get(default_sub_type, default_sub_type))
     if not by_obj:
-        return
+        return 0, 0
 
     if model_id and model_id != "_":
         cs = open_cs(m)
@@ -2867,22 +3379,19 @@ def _apply_translations(m: MSTR, model_id: str, entries: list[str], default_sub_
             if r.ok:
                 ok += 1
             else:
-                print(f"  WARN translate {obj}: {r.status_code} {r.text[:200]}", file=sys.stderr)
+                print(f"  WARN translate {obj}: {format_mstr_error(r)}", file=sys.stderr)
         commit_cs(m, cs)
         print(f"  ✓ translations updated for {ok}/{len(by_obj)} objects", file=sys.stderr)
-        return
+        return ok, len(by_obj)
 
     print("  WARN translate: --model-id is required for data model object translations", file=sys.stderr)
+    return 0, len(by_obj)
 
 
 def _certify(m: MSTR, object_id: str, obj_type: int = 3) -> bool:
     """PUT /api/objects/{id}/certify?type=3&certify=true (the documented call; a Mosaic
-    model is type 3). Falls back to the older certifiedInfo PATCH on tenants without it.
-    The Mosaic MCP server lists and resolves certified models only."""
+    model is type 3). The Mosaic MCP server lists and resolves certified models only."""
     r = m.put(f"/api/objects/{object_id}/certify", params={"type": obj_type, "certify": "true"})
-    if r.status_code in (404, 405):
-        r = m.patch(f"/api/objects/{object_id}", params={"type": obj_type},
-                    json={"certifiedInfo": {"certified": True}})
     if r.ok:
         print(f"  ✓ certified {object_id}", file=sys.stderr)
         return True
@@ -2891,11 +3400,15 @@ def _certify(m: MSTR, object_id: str, obj_type: int = 3) -> bool:
 
 
 def classify_object_surface(m: MSTR, object_id: str) -> dict:
-    """Decide whether an object is a Mosaic model (subtype 779 + extType 448), a data-import
-    cube (779, other extType), a classic cube (776) or something else.
+    """Decide whether an object is a Mosaic model, a data-import cube (both subtype 779), a
+    classic cube (776) or something else.
+
+    For 779 the Modeling read GET /api/model/dataModels/{id} decides (its changeset header is
+    optional in the spec): 200 means a Mosaic model, 404 means none. Any other answer falls
+    back to extType — 448 or missing means Mosaic (unverified constant; see the memory note).
 
     Returns {"subtype": int, "extType": int|None, "surface":
-    "mosaic_data_model|data_import_cube|classic_cube|other", "name": str}.
+    "mosaic_data_model|data_import_cube|classic_cube|other", "name": str, "decided_by": str}.
     Pure read. Must be called before any endpoint that differs between surfaces (publish,
     refresh, execute, ACL, security filter, serve mode). See
     memory/reference_mosaic_vs_legacy_surfaces.md for the full pair cheat sheet.
@@ -2904,45 +3417,61 @@ def classify_object_surface(m: MSTR, object_id: str) -> dict:
     if not r.ok:
         die(f"classify_object_surface: cannot GET /api/objects/{object_id}?type=3 "
             f"({r.status_code}); cannot route legacy-vs-Mosaic safely.")
-    d = r.json()
+    d = _json_or(r, {})
     subtype = int(d.get("subtype") or 0)
     ext_type = d.get("extType")
-    # Subtype 779 (report_emma_cube) is shared by Mosaic models and data-import (MTDI)
-    # cubes; mstrio-py tells them apart by extType 448 (DATA_IMPORT_DATASET).
+    decided_by = "subtype"
     if subtype == 779:
-        surface = ("mosaic_data_model" if ext_type in (None, 448, "448")
-                   else "data_import_cube")
+        probe = m.get(f"/api/model/dataModels/{object_id}")
+        if probe.ok:
+            surface, decided_by = "mosaic_data_model", "model read"
+        elif probe.status_code == 404:
+            surface, decided_by = "data_import_cube", "model read"
+        else:
+            # Subtype 779 (report_emma_cube) is shared by Mosaic models and data-import (MTDI)
+            # cubes; extType 448 marks the Mosaic ones.
+            surface = "mosaic_data_model" if ext_type in (None, 448, "448") else "data_import_cube"
+            decided_by = f"extType (model read answered {probe.status_code})"
     else:
         surface = "classic_cube" if subtype == 776 else "other"
-    return {"subtype": subtype, "extType": ext_type, "surface": surface, "name": d.get("name")}
+    return {"subtype": subtype, "extType": ext_type, "surface": surface, "name": d.get("name"),
+            "decided_by": decided_by}
+
+
+# Refresh policies a Mosaic publish accepts per table (TableRefreshSetting.refreshPolicy).
+REFRESH_POLICIES = ("replace", "add", "update", "upsert")
 
 
 def _mosaic_publish_verified(m: MSTR, model_id: str, *, poll_seconds: int = 180,
-                             poll_interval: float = 5.0) -> None:
+                             poll_interval: float = 5.0, refresh_policy: str = "replace") -> None:
     """Publish a Mosaic data model via the verified 3-step flow and assert completion.
 
     Flow (see memory/reference_mosaic_publish_path.md):
       1. POST /api/dataModels/{id}/instances           -> 204 with X-MSTR-DataModelInstanceId header
-      2. POST /api/dataModels/{id}/publish             body {"tables":[{id,refreshPolicy:replace}]}
+      2. POST /api/dataModels/{id}/publish             body {"tables":[{id,refreshPolicy}]}
       3. poll GET /api/dataModels/{id}/publishStatus   until every table is "completed"
-                                                       (older tenants said "loaded") or one is "error"
-      4. DELETE /api/dataModels/{id}/instances/{instanceId} (kept on timeout: the job may still run)
+                                                       (older tenants said "loaded") or one is in
+                                                       an error state (error, schema_comparison_error)
+      4. DELETE /api/dataModels/{id}/instances/{instanceId} — kept whenever the job may still
+         be running (timeout, network error, interrupt): deleting it then could abort the job.
 
     Fails loud on:
       - missing instance header
       - non-2xx publish response
-      - terminal error status (-2147212544 QueryEngine stall etc.) or a table in "error"
+      - terminal error status (-2147212544 QueryEngine stall etc.) or a table in an error state
       - timeout before every table finishes
     Never falls back to /api/cubes/{id}?cubeAction=publish — internal and deprecated in the spec.
     """
-    # discover tables (ids required in publish body)
-    r = m.get(f"/api/model/dataModels/{model_id}/tables")
-    if not r.ok:
-        die(f"_mosaic_publish_verified: list tables failed {r.status_code} {r.text[:200]}")
-    tables = r.json().get("tables") or []
-    if not tables:
+    if refresh_policy not in REFRESH_POLICIES:
+        die(f"refresh policy must be one of {', '.join(REFRESH_POLICIES)}, not {refresh_policy!r}")
+    # discover tables (ids required in publish body); paged, so none is left unpublished
+    tables, failed = _list_all(m, f"/api/model/dataModels/{model_id}/tables", "tables")
+    if failed is not None:
+        die(f"_mosaic_publish_verified: list tables failed {format_mstr_error(failed)}")
+    tids = [(t.get("information") or {}).get("objectId") for t in tables if isinstance(t, dict)]
+    tids = [tid for tid in tids if tid]
+    if not tids:
         die(f"_mosaic_publish_verified: model {model_id} has 0 tables; nothing to publish.")
-    tids = [t["information"]["objectId"] for t in tables]
 
     # 1. create instance
     r1 = m.post(f"/api/dataModels/{model_id}/instances")
@@ -2951,16 +3480,17 @@ def _mosaic_publish_verified(m: MSTR, model_id: str, *, poll_seconds: int = 180,
         die(f"_mosaic_publish_verified: no X-MSTR-DataModelInstanceId header in "
             f"/instances response ({r1.status_code}); cannot proceed.")
 
-    timed_out = False
+    keep_instance = False
     try:
         # 2. publish with tables[] body
         hdr = {"X-MSTR-DataModelInstanceId": inst}
         r2 = m.post(f"/api/dataModels/{model_id}/publish",
                     headers=hdr,
-                    json={"tables": [{"id": tid, "refreshPolicy": "replace"} for tid in tids]})
+                    json={"tables": [{"id": tid, "refreshPolicy": refresh_policy} for tid in tids]})
         if r2.status_code not in (200, 202, 204):
             die(f"_mosaic_publish_verified: publish POST {r2.status_code} {r2.text[:300]}")
-        print(f"  ✓ mosaic publish started instanceId={inst}", file=sys.stderr)
+        print(f"  ✓ mosaic publish started instanceId={inst} ({len(tids)} tables, {refresh_policy})",
+              file=sys.stderr)
 
         # 3. poll until loaded
         deadline = time.time() + poll_seconds
@@ -2970,29 +3500,35 @@ def _mosaic_publish_verified(m: MSTR, model_id: str, *, poll_seconds: int = 180,
             try: js = rs.json()
             except Exception: js = {"raw": rs.text}
             last = js
-            st = js.get("status") if isinstance(js, dict) else None
-            tbl = js.get("tables") or []
+            if not isinstance(js, dict):
+                js = {"raw": js}
+            st = js.get("status")
+            tbl = [t for t in (js.get("tables") or []) if isinstance(t, dict)]
             if isinstance(st, int) and st < 0:
                 die(f"_mosaic_publish_verified: terminal error status={st} body={json.dumps(js)[:400]}")
-            if isinstance(js, dict) and js.get("code"):
-                die(f"_mosaic_publish_verified: server error {js.get('code')}: {js.get('message','')[:300]}")
-            failed_tables = [t for t in tbl if (t.get("status") or "").lower() == "error"]
+            if js.get("code"):
+                die(f"_mosaic_publish_verified: server error {js.get('code')}: {str(js.get('message',''))[:300]}")
+            failed_tables = [t for t in tbl if str(t.get("status") or "").lower().endswith("error")]
             if failed_tables:
                 die(f"_mosaic_publish_verified: table(s) failed to load: {json.dumps(failed_tables)[:400]}")
-            if tbl and all((t.get("status") or "").lower() in ("loaded", "completed") for t in tbl):
+            if tbl and all(str(t.get("status") or "").lower() in ("loaded", "completed") for t in tbl):
                 print(f"  ✓ mosaic publish COMPLETE: {len(tbl)} tables loaded.", file=sys.stderr)
                 return
             time.sleep(poll_interval)
-        timed_out = True
+        keep_instance = True
         die(f"_mosaic_publish_verified: timeout after {poll_seconds}s; last status: "
             f"{json.dumps(last)[:400] if last else 'none'}. "
             f"This signature historically indicates tenant-side QueryEngineServer trouble or "
             f"dirty dataTypes; see memory/reference_mosaic_publish_path.md and "
             f"captures/2026-04-22-queryengine-publish-incident/README.md.")
+    except (requests.RequestException, KeyboardInterrupt):
+        keep_instance = True          # the job may still be running on the server
+        print(f"  [publish] instance {inst} kept: the publish may still be running", file=sys.stderr)
+        raise
     finally:
-        # The documented flow ends by deleting the publish instance. Keep it only when the
-        # publish may still be running (timeout) — deleting it then could abort the job.
-        if not timed_out:
+        # The documented flow ends by deleting the publish instance — unless the job may still
+        # be running, where deleting it could abort the publish.
+        if not keep_instance:
             try:
                 m.delete(f"/api/dataModels/{model_id}/instances/{inst}")
             except Exception:
@@ -3012,27 +3548,33 @@ def _classic_cube_publish(m: MSTR, cube_id: str) -> None:
 
 
 def _publish(m: MSTR, model_id: str, *, poll_seconds: int = 180,
-             skip_classify: bool = False) -> None:
+             skip_classify: bool = False, refresh_policy: str = "replace") -> None:
     """Surface-routed publish: classify subType first, never mix Mosaic/legacy paths.
 
     skip_classify=True bypasses GET /api/objects/{id}?type=3 and assumes the caller
     already knows the target is a Mosaic data model (subType 779). Use this when
     chaining build→publish in the same session to save one project-scoped call
     against the session cap — see feedback_build_mosaic_session_leak.md.
+
+    refresh_policy applies to Mosaic models only (per table: replace, add, update, upsert).
     """
     if skip_classify:
         print("  ↳ skip-classify: assuming Mosaic data model (subType 779)", file=sys.stderr)
-        _mosaic_publish_verified(m, model_id, poll_seconds=poll_seconds)
+        _mosaic_publish_verified(m, model_id, poll_seconds=poll_seconds, refresh_policy=refresh_policy)
         return
     info = classify_object_surface(m, model_id)
     if info["surface"] == "mosaic_data_model":
-        _mosaic_publish_verified(m, model_id, poll_seconds=poll_seconds)
+        _mosaic_publish_verified(m, model_id, poll_seconds=poll_seconds, refresh_policy=refresh_policy)
     elif info["surface"] == "classic_cube":
+        if refresh_policy != "replace":
+            die(f"refresh policy {refresh_policy!r} applies to Mosaic models only; {model_id} is a "
+                f"classic Intelligent Cube (its publish reloads everything — use replace).")
         _classic_cube_publish(m, model_id)
     else:
         die(f"_publish: object {model_id} is subtype {info['subtype']} / extType {info.get('extType')} "
-            f"({info['name']}) — {info['surface']}, not a Mosaic data model or classic cube. "
-            f"Refusing to guess. See memory/reference_mosaic_vs_legacy_surfaces.md.")
+            f"({info['name']}) — {info['surface']}, not a Mosaic data model or classic cube "
+            f"(decided by {info.get('decided_by')}). Refusing to guess. "
+            f"See memory/reference_mosaic_vs_legacy_surfaces.md.")
 
 
 def cmd_set_serve_mode(m: MSTR, args):
@@ -3042,28 +3584,39 @@ def cmd_set_serve_mode(m: MSTR, args):
         die(f"set-serve-mode: dataServeMode is a Mosaic-only concept; object {args.model_id} "
             f"is subtype {info['subtype']} ({info['name']}).")
     cs = open_cs(m)
-    try:
-        r = m.s.patch(f"{m.base}/api/model/dataModels/{args.model_id}",
-                      json={"dataServeMode": args.mode})
-        if not r.ok: die(f"set-serve-mode: {r.status_code} {r.text[:300]}")
-        commit_cs(m, cs)
-        print(f"  ✓ dataServeMode set to {args.mode}", file=sys.stderr)
-    except Exception:
-        # best-effort changeset discard on failure
-        try: m.s.headers.pop("X-MSTR-MS-Changeset", None)
-        except Exception: pass
-        raise
+    r = m.patch(f"/api/model/dataModels/{args.model_id}", json={"dataServeMode": args.mode})
+    if not r.ok:
+        discard_cs(m, cs)
+        die(f"set-serve-mode: {format_mstr_error(r)}")
+    commit_cs(m, cs)
+    print(f"  ✓ dataServeMode set to {args.mode}", file=sys.stderr)
+
 
 def cmd_publish(m: MSTR, args):
     m.login()
     _publish(m, args.model_id, poll_seconds=args.poll_seconds,
              skip_classify=getattr(args, "skip_classify", False))
+
+
+def _refresh_policy(refresh_type: str | None) -> str:
+    """--refresh-type → the publish refreshPolicy. "incremental" (the old cube refresh name)
+    means upsert: insert new rows, update changed ones."""
+    value = (refresh_type or "replace").lower()
+    if value == "incremental":
+        print("  [refresh] --refresh-type incremental = upsert (insert new rows, update changed ones)",
+              file=sys.stderr)
+        return "upsert"
+    return value
+
+
 def cmd_refresh(m: MSTR, args):
     """Re-publish (reload) a model's data. The REST API has no separate refresh call:
     a Mosaic refresh is a publish (POST /api/dataModels/{id}/publish), so this routes
-    through the same verified publish path as `publish`."""
+    through the same verified publish path as `publish`, with --refresh-type as each
+    table's refreshPolicy (replace by default)."""
+    policy = _refresh_policy(getattr(args, "refresh_type", None))
     m.login()
-    _publish(m, args.model_id)
+    _publish(m, args.model_id, poll_seconds=getattr(args, "poll_seconds", 180), refresh_policy=policy)
 
 
 # ── wire-relationships ─────────────────────────────────────────────────────────
@@ -3072,12 +3625,19 @@ def cmd_refresh(m: MSTR, args):
 # burn the session cap retrying on 8004ccdb (self-ref) or 8004ccc7 (invalid
 # join table).
 
-def _fetch_attribute(m: MSTR, model_id: str, attr_id: str) -> dict:
+def _fetch_attribute(m: MSTR, model_id: str, attr_id: str, cache: dict | None = None) -> dict:
+    """GET one attribute with token expressions. Pass `cache` (a dict) to reuse reads within
+    one planning pass; never across writes."""
+    if cache is not None and attr_id in cache:
+        return cache[attr_id]
     r = m.s.get(f"{m.base}/api/model/dataModels/{model_id}/attributes/{attr_id}",
                 params={"showExpressionAs": "tokens"})
     if not r.ok:
         die(f"wire-relationships: GET attribute {attr_id}: {r.status_code} {r.text[:200]}")
-    return r.json()
+    body = _json_or(r, {})
+    if cache is not None:
+        cache[attr_id] = body
+    return body
 
 
 def _attr_table_ids(attr: dict) -> set:
@@ -3093,19 +3653,16 @@ def _attr_table_ids(attr: dict) -> set:
 
 
 def _list_model_attributes(m: MSTR, model_id: str) -> list:
-    r = m.s.get(f"{m.base}/api/model/dataModels/{model_id}/attributes")
-    if not r.ok:
-        die(f"wire-relationships: list attributes: {r.status_code} {r.text[:200]}")
-    d = r.json()
-    return d.get("attributes") or d.get("items") or []
+    attrs, failed = _list_all(m, f"/api/model/dataModels/{model_id}/attributes", "attributes")
+    if failed is not None:
+        die(f"list attributes: {format_mstr_error(failed)}")
+    return attrs
 
 
 def _list_model_tables(m: MSTR, model_id: str) -> dict:
-    r = m.s.get(f"{m.base}/api/model/dataModels/{model_id}/tables")
-    if not r.ok:
-        die(f"wire-relationships: list tables: {r.status_code} {r.text[:200]}")
-    d = r.json()
-    tbls = d.get("tables") or d.get("items") or []
+    tbls, failed = _list_all(m, f"/api/model/dataModels/{model_id}/tables", "tables")
+    if failed is not None:
+        die(f"list tables: {format_mstr_error(failed)}")
     by_name = {}
     for t in tbls:
         nm = (t.get("information") or {}).get("name") or t.get("name") or ""
@@ -3247,6 +3804,7 @@ def cmd_merge_attributes(m: MSTR, args):
     ok = 0
     deleted = 0
     write_skips = []
+    write_failures = 0          # role-playing skips (8004cc77) are expected, not failures
     try:
         for parent_attr, child_attr, child_table, child_col, label in plan:
             pid = (parent_attr.get("information") or {}).get("objectId")
@@ -3281,10 +3839,8 @@ def cmd_merge_attributes(m: MSTR, args):
                 form["expressions"] = exprs
             # PATCH the parent. Only forms is mutable here; everything else on
             # the parent (name, lookupTable, etc.) is preserved by Strategy.
-            r = m.s.patch(
-                f"{m.base}/api/model/dataModels/{model_id}/attributes/{pid}?changesetId={cs}",
-                json={"forms": forms},
-            )
+            # The changeset travels in the X-MSTR-MS-Changeset header open_cs set.
+            r = m.patch(f"/api/model/dataModels/{model_id}/attributes/{pid}", json={"forms": forms})
             if not r.ok:
                 err = ms.parse_mstr_error(r)
                 # 8004cc77 — "table is used in other expressions". This is
@@ -3295,17 +3851,19 @@ def cmd_merge_attributes(m: MSTR, args):
                     write_skips.append((label, "role-playing secondary (8004cc77) — skipped"))
                     continue
                 write_skips.append((label, f"PATCH parent: {format_mstr_error(r)}"))
+                write_failures += 1
                 continue
             print(f"  + {label}" + ("" if cid else " (child never existed, nothing to delete)"),
                   file=sys.stderr)
             ok += 1
             # Delete the now-redundant child attribute -- only if one existed.
             if cid and not args.keep_children:
-                dr = m.delete(f"/api/model/dataModels/{model_id}/attributes/{cid}?changesetId={cs}")
+                dr = m.delete(f"/api/model/dataModels/{model_id}/attributes/{cid}")
                 if dr.status_code in (200, 204):
                     deleted += 1
                 else:
                     write_skips.append((label, f"DELETE child {cid}: {format_mstr_error(dr)}"))
+                    write_failures += 1
         commit_cs(m, cs)
     except Exception:
         discard_cs(m, cs)
@@ -3319,6 +3877,9 @@ def cmd_merge_attributes(m: MSTR, args):
         f"{len(write_skips)} write skips",
         file=sys.stderr,
     )
+    if write_failures:
+        print(f"[merge-attributes] {write_failures} write(s) failed — see SKIP-WRITE above.", file=sys.stderr)
+        sys.exit(1)
 
 
 def _read_merge_hints(path: str) -> list[tuple[str, str]]:
@@ -3386,7 +3947,7 @@ def cmd_wire_relationships(m: MSTR, args):
             )
 
     attrs = _list_model_attributes(m, model_id)
-    by_name = {}
+    by_name: dict[str, list] = {}
     by_id = {}
     for a in attrs:
         info = a.get("information") or {}
@@ -3395,13 +3956,21 @@ def cmd_wire_relationships(m: MSTR, args):
         if aid:
             by_id[aid] = a
             if nm:
-                by_name.setdefault(nm.lower(), a)
+                by_name.setdefault(nm.lower(), []).append(a)
     tables_by_name = _list_model_tables(m, model_id)
+    fetched: dict = {}          # attribute reads, reused while planning (no writes yet)
 
     def _resolve_attr(ref: str) -> dict:
         if not ref: return None
         if ref in by_id: return by_id[ref]
-        return by_name.get(ref.lower())
+        hits = by_name.get(ref.lower()) or []
+        return hits[0] if len(hits) == 1 else None
+
+    def _attr_problem(ref: str, role: str) -> str:
+        n = len(by_name.get((ref or "").lower()) or [])
+        if n > 1:
+            return f"{role} attribute {ref!r} matches {n} attributes by name; pass its objectId"
+        return f"{role} attribute {ref!r} not found"
 
     def _resolve_table(ref: str) -> str:
         if not ref: return None
@@ -3419,10 +3988,10 @@ def cmd_wire_relationships(m: MSTR, args):
         label = f"{h.get('parent_attribute')}→{h.get('child_attribute')} via {h.get('relationship_table')}"
 
         if not parent:
-            skips.append((label, f"parent attribute {h.get('parent_attribute')!r} not found"))
+            skips.append((label, _attr_problem(h.get("parent_attribute"), "parent")))
             continue
         if not child:
-            skips.append((label, f"child attribute {h.get('child_attribute')!r} not found"))
+            skips.append((label, _attr_problem(h.get("child_attribute"), "child")))
             continue
         if not rtbl_id:
             skips.append((label, f"relationship_table {h.get('relationship_table')!r} not found in model"))
@@ -3436,8 +4005,8 @@ def cmd_wire_relationships(m: MSTR, args):
             continue
 
         # Fetch full attribute definitions (/attributes list may omit forms[].expressions details).
-        p_full = _fetch_attribute(m, model_id, p_id)
-        c_full = _fetch_attribute(m, model_id, c_id)
+        p_full = _fetch_attribute(m, model_id, p_id, fetched)
+        c_full = _fetch_attribute(m, model_id, c_id, fetched)
         p_tids = _attr_table_ids(p_full)
         c_tids = _attr_table_ids(c_full)
 
@@ -3475,6 +4044,7 @@ def cmd_wire_relationships(m: MSTR, args):
 
     cs = open_cs(m, schema_edit=False)
     ok = 0
+    failed = 0
     try:
         for c_id, rows in by_child.items():
             new_rels = []
@@ -3498,6 +4068,7 @@ def cmd_wire_relationships(m: MSTR, args):
                 for label in labels:
                     print(f"  ✓ {label} [{action}]", file=sys.stderr)
             else:
+                failed += len(labels)
                 for label in labels:
                     print(f"  ✗ {label}: {err}", file=sys.stderr)
         commit_cs(m, cs)
@@ -3510,23 +4081,21 @@ def cmd_wire_relationships(m: MSTR, args):
         f"{len(role_secondaries)} role-playing secondaries",
         file=sys.stderr,
     )
+    if failed:
+        print(f"[wire-relationships] {failed} relationship(s) not written — see ✗ lines above.", file=sys.stderr)
+        sys.exit(1)
 
 
 def _read_wire_hints(path: str) -> list:
     """Read JSON or YAML FK-hint file. Accepts either a {relationships:[...]}
     envelope or a bare list."""
     if not path: return []
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         text = f.read()
-    data = None
     try:
         data = json.loads(text)
-    except Exception:
-        try:
-            import yaml  # type: ignore
-            data = yaml.safe_load(text)
-        except Exception:
-            die(f"wire-relationships: cannot parse --hints file {path} as JSON or YAML")
+    except ValueError:
+        data = _load_yaml(path)     # PyYAML, else the Ruby safe_load fallback; dies on bad YAML
     if isinstance(data, dict):
         return data.get("relationships") or []
     if isinstance(data, list):
@@ -3643,22 +4212,27 @@ def cmd_build_from_schema_objects(m: MSTR, args):
         die("Could not resolve any source tables. Check that classic table object IDs "
             "are readable and return physicalTable.databaseInstance.")
 
-    # ── Create model shell ───────────────────────────────────────────────────
+    # ── Create model shell + add physical tables (CS1) ───────────────────────
     print(f"→ Creating model '{args.name}'…", file=sys.stderr)
     serve_mode = "in_memory" if args.publish else args.data_serve_mode
-    r = m.post("/api/model/dataModels", json={
-        "information": {"name": args.name, "destinationFolderId": resolve_dest_folder(m, args.dest_folder)},
-        "dataServeMode": serve_mode,
-    })
-    if not r.ok:
-        die(f"create model: {r.status_code} {r.text[:400]}")
-    model_id = r.json()["information"]["objectId"]
-    print(f"  model_id={model_id}", file=sys.stderr)
-
-    # ── Add physical tables (CS1 begins) ─────────────────────────────────────
+    dest_folder_id = resolve_dest_folder(m, args.dest_folder)   # may die(); before any changeset
+    use_batch = bool(getattr(args, "use_batch", False))
+    failures = {"tables": 0, "attributes": 0, "fact_metrics": 0, "relationships": 0, "metrics": 0,
+                "publish": 0}
     logical_table_map: dict[str, str] = {}
+    # POST /api/model/dataModels requires X-MSTR-MS-Changeset, so the shell is created inside
+    # CS1 (as `build` does): a failure before the commit leaves no empty model behind.
     cs1 = open_cs(m)
     try:
+        r = m.post("/api/model/dataModels", json={
+            "information": {"name": args.name, "destinationFolderId": dest_folder_id},
+            "dataServeMode": serve_mode,
+        })
+        model_id = (_json_or(r, {}).get("information") or {}).get("objectId") if r.ok else None
+        if not model_id:
+            die(f"create model: {r.status_code} {r.text[:400]}")
+        print(f"  model_id={model_id}", file=sys.stderr)
+
         for (ds_id, schema), entries in source_groups.items():
             for classic_tid, tname in entries:
                 tbl_body = _make_pipeline_table_body(m, ds_id, schema, tname)
@@ -3666,14 +4240,16 @@ def cmd_build_from_schema_objects(m: MSTR, args):
                     all_warnings.append(
                         f"table {tname}: could not fetch warehouse metadata — skipped"
                     )
+                    failures["tables"] += 1
                     continue
                 rr = m.post(f"/api/model/dataModels/{model_id}/tables", json=tbl_body)
-                if not rr.ok:
+                mosaic_tid = (_json_or(rr, {}).get("information") or {}).get("objectId") if rr.ok else None
+                if not mosaic_tid:
                     all_warnings.append(
                         f"add table {tname}: {rr.status_code} {rr.text[:200]}"
                     )
+                    failures["tables"] += 1
                     continue
-                mosaic_tid = rr.json()["information"]["objectId"]
                 logical_table_map[classic_tid] = mosaic_tid
                 # Also map any other classic tables that resolved to the same warehouse name
                 for other_cid, other_meta in classic_table_meta.items():
@@ -3697,17 +4273,20 @@ def cmd_build_from_schema_objects(m: MSTR, args):
             attr_id_order.append(classic_id)
 
         if attr_ops:
-            passed, failed = batch_call(m, model_id, cs1, attr_ops, atomic=False)
+            passed, failed = create_objects(m, model_id, cs1, attr_ops, use_batch=use_batch)
             for f in failed:
-                all_warnings.append(f"[batch attr] failed op: {json.dumps(f)[:200]}")
+                all_warnings.append(f"[attr] failed op: {json.dumps(f)[:200]}")
+            failures["attributes"] += len(failed)
             for result in passed:
                 i = result.get("_index")
-                if not isinstance(i, int) or i >= len(attr_id_order):
-                    continue
                 response = result.get("response") or result
                 obj_id = (response.get("information") or {}).get("objectId")
-                if obj_id:
-                    attr_id_to_mosaic[attr_id_order[i]] = obj_id
+                if not isinstance(i, int) or i >= len(attr_id_order) or not obj_id:
+                    all_warnings.append(f"[attr] created object not matched to its classic id: "
+                                        f"{json.dumps(result)[:200]}")
+                    failures["attributes"] += 1
+                    continue
+                attr_id_to_mosaic[attr_id_order[i]] = obj_id
 
         # ── Translate + batch-create fact metrics ────────────────────────────
         print(f"→ Translating {len(fact_defs)} fact(s)…", file=sys.stderr)
@@ -3722,17 +4301,20 @@ def cmd_build_from_schema_objects(m: MSTR, args):
             fact_id_order.append(classic_id)
 
         if fact_ops:
-            passed, failed = batch_call(m, model_id, cs1, fact_ops, atomic=False)
+            passed, failed = create_objects(m, model_id, cs1, fact_ops, use_batch=use_batch)
             for f in failed:
-                all_warnings.append(f"[batch fact] failed op: {json.dumps(f)[:200]}")
+                all_warnings.append(f"[fact] failed op: {json.dumps(f)[:200]}")
+            failures["fact_metrics"] += len(failed)
             for result in passed:
                 i = result.get("_index")
-                if not isinstance(i, int) or i >= len(fact_id_order):
-                    continue
                 response = result.get("response") or result
                 obj_id = (response.get("information") or {}).get("objectId")
-                if obj_id:
-                    fact_id_to_mosaic[fact_id_order[i]] = obj_id
+                if not isinstance(i, int) or i >= len(fact_id_order) or not obj_id:
+                    all_warnings.append(f"[fact] created object not matched to its classic id: "
+                                        f"{json.dumps(result)[:200]}")
+                    failures["fact_metrics"] += 1
+                    continue
+                fact_id_to_mosaic[fact_id_order[i]] = obj_id
 
         commit_cs(m, cs1)
         cs1 = None
@@ -3785,6 +4367,7 @@ def cmd_build_from_schema_objects(m: MSTR, args):
                     rel_count += len(child_rels)
                 else:
                     all_warnings.append(f"[rel] into {classic_child_id}: {err}")
+                    failures["relationships"] += len(child_rels)
         commit_cs(m, cs2)
         cs2 = None
         print(f"  CS2 committed ({rel_count} relationships)", file=sys.stderr)
@@ -3822,16 +4405,16 @@ def cmd_build_from_schema_objects(m: MSTR, args):
                 rr = m.post(
                     f"/api/model/dataModels/{model_id}{path_suffix}", json=payload
                 )
-                if not rr.ok:
+                new_id = (_json_or(rr, {}).get("information") or {}).get("objectId") if rr.ok else None
+                if not new_id:
                     all_warnings.append(
                         f"[metric {classic_id}] create failed: "
                         f"{rr.status_code} {rr.text[:200]}"
                     )
+                    failures["metrics"] += 1
                     continue
-                new_id = (rr.json().get("information") or {}).get("objectId")
-                if new_id:
-                    metric_id_to_mosaic[classic_id] = new_id
-                    print(f"  metric {classic_id} → {new_id}", file=sys.stderr)
+                metric_id_to_mosaic[classic_id] = new_id
+                print(f"  metric {classic_id} → {new_id}", file=sys.stderr)
             commit_cs(m, cs3)
             cs3 = None
             print(f"  CS3 committed ({len(metric_id_to_mosaic)} metrics)",
@@ -3841,23 +4424,30 @@ def cmd_build_from_schema_objects(m: MSTR, args):
                 discard_cs(m, cs3)
             raise
 
-    # ── Optional publish ─────────────────────────────────────────────────────
+    # ── Optional publish: the verified Mosaic flow, confirmed by publishStatus ──
+    published = None
     if args.publish:
-        print(f"→ Publishing model {model_id} in-memory…", file=sys.stderr)
-        rr = m.post(f"/api/cubes/{model_id}?cubeAction=publish")
-        if not rr.ok:
-            all_warnings.append(
-                f"publish: {rr.status_code} {rr.text[:200]} — model exists "
-                "but is not materialized"
-            )
+        if failures["tables"] or failures["attributes"] or failures["fact_metrics"]:
+            all_warnings.append("publish skipped: tables, attributes or fact metrics failed to build")
+            published = False
         else:
-            print("  publish accepted (202). Poll publishStatus to confirm.",
-                  file=sys.stderr)
+            print(f"→ Publishing model {model_id} in-memory…", file=sys.stderr)
+            try:
+                _publish(m, model_id, skip_classify=True)   # just created: known Mosaic model
+                published = True
+            except (SystemExit, requests.RequestException) as e:
+                failures["publish"] += 1
+                published = False
+                all_warnings.append(f"publish failed ({type(e).__name__}) — the model exists but "
+                                    "is not materialized; see the FATAL/error line above")
 
     # ── Review file ──────────────────────────────────────────────────────────
     review = {
         "model_id": model_id,
         "model_url": f"{m.base}/app/library#/model/{model_id}",
+        "ok": not any(failures.values()),
+        "failures": failures,
+        "published": published,
         "translated": {
             "attributes": len(attr_id_to_mosaic),
             "factMetrics": len(fact_id_to_mosaic),
@@ -3867,8 +4457,7 @@ def cmd_build_from_schema_objects(m: MSTR, args):
         "warnings": all_warnings,
     }
     if args.review_file:
-        with open(args.review_file, "w", encoding="utf-8") as f:
-            json.dump(review, f, indent=2)
+        _write_private(args.review_file, review)
         print(f"→ Review file: {args.review_file}", file=sys.stderr)
 
     if all_warnings:
@@ -3877,21 +4466,47 @@ def cmd_build_from_schema_objects(m: MSTR, args):
 
     print(f"\n✓ Model: {m.base}/app/library#/model/{model_id}", file=sys.stderr)
     print(json.dumps(review, indent=2))
+    if not review["ok"]:
+        print(f"[build-from-schema-objects] finished with failures: {failures}", file=sys.stderr)
+        sys.exit(1)
 
 
 def cmd_delete_model(m: MSTR, args):
     if not args.yes:
         die("delete-model requires --yes after verifying the Mosaic data model id")
     m.login()
+    # DELETE /api/objects/{id}?type=3 deletes any type-3 object (reports and cubes too):
+    # confirm the target is a Mosaic model first.
+    info = classify_object_surface(m, args.model_id)
+    if info["surface"] != "mosaic_data_model" and not getattr(args, "any_type", False):
+        die(f"delete-model: {args.model_id} ({info['name']}) is a {info['surface']} "
+            f"(subtype {info['subtype']}), not a Mosaic data model; refusing. "
+            f"Pass --any-type to delete it anyway.")
     r = m.delete(f"/api/objects/{args.model_id}?type=3")
     print(f"HTTP {r.status_code}: {r.text[:300]}")
+    if not r.ok:
+        sys.exit(1)
+
+
 def cmd_set_acl(m: MSTR, args):
-    m.login(identity=bool(args.model_id)); _apply_acl(m, args.object_id, args.grant, model_id=args.model_id,
-                                                       sub_type=args.sub_type, denies=args.deny)
+    m.login(identity=bool(args.model_id))
+    _apply_acl(m, args.object_id, args.grant, model_id=args.model_id, sub_type=args.sub_type,
+               denies=args.deny, replace=bool(getattr(args, "replace_trustee", False)))
+
+
 def cmd_add_security_filter(m: MSTR, args):
-    m.login(identity=True); _apply_security_filter(m, args.model_id, args.spec)
+    m.login(identity=True)
+    if not _apply_security_filter(m, args.model_id, args.spec):
+        die("security filter created, but its members are not bound (see the WARN above)")
+
+
 def cmd_translate(m: MSTR, args):
-    m.login(identity=True); _apply_translations(m, args.model_id, args.entry, default_sub_type=args.sub_type)
+    m.login(identity=True)
+    ok, total = _apply_translations(m, args.model_id, args.entry, default_sub_type=args.sub_type)
+    if ok < total:
+        die(f"translations: {total - ok} of {total} object(s) not updated (see the WARN lines above)")
+
+
 def cmd_certify(m: MSTR, args):
     m.login()
     if not _certify(m, args.object_id):
@@ -3963,12 +4578,18 @@ def cmd_resolve_users(m: MSTR, args):
     resolved, ambiguous, unresolved = [], [], []
     for value in inputs:
         candidates = _resolve_member_candidates(m, value, limit=args.limit)
+        exact = _exact_member_matches(candidates, value)
         if not candidates:
             unresolved.append(value)
-        elif len(candidates) == 1 or args.first:
-            resolved.append(candidates[0])
+        elif len(exact) == 1:
+            resolved.append(exact[0])
+        elif args.first:
+            resolved.append((exact or candidates)[0])
         else:
-            ambiguous.append({"input": value, "candidates": candidates})
+            # A lone substring match is a guess, not an answer (the same rule security
+            # filters use): report it for a human to confirm.
+            ambiguous.append({"input": value, "candidates": candidates,
+                              "reason": f"{len(exact)} exact match(es)" if exact else "no exact match"})
 
     print(json.dumps({
         "ok": True,
@@ -4017,22 +4638,40 @@ def cmd_search_objects(m: MSTR, args):
     }, indent=2))
 
 
+# Path and write verbs per the 2026 spec. Data-model objects (needs_model) live under
+# /api/model/dataModels/{id}; filters, transformations and hierarchies are project-level
+# objects (the spec has no data-model sub-resource for them). `metric` is a derived metric
+# (/metrics, PUT); fact metrics are `fact_metric`. schema_edit marks schema objects, whose
+# edits need a schemaEdit changeset. Every write runs in a changeset.
 MODEL_OBJECT_KINDS = {
-    "data_model": {"path": "/api/model/dataModels/{model_id}", "needs_model": True, "changeset": True},
-    "attribute": {"path": "/api/model/dataModels/{model_id}/attributes/{object_id}", "needs_model": True, "changeset": True},
-    "fact_metric": {"path": "/api/model/dataModels/{model_id}/factMetrics/{object_id}", "needs_model": True, "changeset": True},
-    "metric": {"alias": "fact_metric"},
-    "table": {"path": "/api/model/dataModels/{model_id}/tables/{object_id}", "needs_model": True, "changeset": True},
-    "filter": {"path": "/api/model/dataModels/{model_id}/filters/{object_id}", "needs_model": True, "changeset": True},
-    "security_filter": {"path": "/api/model/dataModels/{model_id}/securityFilters/{object_id}", "needs_model": True, "changeset": True},
-    "transformation": {"path": "/api/model/dataModels/{model_id}/transformations/{object_id}", "needs_model": True, "changeset": True},
-    "hierarchy": {"path": "/api/model/dataModels/{model_id}/hierarchies/{object_id}", "needs_model": True, "changeset": True},
-    "project_attribute": {"path": "/api/model/attributes/{object_id}", "needs_model": False, "changeset": True},
+    "data_model": {"path": "/api/model/dataModels/{model_id}", "needs_model": True, "verbs": ("PATCH",)},
+    "attribute": {"path": "/api/model/dataModels/{model_id}/attributes/{object_id}", "needs_model": True,
+                  "verbs": ("PATCH",)},
+    "fact_metric": {"path": "/api/model/dataModels/{model_id}/factMetrics/{object_id}", "needs_model": True,
+                    "verbs": ("PATCH",)},
+    "metric": {"path": "/api/model/dataModels/{model_id}/metrics/{object_id}", "needs_model": True,
+               "verbs": ("PUT",)},
+    "derived_metric": {"alias": "metric"},
+    "table": {"path": "/api/model/dataModels/{model_id}/tables/{object_id}", "needs_model": True, "verbs": ("PATCH",)},
+    "security_filter": {"path": "/api/model/dataModels/{model_id}/securityFilters/{object_id}", "needs_model": True,
+                        "verbs": ("PUT",)},
+    "project_attribute": {"path": "/api/model/attributes/{object_id}", "needs_model": False, "verbs": ("PATCH",),
+                          "schema_edit": True},
     "legacy_attribute": {"alias": "project_attribute"},
-    "project_metric": {"path": "/api/model/metrics/{object_id}", "needs_model": False, "changeset": True},
+    "project_metric": {"path": "/api/model/metrics/{object_id}", "needs_model": False, "verbs": ("PUT",)},
     "legacy_metric": {"alias": "project_metric"},
-    "project_fact": {"path": "/api/model/facts/{object_id}", "needs_model": False, "changeset": True},
-    "project_table": {"path": "/api/model/tables/{object_id}", "needs_model": False, "changeset": True},
+    "project_fact": {"path": "/api/model/facts/{object_id}", "needs_model": False, "verbs": ("PUT",),
+                     "schema_edit": True},
+    "project_table": {"path": "/api/model/tables/{object_id}", "needs_model": False, "verbs": ("PATCH",),
+                      "schema_edit": True},
+    "project_filter": {"path": "/api/model/filters/{object_id}", "needs_model": False, "verbs": ("PUT",)},
+    "filter": {"alias": "project_filter"},
+    "project_transformation": {"path": "/api/model/transformations/{object_id}", "needs_model": False,
+                               "verbs": ("PATCH",), "schema_edit": True},
+    "transformation": {"alias": "project_transformation"},
+    "project_hierarchy": {"path": "/api/model/hierarchies/{object_id}", "needs_model": False, "verbs": ("PATCH",),
+                          "schema_edit": True},
+    "hierarchy": {"alias": "project_hierarchy"},
 }
 
 
@@ -4077,23 +4716,27 @@ def cmd_get_model_object(m: MSTR, args):
         out["body"] = r.text[:args.text_limit]
         out["body_truncated"] = len(r.text) > args.text_limit
     if args.out and out.get("body") is not None:
-        with open(args.out, "w", encoding="utf-8") as f:
-            if isinstance(out["body"], (dict, list)):
-                json.dump(out["body"], f, indent=2)
-            else:
-                f.write(str(out["body"]))
+        _write_private(args.out, out["body"])
         out["saved_to"] = args.out
     print(json.dumps(out, indent=2))
 
 
 def cmd_patch_model_object(m: MSTR, args):
-    """Patch/put a Mosaic-contained or legacy schema object through Modeling Service."""
+    """Patch/put a Mosaic-contained or legacy schema object through Modeling Service.
+    The verb defaults to the one the spec defines for the kind; schema objects
+    (project_attribute/fact/table/transformation/hierarchy) get a schemaEdit changeset."""
     if not args.yes:
         die("patch-model-object requires --yes after you have reviewed the target ID and request body")
     body = _load_json_arg(args.json, args.json_file)
     if body is None:
         die("patch-model-object requires --json or --json-file")
     path, info = _model_object_path(args.kind, args.model_id, args.object_id)
+    verbs = info.get("verbs") or ("PATCH",)
+    method = (getattr(args, "method", None) or verbs[0]).upper()
+    if method not in verbs:
+        die(f"patch-model-object: kind {args.kind} is written with {'/'.join(verbs)} only "
+            f"(the spec has no {method} for {info['path']})")
+    schema_edit = bool(getattr(args, "schema_edit", False) or info.get("schema_edit"))
     m.login(identity=info.get("needs_model", False))
     before = None
     if args.before_out or args.include_before:
@@ -4101,29 +4744,24 @@ def cmd_patch_model_object(m: MSTR, args):
         if r0.ok:
             before = r0.json() if r0.text else {}
             if args.before_out:
-                with open(args.before_out, "w", encoding="utf-8") as f:
-                    json.dump(before, f, indent=2)
+                _write_private(args.before_out, before)
 
-    cs = None
+    cs = open_cs(m, schema_edit=schema_edit)
     try:
-        if info.get("changeset"):
-            cs = open_cs(m)
-        request = getattr(m, args.method.lower())
+        request = getattr(m, method.lower())
         r = request(path, params=_expression_params(args) or None, json=body)
         if not r.ok:
-            if cs:
-                m.delete(f"/api/model/changesets/{cs}")
-                m.s.headers.pop("X-MSTR-MS-Changeset", None)
-            die(f"patch-model-object {args.method} {path}: {r.status_code} {r.text[:500]}")
+            discard_cs(m, cs)
+            die(f"patch-model-object {method} {path}: {format_mstr_error(r)}")
         updated = r.json() if r.text else {}
-        if cs:
-            commit_cs(m, cs)
+        commit_cs(m, cs)
         verify = m.get(path, params=_expression_params(args) or None)
         out = {
             "ok": verify.ok,
-            "method": args.method,
+            "method": method,
             "path": path,
             "changeset": cs,
+            "schema_edit": schema_edit,
             "updated_in_changeset": updated,
             "verified": verify.json() if verify.ok and verify.text else verify.text[:args.text_limit],
         }
@@ -4131,8 +4769,7 @@ def cmd_patch_model_object(m: MSTR, args):
             out["before"] = before
         print(json.dumps(out, indent=2))
     finally:
-        if cs:
-            m.s.headers.pop("X-MSTR-MS-Changeset", None)
+        m.s.headers.pop("X-MSTR-MS-Changeset", None)
 
 
 USER_CREATION_FIELDS = {
@@ -4270,20 +4907,35 @@ def cmd_create_users(m: MSTR, args):
     }, indent=2))
 
 
+def _require_unverified_ok(args, command: str, why: str) -> None:
+    """Gate for commands whose request body no live tenant (or the spec) has confirmed."""
+    if not getattr(args, "unverified_ok", False):
+        die(f"{command} is UNVERIFIED: {why} Re-run with --unverified-ok to send it anyway, and "
+            f"check the result in the model editor.")
+
+
 def cmd_create_transformation(m: MSTR, args):
     """Create a time-shift transformation.
     --member: 'attributeId=offset' (repeatable). offset is integer (-1 = prior period)."""
-    m.login(identity=True)
+    _require_unverified_ok(args, "create-transformation",
+                           "the spec has no data-model transformations endpoint (transformations are "
+                           "project-level: POST /api/model/transformations, with a different body).")
     members = []
     for spec in args.member:
         aid, _, off = spec.partition("=")
-        members.append({"attribute":{"objectId": aid.strip(), "subType":"attribute"},
-                        "offset": int(off)})
+        try:
+            members.append({"attribute": {"objectId": aid.strip(), "subType": "attribute"},
+                            "offset": int(off)})
+        except ValueError:
+            die(f"--member {spec!r}: expected attributeId=<integer offset>")
+    m.login(identity=True)
     cs = open_cs(m)
-    r = m.post(f"/api/model/dataModels/{args.model_id}/transformations?changesetId={cs}",
+    r = m.post(f"/api/model/dataModels/{args.model_id}/transformations",
                json={"information":{"name": args.name}, "members": members})
-    if not r.ok: die(f"create transformation: {r.status_code} {r.text[:300]}")
-    tid = r.json()["information"]["objectId"]
+    tid = (_json_or(r, {}).get("information") or {}).get("objectId") if r.ok else None
+    if not tid:
+        discard_cs(m, cs)
+        die(f"create transformation: {r.status_code} {r.text[:300]}")
     commit_cs(m, cs)
     print(json.dumps({"ok": True, "transformation_id": tid}, indent=2))
 
@@ -4292,6 +4944,10 @@ def cmd_create_compound_metric(m: MSTR, args):
     """Create a compound metric from a formula referencing existing metric IDs.
     --formula: infix tokens, e.g. 'METRIC:<id1> - METRIC:<id2>'  (METRIC:<id> metric_reference tokens,
     OP:<op> operator tokens).  Simple: 'A - B' where A,B are metric IDs."""
+    _require_unverified_ok(args, "create-compound-metric",
+                           "it posts an `expression` to /factMetrics, and the spec's fact-metric body "
+                           "has no expression (derived metrics go to /metrics; see "
+                           "memory/reference_mosaic_derived_metrics.md for the verified shapes).")
     m.login(identity=True)
     tokens = []
     for raw in args.formula.split():
@@ -4300,12 +4956,14 @@ def cmd_create_compound_metric(m: MSTR, args):
         else:
             tokens.append({"type":"metric_reference","value": raw})
     cs = open_cs(m)
-    r = m.post(f"/api/model/dataModels/{args.model_id}/factMetrics?changesetId={cs}",
+    r = m.post(f"/api/model/dataModels/{args.model_id}/factMetrics",
                json={"information":{"name": args.name},
                      "expression":{"tokens": tokens},
                      "dimty":{}, "format":{"header":[],"values":[]}})
-    if not r.ok: die(f"compound metric: {r.status_code} {r.text[:300]}")
-    mid = r.json()["information"]["objectId"]
+    mid = (_json_or(r, {}).get("information") or {}).get("objectId") if r.ok else None
+    if not mid:
+        discard_cs(m, cs)
+        die(f"compound metric: {r.status_code} {r.text[:300]}")
     commit_cs(m, cs)
     print(json.dumps({"ok": True, "metric_id": mid}, indent=2))
 
@@ -4385,10 +5043,9 @@ def resolve_model_object_ref(m: MSTR, model_id: str, collection: str, sub_type: 
                              name_or_id: str) -> dict:
     """Name (case-insensitive) or objectId → {"objectId", "subType", "name"} from a
     Modeling list endpoint (factMetrics, attributes). Dies unless exactly one matches."""
-    r = m.get(f"/api/model/dataModels/{model_id}/{collection}",
-              params={"limit": 2000} if collection == "attributes" else None)
-    if not r.ok: die(f"list {collection}: {format_mstr_error(r)}")
-    infos = [o.get("information") or {} for o in (r.json() or {}).get(collection, [])]
+    items, failed = _list_all(m, f"/api/model/dataModels/{model_id}/{collection}", collection)
+    if failed is not None: die(f"list {collection}: {format_mstr_error(failed)}")
+    infos = [o.get("information") or {} for o in items if isinstance(o, dict)]
     hits = [i for i in infos if (i.get("objectId") or "").upper() == name_or_id.upper()
             or (i.get("name") or "").lower() == name_or_id.lower()]
     if not hits:
@@ -4459,10 +5116,10 @@ def cmd_patch_fact_metrics(m: MSTR, args):
     if not items: die(f"{args.spec}: no metrics[] entries")
     m.login()
     mp = f"/api/model/dataModels/{args.model_id}"
-    r = m.get(f"{mp}/factMetrics")
-    if not r.ok: die(f"list factMetrics: {format_mstr_error(r)}")
+    listed, failed = _list_all(m, f"{mp}/factMetrics", "factMetrics")
+    if failed is not None: die(f"list factMetrics: {format_mstr_error(failed)}")
     by_key = {}
-    for o in (r.json() or {}).get("factMetrics", []):
+    for o in listed:
         info = o.get("information") or {}
         by_key[(info.get("name") or "").lower()] = info
         by_key[(info.get("objectId") or "").lower()] = info
@@ -4495,7 +5152,7 @@ def cmd_patch_fact_metrics(m: MSTR, args):
     if args.dry_run or not todo:
         return
 
-    cs = open_cs(m, release_self_locks=True)
+    cs = open_cs(m, release_self_locks=bool(getattr(args, "release_locks", False)))
     try:
         for p in todo:
             r = m.patch(f"{mp}/factMetrics/{p['id']}", json=p["body"])
@@ -4518,6 +5175,9 @@ def cmd_patch_fact_metrics(m: MSTR, args):
 
 def cmd_attach_transformation(m: MSTR, args):
     """Apply a transformation to an existing metric → creates a new time-shifted metric."""
+    _require_unverified_ok(args, "attach-transformation",
+                           "the spec's fact-metric body has no `transformation` field, so a server that "
+                           "ignores unknown fields creates an unshifted copy of the source metric.")
     m.login(identity=True)
     r = m.get(f"/api/model/dataModels/{args.model_id}/factMetrics/{args.source_metric}")
     if not r.ok: die(f"source metric GET: {r.status_code} {r.text[:200]}")
@@ -4530,9 +5190,11 @@ def cmd_attach_transformation(m: MSTR, args):
         "transformation": {"objectId": args.transformation, "subType":"transformation"},
     }
     cs = open_cs(m)
-    r = m.post(f"/api/model/dataModels/{args.model_id}/factMetrics?changesetId={cs}", json=body)
-    if not r.ok: die(f"transformation metric: {r.status_code} {r.text[:300]}")
-    mid = r.json()["information"]["objectId"]
+    r = m.post(f"/api/model/dataModels/{args.model_id}/factMetrics", json=body)
+    mid = (_json_or(r, {}).get("information") or {}).get("objectId") if r.ok else None
+    if not mid:
+        discard_cs(m, cs)
+        die(f"transformation metric: {r.status_code} {r.text[:300]}")
     commit_cs(m, cs)
     print(json.dumps({"ok": True, "metric_id": mid}, indent=2))
 
@@ -4557,11 +5219,13 @@ def cmd_validate_model(m: MSTR, args):
     forced_facts = {t.strip().upper() for t in (args.fact_tables or "").split(",") if t.strip()}
 
     def load(ep, key=None):
+        if key:   # list endpoints: page through, so big models are checked in full
+            items, failed = _list_all(m, f"/api/model/dataModels/{mid}{ep}", key)
+            if failed is not None: die(f"{ep}: {failed.status_code} {failed.text[:200]}")
+            return items
         r = m.get(f"/api/model/dataModels/{mid}{ep}")
         if not r.ok: die(f"{ep}: {r.status_code} {r.text[:200]}")
-        b = r.json()
-        if key and isinstance(b, dict): return b.get(key, [])
-        return b
+        return _json_or(r, {})
 
     root    = load("")
     tables  = load("/tables", "tables")
@@ -4674,7 +5338,7 @@ def cmd_validate_model(m: MSTR, args):
     # relationships, and numeric-named attributes that almost certainly should
     # have been metrics. (See post_build_validate_topology() for the standalone
     # helper that any wiring script can call.)
-    topology = post_build_validate_topology(m, mid)
+    topology = post_build_validate_topology(m, mid, attrs=attrs, tables=tables)
     for iso in topology.get("isolated_attributes", []):
         if iso.get("table") in fact_like:
             (FAIL if args.strict_isolation else WARN)(
@@ -4765,9 +5429,9 @@ def cmd_validate_model(m: MSTR, args):
 
 
 def load_other(m: MSTR, mid: str, ep: str, key: str):
-    r = m.get(f"/api/model/dataModels/{mid}{ep}")
-    if not r.ok: die(f"diff read {ep}: {r.status_code}")
-    return (r.json() or {}).get(key, [])
+    items, failed = _list_all(m, f"/api/model/dataModels/{mid}{ep}", key)
+    if failed is not None: die(f"diff read {ep}: {failed.status_code}")
+    return items
 
 
 def cmd_validate_topology(m: MSTR, args):
@@ -4827,11 +5491,17 @@ def cmd_validate_topology(m: MSTR, args):
 def cmd_build_from_config(m: MSTR, args):
     """Declarative build from a YAML/JSON spec. See memory/reference_mosaic_config_schema.md."""
     spec = load_structured_file(args.config) or {}
+    if not isinstance(spec, dict) or not spec.get("name"):
+        die(f"{args.config}: a build config needs at least `name` and `sources`")
+    try:
+        sources = [f"{s['instance']}:{s['schema']}:{','.join(s['tables'])}" for s in spec.get("sources", [])]
+    except (KeyError, TypeError):
+        die(f"{args.config}: each sources[] entry needs instance, schema and a tables list")
     # Rehydrate into argparse-like namespace and reuse cmd_build.
     class NS: pass
     ns = NS()
     ns.name         = spec["name"]
-    ns.source       = [f"{s['instance']}:{s['schema']}:{','.join(s['tables'])}" for s in spec.get("sources",[])]
+    ns.source       = sources
     ns.instance = ns.schema = None; ns.tables = []
     ns.dest_folder  = spec.get("destination_folder", args.dest_folder)
     ns.data_serve_mode = spec.get("data_serve_mode","connect_live")
@@ -4861,25 +5531,54 @@ def cmd_build_from_config(m: MSTR, args):
         elif value:
             erd.append(value)
     ns.erd          = erd
-    ns.security_filter = [f"{sf['name']}={sf.get('qualification','True')}|{','.join(sf.get('members',[]))}"
-                          for sf in spec.get("security_filters",[])]
-    ns.grant        = [f"{g['trustee']}:{','.join(g['rights'])}" for g in spec.get("grants",[])]
-    ns.deny         = [f"{g['trustee']}:{','.join(g['rights'])}" for g in spec.get("denies",[])]
-    ns.translate    = [f"{t['object']}:{t['locale']}={t['text']}" for t in spec.get("translations",[])]
+    # Security filters go through as mappings — {name, qualification (object, JSON string,
+    # @file or ATTR_ID[:FORM_ID]=VALUE), members (list or comma string)} — so a qualification
+    # object never has to survive a round trip through the CLI string syntax.
+    ns.security_filter = [dict(sf) for sf in spec.get("security_filters", []) if isinstance(sf, dict)]
+    ns.grant        = [_config_acl_entry(g, args.config) for g in spec.get("grants", [])]
+    ns.deny         = [_config_acl_entry(g, args.config) for g in spec.get("denies", [])]
+    ns.translate    = [_config_translation_entry(t, args.config) for t in spec.get("translations", [])]
     ns.certify      = spec.get("certify", False)
     ns.publish      = spec.get("publish", False)
     cmd_build(m, ns)
 
 
+def _config_acl_entry(g, source: str) -> str:
+    """build-from-config grant/deny {trustee, rights (list or "view"/"browse,read" string),
+    type?: user|user_group} → the CLI's 'trustee:rights[:type]'."""
+    if not isinstance(g, dict) or not g.get("trustee") or not g.get("rights"):
+        die(f"{source}: each grant/deny needs `trustee` and `rights`, got {g!r}")
+    rights = g["rights"]
+    rights = ",".join(str(r) for r in rights) if isinstance(rights, (list, tuple)) else str(rights)
+    kind = g.get("type") or g.get("subType") or g.get("trustee_type")
+    return f"{g['trustee']}:{rights}" + (f":{kind}" if kind else "")
+
+
+def _config_translation_entry(t, source: str) -> str:
+    """build-from-config translation {object, locale, text, sub_type?, field?} → the CLI's
+    'objectId[:subType]:locale[:field]=text'."""
+    if not isinstance(t, dict) or not t.get("object") or not t.get("locale") or "text" not in t:
+        die(f"{source}: each translation needs `object`, `locale` and `text`, got {t!r}")
+    sub_type = t.get("sub_type") or t.get("subType")
+    field = t.get("field")
+    if field and not sub_type:
+        die(f"{source}: translation {t!r} sets `field`, so it also needs `sub_type`")
+    left = ":".join(str(x) for x in (t["object"], sub_type, t["locale"], field) if x)
+    return f"{left}={t['text']}"
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 def build_parser():
-    p = argparse.ArgumentParser(prog="build_mosaic.py")
+    # allow_abbrev=False: `--pass x` must not quietly mean --password (and slip past the
+    # secret-flag warning in main()).
+    p = argparse.ArgumentParser(prog="build_mosaic.py", allow_abbrev=False)
     p.add_argument("--base",        default=DEFAULT_BASE)
     p.add_argument("--project-id",  default=DEFAULT_PROJECT_ID)
     p.add_argument("--user",        default=DEFAULT_USER)
     p.add_argument("--password",    default=DEFAULT_PASSWORD)
     p.add_argument("--login-mode",  type=int, default=DEFAULT_LOGIN_MODE,
-                   help="1 Standard (default), 16 LDAP, 8 Anonymous, 4096 API token. Env: MSTR_LOGIN_MODE.")
+                   help="1 Standard (default), 16 LDAP, 8 Anonymous, 4096 API token (the token goes in "
+                        "MSTR_API_TOKEN, not MSTR_USER). Env: MSTR_LOGIN_MODE.")
     strategy_auth.add_auth_method_arg(p)
     # Borrowed-session auth (Studio Cloud / SSO tenants). When --auth-token is
     # provided, MSTR.login() skips /auth/login and /auth/logout so the external
@@ -4968,6 +5667,9 @@ def build_parser():
     sp.add_argument("--with-identity-token", action="store_true",
                     help="also request X-MSTR-IdentityToken; use for Mosaic data-model Modeling Service writes, not classic/project Modeling calls")
     sp.add_argument("--yes", action="store_true", help="required for DELETE")
+    sp.add_argument("--show-secrets", action="store_true",
+                    help="print token/password fields of the response body (redacted by default; "
+                         "--out always gets the full body, in a 0600 file)")
 
     sp = sub.add_parser("resolve-users")
     sp.add_argument("--user", dest="lookup_user", action="append", default=[],
@@ -5020,7 +5722,12 @@ def build_parser():
                     help="Mosaic-contained kind, or project_/legacy_ kind for classic schema objects")
     sp.add_argument("--model-id", help="required for Mosaic-contained objects")
     sp.add_argument("--object-id", help="required except kind=data_model")
-    sp.add_argument("--method", default="PATCH", choices=["PATCH", "PUT"])
+    sp.add_argument("--method", default=None, choices=["PATCH", "PUT"],
+                    help="default: the verb the spec defines for the kind (PUT for metric, security_filter, "
+                         "project_metric, project_fact, project_filter; PATCH otherwise)")
+    sp.add_argument("--schema-edit", action="store_true",
+                    help="open a schemaEdit changeset (automatic for project_attribute/fact/table/"
+                         "transformation/hierarchy)")
     sp.add_argument("--json", help="JSON request body string")
     sp.add_argument("--json-file", help="JSON request body file")
     sp.add_argument("--show-expression-as", action="append", choices=["tokens", "tree"])
@@ -5125,6 +5832,9 @@ def build_parser():
     sp.add_argument("--review-file", default="",
                     help="Write a JSON review file with warnings and "
                          "created object IDs.")
+    sp.add_argument("--use-batch", action="store_true",
+                    help="create attributes/fact metrics through the UI's undocumented POST "
+                         "/api/model/batch instead of one documented POST per object")
 
     sp = sub.add_parser("set-serve-mode")
     sp.add_argument("--model-id", required=True)
@@ -5164,9 +5874,9 @@ def build_parser():
                     help="leave the now-redundant child attributes in place "
                          "instead of deleting them (useful for staged rollouts)")
     sp.add_argument("--release-locks", action="store_true",
-                    help="if open_cs hits 8004cc41 with a self-owned lock, release "
-                         "it and retry once. See `release-locks` subcommand for the "
-                         "standalone equivalent.")
+                    help="if open_cs hits 8004cc41 and GET /api/model/schema/lock says you own the "
+                         "lock, release it and retry once (only when no other job uses this "
+                         "account). See the `release-locks` subcommand for the standalone equivalent.")
 
     sp = sub.add_parser("release-locks",
         help="Release stuck Modeling Service schemaEdit changesets owned by the "
@@ -5176,23 +5886,36 @@ def build_parser():
                     help="cap on release attempts (each provokes one lock conflict "
                          "to discover the LOCKID). Default 5.")
 
-    sp = sub.add_parser("refresh")
+    sp = sub.add_parser("refresh",
+                        help="Reload a Mosaic model's data (a publish with a per-table refresh policy).")
     sp.add_argument("--model-id", required=True)
-    sp.add_argument("--refresh-type", default="incremental",
-                    choices=["update","add","replace","incremental"])
+    sp.add_argument("--refresh-type", default="replace",
+                    choices=["replace", "add", "update", "upsert", "incremental"],
+                    help="publish refreshPolicy for every table (default replace; incremental = upsert)")
+    sp.add_argument("--poll-seconds", type=int, default=180,
+                    help="max wait for every table to finish before failing")
 
     sp = sub.add_parser("delete-model")
     sp.add_argument("--model-id", required=True)
     sp.add_argument("--yes", action="store_true", help="required after verifying the Mosaic data model id")
+    sp.add_argument("--any-type", action="store_true",
+                    help="delete even when the id is not a Mosaic data model (a cube or report)")
 
     sp = sub.add_parser("set-acl")
     sp.add_argument("--model-id", help="required for data-model-contained objects")
     sp.add_argument("--object-id", required=True)
     sp.add_argument("--sub-type", default="report_emma_cube",
                     help="object subtype for data model ACL endpoint: report_emma_cube (model root, default), "
-                         "attribute, metric, fact_metric, logical_table (contained table)")
-    sp.add_argument("--grant", action="append", default=[], help="'trusteeId:rights' (repeatable)")
-    sp.add_argument("--deny", action="append", default=[], help="'trusteeId:rights' (repeatable)")
+                         "attribute, metric, logical_table (contained table), md_security_filter")
+    sp.add_argument("--grant", action="append", default=[],
+                    help="'trusteeId:rights[:user|user_group]' (repeatable). Adds the rights and keeps the "
+                         "trustee's others; also clears them from the trustee's deny set")
+    sp.add_argument("--deny", action="append", default=[],
+                    help="same syntax as --grant (repeatable). Adds the denies and keeps the trustee's grants "
+                         "for other rights")
+    sp.add_argument("--replace-trustee", action="store_true",
+                    help="set each named trustee's entry to exactly the given grants/denies "
+                         "(other trustees are never touched)")
 
     sp = sub.add_parser("add-security-filter")
     sp.add_argument("--model-id", required=True)
@@ -5201,7 +5924,9 @@ def build_parser():
 
     sp = sub.add_parser("translate")
     sp.add_argument("--model-id", required=True)
-    sp.add_argument("--sub-type", default="data_model")
+    sp.add_argument("--sub-type", default="report_emma_cube",
+                    help="subType for entries without one (default: the model root, report_emma_cube; "
+                         "data_model is accepted as an alias)")
     sp.add_argument("--entry", action="append", required=True,
                     help="'objectId[:subType]:locale[:name|description]=translation' (repeatable)")
 
@@ -5215,6 +5940,7 @@ def build_parser():
     sp.add_argument("--name", required=True)
     sp.add_argument("--member", action="append", required=True,
                     help="'attributeId=offset' e.g. 'ABC...=-1' for prior period (repeatable)")
+    sp.add_argument("--unverified-ok", action="store_true", help="send the unverified request anyway")
 
     sp = sub.add_parser("create-compound-metric",
                         help="UNVERIFIED: uses operator/metric_reference tokens on /factMetrics; the "
@@ -5222,6 +5948,7 @@ def build_parser():
     sp.add_argument("--model-id", required=True)
     sp.add_argument("--name", required=True)
     sp.add_argument("--formula", required=True, help="space-separated: 'METRIC_ID1 - METRIC_ID2'")
+    sp.add_argument("--unverified-ok", action="store_true", help="send the unverified request anyway")
 
     sp = sub.add_parser("create-conditional-metric",
         help="Derived metric Fn(<fact metric>) scoped to <attribute> IN (<elements>) by an embedded "
@@ -5245,6 +5972,9 @@ def build_parser():
     sp.add_argument("--spec", required=True,
                     help="JSON/YAML: {presets?: {name: [format tokens]}, metrics: [{name, function?, format?}]}")
     sp.add_argument("--dry-run", action="store_true", help="print the diff plan; open no changeset")
+    sp.add_argument("--release-locks", action="store_true",
+                    help="if the changeset open hits 8004cc41 and GET /api/model/schema/lock says you own "
+                         "the lock, release it and retry once (only when no other job uses this account)")
 
     sp = sub.add_parser("attach-transformation",
                         help="UNVERIFIED against the 2026 spec; see create-transformation")
@@ -5252,6 +5982,7 @@ def build_parser():
     sp.add_argument("--name", required=True)
     sp.add_argument("--source-metric", required=True)
     sp.add_argument("--transformation", required=True)
+    sp.add_argument("--unverified-ok", action="store_true", help="send the unverified request anyway")
 
     return p
 

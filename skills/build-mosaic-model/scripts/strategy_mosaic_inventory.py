@@ -30,6 +30,33 @@ from _client import (  # noqa: E402
 
 DATA_MODEL_TYPE = 3
 DATA_MODEL_SUBTYPE = 779
+MOSAIC_EXT_TYPE = 448      # subtype 779 is shared with data-import (MTDI) cubes; Mosaic models carry 448
+EXIT_PARTIAL = 3           # some reads failed (same code as strategy_library_publications.py)
+
+
+def is_mosaic_model(row: dict[str, Any]) -> bool:
+    """Search row -> Mosaic data model? subtype 779 plus extType 448; 779 with any other extType is
+    a data-import cube. Rows without extType (older search payloads) are kept."""
+    try:
+        subtype = int(row.get("subtype") or row.get("subType") or 0)
+    except (TypeError, ValueError):
+        return False
+    ext = row.get("extType")
+    return subtype == DATA_MODEL_SUBTYPE and (ext is None or str(ext) == str(MOSAIC_EXT_TYPE))
+
+
+def failed_reads(definitions: dict[str, dict[str, Any]]) -> dict[str, int]:
+    """Failed reads per kind across all models: sub-resource keys, 'model' for an unreadable
+    model id, 'tableDetails' for per-table detail reads. Empty dict = complete inventory."""
+    failed: Counter = Counter()
+    for definition in definitions.values():
+        if not definition.get("ok", True):
+            failed["model"] += 1
+        for key, sub in (definition.get("subresources") or {}).items():
+            if not sub.get("ok"):
+                failed[key] += 1
+        failed["tableDetails"] += int(definition.get("tableDetailFailures") or 0)
+    return {k: v for k, v in sorted(failed.items()) if v}
 
 # Sub-resources pulled per Mosaic data model. Each entry: (key, path_suffix, optional_params)
 # NOTE: /links requires X-MSTR-MS-Changeset even for GET on some Strategy tenants, so it's excluded.
@@ -50,10 +77,9 @@ class Client(InventoryClient):
     """Mosaic inventory client — adds the data-model search."""
 
     def search_data_models(self, limit: int) -> list[dict[str, Any]]:
-        """Search all Mosaic data models (type=3, subType=779) in the project."""
+        """Search all Mosaic data models (type=3, subType=779, extType 448) in the project."""
         rows = self.search_results(obj_type=DATA_MODEL_TYPE, limit=limit, timeout=60)
-        return dedupe_by_id(
-            [r for r in rows if int(r.get("subtype") or r.get("subType") or 0) == DATA_MODEL_SUBTYPE])
+        return dedupe_by_id([r for r in rows if is_mosaic_model(r)])
 
 
 def read_subresource(auth: Auth, model_id: str, path_suffix: str, params: dict[str, str]) -> dict[str, Any]:
@@ -85,6 +111,7 @@ def read_model(auth: Auth, item: dict[str, Any]) -> dict[str, Any]:
     if tables_resp.get("ok"):
         stubs = items_from_payload(tables_resp.get("body"))
         details: list[dict[str, Any]] = []
+        detail_failures = 0
         for stub in stubs:
             tid = oid(stub)
             if not tid:
@@ -95,7 +122,9 @@ def read_model(auth: Auth, item: dict[str, Any]) -> dict[str, Any]:
                 details.append(detail["body"])
             else:
                 details.append(stub)
+                detail_failures += 1
         result["subresources"]["tables"]["tableDetails"] = details
+        result["tableDetailFailures"] = detail_failures
     return result
 
 
@@ -328,8 +357,9 @@ def portfolio_analysis(models: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     epilog="Exit codes: 0 complete, 3 some reads failed (see failedReads).")
     add_auth_args(parser)
     parser.add_argument("--search-limit", type=int, default=200)
     parser.add_argument("--workers", type=int, default=8)
@@ -337,11 +367,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-name", default="", help="Optional substring filter on model names (case-insensitive)")
     parser.add_argument("--include-definition-bodies", action="store_true", help="Keep raw subresource bodies in output JSON. Large.")
     parser.add_argument("--out", default="")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> int:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     client = client_from_args(args, Client)
     started = now_id()
     try:
@@ -349,7 +379,8 @@ def main() -> int:
         auth = client.auth()
         print(f"Logged in. project_id={client.project_id}", file=sys.stderr)
 
-        print(f"Searching data models (type={DATA_MODEL_TYPE}, subType={DATA_MODEL_SUBTYPE})...", file=sys.stderr)
+        print(f"Searching data models (type={DATA_MODEL_TYPE}, subType={DATA_MODEL_SUBTYPE}, "
+              f"extType={MOSAIC_EXT_TYPE})...", file=sys.stderr)
         items = client.search_data_models(args.search_limit)
         if args.model_name:
             needle = args.model_name.lower()
@@ -360,6 +391,7 @@ def main() -> int:
 
         definitions = read_parallel(
             items, lambda item: read_model(auth, item), args.workers, progress_every=10)
+        failures = failed_reads(definitions)
 
         models = [summarize_model(item, definitions.get(oid(item) or "", {})) for item in items]
         inventory: dict[str, Any] = {
@@ -368,24 +400,32 @@ def main() -> int:
             "projectName": args.project_name,
             "projectId": client.project_id,
             "dataModelCount": len(models),
+            "failedReads": failures,
             "portfolio": portfolio_analysis(models),
             "models": models,
         }
         if args.include_definition_bodies:
             inventory["definitionBodies"] = definitions
 
+        if args.out and os.path.isfile(args.out):
+            os.chmod(args.out, 0o600)   # dump_inventory's 0600 only applies to a file it creates
         path = dump_inventory(inventory, args.out, "strategy-mosaic-inventory", started)
 
         print(json.dumps({
-            "ok": True,
+            "ok": not failures,
             "runId": started,
             "projectId": client.project_id,
             "out": path,
             "modelCount": len(models),
+            "failedReads": failures,
             "portfolioTotals": inventory["portfolio"]["totals"],
             "dataServeModes": inventory["portfolio"]["dataServeModes"],
             "metricFamilyFlagCounts": inventory["portfolio"]["metricFamilyFlagCounts"],
         }, indent=2))
+        if failures:
+            print(f"WARNING: {sum(failures.values())} read(s) failed {failures}; the inventory is "
+                  f"incomplete (exit {EXIT_PARTIAL})", file=sys.stderr)
+            return EXIT_PARTIAL
         return 0
     finally:
         client.logout()

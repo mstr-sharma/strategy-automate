@@ -101,13 +101,34 @@ def parse_seed(raw: str, default_type: int | None = None) -> dict[str, Any]:
     return {"name": raw, "type": default_type}
 
 
-class MSTR(BaseMSTR):
-    """Mining client — BaseMSTR + legacy-semantic-specific search helpers."""
+PATTERN_EXACTLY, PATTERN_CONTAINS = 2, 4   # /api/searches/results `pattern`
 
-    def quick_search(self, name: str, obj_type: int | None = None, limit: int = 50) -> list[dict[str, Any]]:
-        return self.search_results(name, obj_type, limit=limit, paginate=False)
+
+class MSTR(BaseMSTR):
+    """Mining client — BaseMSTR + legacy-semantic-specific search helpers.
+
+    Lineage searches and definition reads are memoized for the run: the same component shows
+    up under many seeds (and many reports), and the metadata is read-only, so each distinct
+    search or definition costs one round trip. Callers must not mutate the returned rows."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._memo: dict[tuple, Any] = {}
+
+    def _memoized(self, key: tuple, fetch: Any) -> Any:
+        if key not in self._memo:
+            self._memo[key] = fetch()
+        return self._memo[key]
+
+    def quick_search(self, name: str, obj_type: int | None = None, limit: int = 50,
+                     pattern: int = PATTERN_CONTAINS) -> list[dict[str, Any]]:
+        return self.search_results(name, obj_type, pattern=pattern, limit=limit, paginate=False)
 
     def quick_dependents(self, object_id: str, target_type: int | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        return self._memoized(("dependents", object_id, target_type, limit),
+                              lambda: self._quick_dependents(object_id, target_type, limit))
+
+    def _quick_dependents(self, object_id: str, target_type: int | None, limit: int) -> list[dict[str, Any]]:
         # Bespoke search-results call (usesObjectId lineage params, non-raising) —
         # deliberately NOT routed through BaseMSTR.search_results.
         params: dict[str, Any] = {
@@ -123,6 +144,10 @@ class MSTR(BaseMSTR):
 
     def metadata_search(self, params: dict[str, Any], limit: int = 200,
                         max_rows: int = 5000) -> list[dict[str, Any]]:
+        key = ("metadata", tuple(sorted((k, str(v)) for k, v in params.items())), limit, max_rows)
+        return self._memoized(key, lambda: self._metadata_search(params, limit, max_rows))
+
+    def _metadata_search(self, params: dict[str, Any], limit: int, max_rows: int) -> list[dict[str, Any]]:
         """POST /api/metadataSearches/results starts a search and answers {id, totalItems};
         GET /api/metadataSearches/results?searchId=&offset=&limit= pages through it."""
         resp = self.try_request("POST", "/api/metadataSearches/results", params=params, json={})
@@ -141,6 +166,10 @@ class MSTR(BaseMSTR):
         return rows
 
     def read_model_object(self, object_id: str, obj_type: int) -> dict[str, Any] | None:
+        return self._memoized(("definition", object_id, obj_type),
+                              lambda: self._read_model_object(object_id, obj_type))
+
+    def _read_model_object(self, object_id: str, obj_type: int) -> dict[str, Any] | None:
         path_by_type = {
             OBJECT_TYPES["attribute"]: f"/api/model/attributes/{object_id}",
             OBJECT_TYPES["metric"]: f"/api/model/metrics/{object_id}",
@@ -212,12 +241,22 @@ def resolve_seed(m: MSTR, seed: dict[str, Any], fallback_types: list[int]) -> di
     types = [seed["type"]] if seed.get("type") else fallback_types
     candidates = []
     for obj_type in types:
-        candidates.extend(m.quick_search(name, obj_type=obj_type, limit=25))
-    exact = [c for c in candidates if oname(c).casefold() == name.casefold()]
-    chosen = exact[0] if exact else (candidates[0] if candidates else None)
-    if not chosen:
-        raise RuntimeError(f"could not resolve seed '{name}'")
-    return {"id": oid(chosen), "type": otype(chosen), "name": oname(chosen), "raw": chosen}
+        candidates.extend(m.quick_search(name, obj_type=obj_type, limit=200, pattern=PATTERN_EXACTLY))
+    exact = [c for c in dedupe_objects(candidates) if oname(c).casefold() == name.casefold()]
+    if len(exact) > 1:   # names differing only in case: a same-case match settles it
+        exact = [c for c in exact if oname(c) == name] or exact
+    if len(exact) == 1:
+        chosen = exact[0]
+        return {"id": oid(chosen), "type": otype(chosen), "name": oname(chosen), "raw": chosen}
+    if exact:   # never mine an arbitrary one of several same-named objects
+        listing = "; ".join(f"{oid(c)};{otype(c)} in "
+                            + "/".join(str(a.get("name", "")) for a in (c.get("ancestors") or []) if isinstance(a, dict))
+                            for c in exact[:10])
+        raise RuntimeError(f"seed '{name}' is ambiguous: {len(exact)} objects have that name ({listing}); "
+                           "pass ID;type instead")
+    similar = sorted({oname(c) for t in types for c in m.quick_search(name, obj_type=t, limit=10)} - {""})[:10]
+    raise RuntimeError(f"no object named exactly '{name}'"
+                       + (f"; similar names: {similar}" if similar else "") + " (or pass ID;type)")
 
 
 def search_dependencies(m: MSTR, seed: dict[str, Any], target_types: list[int], recursive: bool = True) -> list[dict[str, Any]]:
@@ -465,7 +504,16 @@ def summarize(state: MineState, args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def parse_args() -> argparse.Namespace:
+def private_open(path: str, **kw):
+    """open(path, "w") for a file readable only by this user (0600), also when it already
+    existed: the output lists object names, folders and lineage."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    if hasattr(os, "fchmod"):   # POSIX; O_CREAT's mode only applies to a new file
+        os.fchmod(fd, 0o600)
+    return os.fdopen(fd, "w", **kw)
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     add_auth_args(parser, project_id=True)
     parser.add_argument("--mode", choices=("top-down", "reverse"), required=True)
@@ -478,11 +526,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-objects", type=int, default=50)
     parser.add_argument("--scan-limit", type=int, default=40, help="Maximum visible objects per semantic type for reverse definition scan fallback.")
     parser.add_argument("--out", help="Optional JSON output path.")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> int:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    seeds: list[dict[str, Any]] = []   # parsed before sign-in: bad input costs no session
+    seeds.extend(parse_seed(x) for x in args.seed)
+    seeds.extend(parse_seed(x, OBJECT_TYPES["report"]) for x in args.report)
+    seeds.extend(parse_seed(x, OBJECT_TYPES["document"]) for x in args.document)
+    seeds.extend(parse_seed(x, OBJECT_TYPES["table"]) for x in args.table)
+    if not seeds:
+        raise SystemExit("provide at least one --seed, --report, --document, or --table")
     m = client_from_args(args, MSTR)
     try:
         m.login()
@@ -493,19 +548,11 @@ def main() -> int:
             project = m.resolve_project()
             args.project_id = project["id"]
 
-        seeds: list[dict[str, Any]] = []
-        seeds.extend(parse_seed(x) for x in args.seed)
-        seeds.extend(parse_seed(x, OBJECT_TYPES["report"]) for x in args.report)
-        seeds.extend(parse_seed(x, OBJECT_TYPES["document"]) for x in args.document)
-        seeds.extend(parse_seed(x, OBJECT_TYPES["table"]) for x in args.table)
-        if not seeds:
-            raise RuntimeError("provide at least one --seed, --report, --document, or --table")
-
         state = mine_top_down(m, seeds, args) if args.mode == "top-down" else mine_reverse(m, seeds, args)
         output = summarize(state, args)
         text = json.dumps(output, indent=2)
         if args.out:
-            with open(args.out, "w", encoding="utf-8") as f:
+            with private_open(args.out, encoding="utf-8") as f:
                 f.write(text + "\n")
         print(text)
         return 0

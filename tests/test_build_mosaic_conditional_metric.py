@@ -6,6 +6,11 @@ memory/reference_mosaic_derived_metrics.md §0c: POST /metrics → POST
 in the X-MSTR-MS-Changeset header. A fake client stands in for MSTR, so nothing
 touches the network.
 """
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import _hermetic  # noqa: E402,F401  (scrub MSTR_*/proxy env, private secret store)
+
 import contextlib
 import io
 import json

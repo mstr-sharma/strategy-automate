@@ -29,6 +29,11 @@ slice of the real schema, as one fixture, to catch interaction bugs the
 per-function unit tests could each pass individually while still combining
 incorrectly.
 """
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import _hermetic  # noqa: E402,F401  (scrub MSTR_*/proxy env, private secret store)
+
 import os
 import sys
 import unittest
