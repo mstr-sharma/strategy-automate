@@ -11,7 +11,7 @@ This file is the **canonical cross-tool entry point**. Every LLM-specific shim a
 - `memory/MEMORY.md` is a flat index with one-line hooks; any LLM can `grep` or keyword-match to find the relevant memory file on demand.
 - Shell helpers live in `skills/build-mosaic-model/scripts/`. Invoke them via whatever tool-call mechanism your harness exposes (Bash, shell, execute_command, tool-use-bash, etc.).
 - Configuration comes from env vars (`MSTR_BASE`, `MSTR_PROJECT_ID`/`MSTR_PROJECT_NAME`, `MSTR_DEST_FOLDER_ID`) — see `memory/reference_strategy_env.md`. Never hardcode.
-- **Sign-in:** every script takes `--auth-method` / `MSTR_AUTH_METHOD` (default `auto`) through `skills/build-mosaic-model/scripts/strategy_auth.py`: `MSTR_API_TOKEN`, `MSTR_USER`+`MSTR_PASSWORD` (Standard or LDAP), or — with no credentials at all — a cached browser single-sign-on session (`sso`). Never type a user's password, never print tokens, never pass secrets as command-line flags. An `sso` sign-in needs the human to click **Allow** in their browser; if a command waits for it, tell them. See `memory/reference_strategy_authentication.md`.
+- **Sign-in:** every script takes `--auth-method` / `MSTR_AUTH_METHOD` (default `auto`) through `skills/strategy-platform/scripts/strategy_auth.py`: `MSTR_API_TOKEN`, `MSTR_USER`+`MSTR_PASSWORD` (Standard or LDAP), or — with no credentials at all — a cached browser single-sign-on session (`sso`). Never type a user's password, never print tokens, never pass secrets as command-line flags. An `sso` sign-in needs the human to click **Allow** in their browser; if a command waits for it, tell them. See `memory/reference_strategy_authentication.md`.
 
 ## Git workflow
 
@@ -48,15 +48,22 @@ User task → which branch?
 
 1. **Identify the surface.** Strategy concepts are duplicated across Mosaic and classic. Before touching endpoints, decide whether the user is asking about Mosaic data models, classic / project semantic layer, runtime analytics, cubes / datasets, AI agents, platform admin, or data validation. When uncertain, consult `memory/reference_strategy_surface_matrix.md`.
 2. **Read the relevant memory file.** `memory/MEMORY.md` is the index — every other file has a `type` frontmatter (`user`, `project`, `feedback`, `reference`) and a one-line description. Load only the files you need.
-3. **Use the skills when they fit** (precedence above).
+3. **Use the skills when they fit** (precedence above). Each owns a slice of the REST API (`memory/reference_strategy_api_surface.md` maps every area):
+   - `skills/strategy-automation/SKILL.md` — the NLQ router: classifies the request and hands it to the owning skill.
+   - `skills/strategy-platform/SKILL.md` — the core: sign-in (`strategy_auth.py`), spec-validated access to **every** REST operation (`strategy_api.py`), MCP client (`strategy_mcp.py`).
    - `skills/strategy-data-modeling/SKILL.md` — the modeling-planning layer: declare business process, grain, attributes, facts, metrics, relationships, hierarchies, time semantics, and validation before build / migration / review work.
    - `skills/build-mosaic-model/SKILL.md` — the `build-mosaic-model` skill (discovery + build + ACL + security filter + publish + post-build edits).
-   - `skills/strategy-automation/SKILL.md` — the NLQ router: points you at the right memory + helper for any Strategy task.
-   - `skills/strategy-validation/SKILL.md` — paired-query data-correctness validation against any reference source.
+   - `skills/strategy-validation/SKILL.md` — paired-query data-correctness validation against any reference source; Test Center comparisons.
+   - `skills/strategy-admin/SKILL.md` — users, groups, security roles, privileges, SCIM, tenants, license, server and project settings.
+   - `skills/strategy-distribution/SKILL.md` — subscriptions, schedules, events, contacts, history list, scheduled model refresh.
+   - `skills/strategy-content/SKILL.md` — reports, dashboards, documents, objects, folders, search, certification, cubes, datasets, Library.
+   - `skills/strategy-migration/SKILL.md` — packages, migrations, project duplication, Git backup/restore.
+   - `skills/strategy-ops/SKILL.md` — monitors, jobs, caches, user connections, project load, telemetry, change journal, server scripts.
+   - `skills/strategy-ai/SKILL.md` — agents, bots, questions, MCP readiness, Explorer, ontology.
    - `skills/create-unstructured-data/SKILL.md` — upload documents and slide decks as knowledge for Strategy AI agents.
 4. **Use environment configuration, never hardcoded values.** `MSTR_BASE`, `MSTR_PROJECT_ID` or `MSTR_PROJECT_NAME`, `MSTR_DEST_FOLDER_ID`, plus a sign-in method (above). See `.env.example` + `memory/reference_strategy_env.md`.
-5. **Probe live specs when endpoint details matter.** `python3 skills/build-mosaic-model/scripts/build_mosaic.py openapi-summary` and `... openapi-search "<term>"` hit `/api/openapi.yaml` directly.
-6. **Classify automation coverage honestly.** Use `memory/reference_strategy_automation_coverage.md`: wrapped helper, generic REST hook, specialized hook, captured fallback, or known gap. Generic `api-call` reachability is an API hook, but not a finished workflow wrapper.
+5. **Ask the tenant's own spec when endpoint details matter.** `python3 skills/strategy-platform/scripts/strategy_api.py ops --search "<words>"` / `describe <operationId>` / `call <operationId>` cover all ~1,700 operations with validation; writes need `--yes`.
+6. **Classify automation coverage honestly.** Three layers: (1) every operation is *reachable* and validated through `strategy_api.py call`; (2) a domain skill records the *workflow* (steps, safety, read-back) for common tasks; (3) a typed helper exists only where a workflow is multi-step or risky. Use `memory/reference_strategy_automation_coverage.md` for the levels and the gap register; a validated single call is not a tested workflow. `tests/test_rest_contract.py` fails if a script calls an endpoint the spec does not have.
 7. **On any REST failure, grep `memory/reference_strategy_error_codes.md` FIRST.** Every observed `8004cc##` / iServerCode maps to the memory file with the fix. Do not retry blind — all observed codes are class-of-error, not transient.
 
 For Mosaic work, distinguish the entry path:
@@ -66,7 +73,7 @@ For Mosaic work, distinguish the entry path:
 
 ## Operating rules (apply to every tool)
 
-- **Classify Mosaic vs legacy before every write.** Before hitting any endpoint that differs between the two families (publish, refresh, execute, serve-mode, ACL, security filter), call `GET /api/objects/{id}?type=3` and branch on `subtype`: 779 → Mosaic data model, 776 → classic Intelligent Cube, anything else → stop and classify further. See `memory/reference_mosaic_vs_legacy_surfaces.md` for the endpoint-pair cheat sheet. For publishing, `memory/reference_mosaic_publish_path.md` is canonical: both trigger paths work on a properly-typed Mosaic model (`POST /api/cubes/{id}?cubeAction=publish` is what the UI uses and the reliable trigger on the observed Strategy ONE Cloud family; the Modeling-native 3-step flow returns per-table status). Never trust the 202/204 alone — poll `publishStatus` (or probe the model via a Trino/MCP `count(*)` query) until tables are loaded before declaring success.
+- **Classify Mosaic vs legacy before every write.** Before hitting any endpoint that differs between the two families (publish, refresh, execute, serve-mode, ACL, security filter), call `GET /api/objects/{id}?type=3` and branch on `subtype` + `extType`: 779 with extType 448 → Mosaic data model; 779 with another extType → data-import (MTDI) cube; 776 → classic Intelligent Cube; anything else → stop and classify further (`classify_object_surface()` does this). See `memory/reference_mosaic_vs_legacy_surfaces.md` for the endpoint-pair cheat sheet. For publishing, `memory/reference_mosaic_publish_path.md` is canonical. The documented Mosaic flow is `POST /api/dataModels/{id}/instances` → `POST /api/dataModels/{id}/publish` → poll `GET /api/dataModels/{id}/publishStatus` until every table is `completed` (older tenants said `loaded`) or one is `error`; `build_mosaic.py publish` does this. `POST /api/cubes/{id}?cubeAction=publish` is internal/deprecated in the spec — a tenant-observed fallback only. Never trust a 202/204 alone; a scoped Trino/MCP query (not a whole-model `COUNT(*)`) is the final proof.
 - **Consumer-grade naming is the ship bar.** Any model you build or modify must pass the checklist in `memory/feedback_mosaic_ship_bar.md` — business-named attributes, non-empty form names, business-friendly descriptions, sensible metric formats, no hardcoded example usernames or personal names.
 - **Every Mosaic build closes with data validation or an explicit pending note.** Route through `skills/strategy-validation/SKILL.md`; validation is comparator-dependent, and the reference source can be another Mosaic model, a classic project report/model, a flat file, direct warehouse SQL, an external system/API, or a saved REST fixture (NOT Mosaic-to-Mosaic only). If no trusted comparator is available, say validation is pending and do not call the build shippable.
 - **Changesets are the unit of write.** Open → mutate → commit, or discard on failure. Relationships / ACLs / translations typically require a separate changeset after object creation.
@@ -105,17 +112,17 @@ For Mosaic work, distinguish the entry path:
 Each AI tool configures MCP servers through its own settings — this repo does NOT ship MCP server configuration. When a correctly-configured Mosaic MCP session exists, the following tool names are available and referenced by memory/skills:
 
 - `get_projects` — list projects in the connected catalog.
-- `get_models` (older servers: `get_mosaic_models`) — list **certified** models only; a published but uncertified model does not appear.
+- `get_models` (older servers: `get_mosaic_models`) — list **certified** content only: Mosaic models (`Mosaic Model`) and governed classic cubes, reports and datasets (`Other Model`); a published but uncertified model does not appear.
 - `get_semantics` — return the annotated attribute/metric surface for a Mosaic model. Name lookup fails until the model is certified.
 - `query` — execute a Trino-compatible SQL query against the published Mosaic layer.
 
-The memory writes say "MCP" — don't hunt for a server-id prefix. If your tool exposes these four tool names under any namespace, you're good. Scripts can reach the same server with the same single sign-on through `skills/build-mosaic-model/scripts/strategy_mcp.py` (OAuth, as the MCP connector does).
+The memory writes say "MCP" — don't hunt for a server-id prefix. If your tool exposes these four tool names under any namespace, you're good. Each tenant runs two MCP servers: Mosaic (`{host}/collaboration/mcp/mosaic`, these tools) and Agents (`{host}/collaboration/mcp/agent`). Scripts can reach either with the same single sign-on through `skills/strategy-platform/scripts/strategy_mcp.py` (OAuth, as the MCP connector does; `--server mosaic|agent`).
 
 **If your harness has no MCP support**, every MCP tool has a REST fallback:
 - `get_projects` → `GET /api/projects`
-- `get_models` → folder walk for `subtype==779` via `/api/folders/{id}` + `/api/searches`
-- `get_semantics` → `GET /api/model/dataModels/{id}/attributes` + `/factMetrics`
-- `query` → direct Trino HTTPS connection (host `<tenant>:443`, catalog `sql`, schema `<project-name-lower>`, basic auth with MSTR creds), or `POST /api/dataModels/{id}/instances` + report/cube execution APIs for result-set equivalents.
+- `get_models` → `GET /api/searches/results?type=3&certifiedStatus=CERTIFIED_ONLY` (then keep subtype 779 + extType 448 for Mosaic models)
+- `get_semantics` → `GET /api/model/dataModels/{id}/attributes` + `/factMetrics` + `/metrics`
+- `query` → direct Trino HTTPS connection (host `<tenant>:443`, catalog `sql`, schema `<project-name-lower>`, basic auth with a Strategy password), or the cube-instance API for result sets: `POST /api/v2/cubes/{id}/instances` → `GET /api/v2/cubes/{id}/instances/{instanceId}` (a `POST /api/dataModels/{id}/instances` is a publish instance and returns no data).
 
 ## Running under specific LLM harnesses
 

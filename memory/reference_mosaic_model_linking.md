@@ -1,14 +1,23 @@
 ---
 name: Mosaic model linking ("data mesh") — how it actually works at the metadata level
-description: The Studio UI's "Add Models" affordance does NOT create a persisted link reference between two Mosaic models. It imports the other model's schema definitions into the child as fresh independent objects with new objectIds, disambiguating name collisions with a "(2)" suffix. There is no dedicated REST endpoint for "link models". Verified on a live data-mesh build.
+description: Mosaic model linking is a documented, stored REST surface (REST docs, available since January 2026) — POST /api/model/dataModels/{id}/externalDataModels adds a base model to a composed model, and GET/POST/PUT …/links connects attributes across base models explicitly (even differently named ones). A 2026-04 UI capture that saw "Add Models" import "(2)"-suffixed copies with no stored link is kept below as history.
 type: reference
 ---
 
-## The short answer
+## The short answer (corrected 2026-10-05)
 
-There is no REST endpoint to link one Mosaic model to another. "Link" is a UI-level import: the child model gets its own copy of the parent's schema objects with new IDs. Cross-model federation at query time is implicit via shared attribute names, not via stored pointers.
+Links are documented and stored. REST docs "Manage data model external data models" and "Manage data model links" (both available since January 2026; every path public in the tenant spec); each write rides a changeset (`X-MSTR-MS-Changeset`), then commit:
 
-## Evidence
+1. **Add a base model** to the composed model: `POST /api/model/dataModels/{id}/externalDataModels` body `{"baseDataModel": {"objectId": "<base model id>", "subType": "report_emma_cube", "name": "…"}, "alias": "…"}`. The response's `objects[]` lists the imported attributes / metrics, with aliases such as `Customer (2)` on collisions. Read back with `GET …/externalDataModels` and `GET …/externalDataModels/{externalId}/objects`.
+2. **Connect attributes explicitly**: `POST /api/model/dataModels/{id}/links` body `{"targets": [{"objectId", "name", "subType": "attribute", "externalDataModelId"}, …], "sourceObjectId": "<one of the targets>", "alias": "Customer"}` → 201 with the merged `linkedAttribute`. `GET …/links` lists links; `PUT …/links` modifies all links from the list in the body (send the full list). Targets need not share a name.
+
+Cross-model federation therefore runs through stored links (explicit attribute connections), not implicit name matching. Earlier versions of this note said "there is no REST endpoint to link one Mosaic model to another" — wrong; that came from the 2026-04 UI capture below.
+
+## History — 2026-04 UI capture ("Add Models" as an import)
+
+The rest of this section and the next three record what one UI flow did on one tenant in 2026-04, before the link endpoints were documented. Treat the "no stored link" conclusions as superseded by the box above and the 2026-09-18 observation at the end.
+
+## Evidence (history)
 
 Two models on a real tenant:
 
@@ -21,16 +30,16 @@ After save, REST inspection shows:
 - **Child envelope has no `linkedModels[]`, `composition[]`, `references[]`, or similar fields.** The model GET response keys are `information, dataServeMode, schemaFolderId, enableWrangleRecommendations, enableAutoHierarchyRelationships, sampling, partition, autoJoin, executiveSummary`. No place to store a link.
 - **Endpoint probes all 404:**
   - `/api/model/dataModels/{mid}/linkedModels` → 404
-  - `/api/model/dataModels/{mid}/links` → 400 (exists as a WRITE endpoint with `X-MSTR-MS-Changeset` required; no GET equivalent)
+  - `/api/model/dataModels/{mid}/links` → 400 — the probe sent no changeset header. The spec has `GET`, `POST` and `PUT` on `/links` (header optional on GET in the spec; this tenant family wanted it even for GET on 2026-09-18).
   - `/api/model/dataModels/{mid}/composition` → 404
   - `/api/model/dataModels/{mid}/models` → 404
   - `/api/model/dataModels/{mid}/associations` → 404
   - Query params `?showLinkedModels=true`, `?showComposition=true`, `?showFullGraph=true` → 200 but param silently ignored
 - **Schema folder has `(2)`-suffixed copies.** `GET /api/folders/{schemaFolderId}` on the child returns attributes named `Product (2)`, `Product Category (2)`, `Supplier (2)` — freshly created, new objectIds, bound to the child's own physical table and column.
 - **Example: `Product Category (2)` in the child.** Its ID form's expression reads `PRODUCT_CATEGORY` from the child's logical table `LU_PRODUCTS` — not from the parent's Postgres table. Entirely self-contained.
-- **AI executive summary describes the link semantically.** The `executiveSummary` text on the child model includes "Connected to **Example parent model (live-connect, Postgres)** via Product, Product Category, and Supplier" and "Composition type: **Hybrid**. Combines warehouse tables with a live-connected benchmark model linked through shared product and supplier dimensions." This text is generated by `POST /api/aiservice/model/overview` — an AI summary, not a structural field.
+- **AI executive summary describes the link semantically.** The `executiveSummary` text on the child model includes "Connected to **Example parent model (live-connect, Postgres)** via Product, Product Category, and Supplier" and "Composition type: **Hybrid**. Combines warehouse tables with a live-connected benchmark model linked through shared product and supplier dimensions." This text is generated by `POST /api/aiservice/model/overview` (a UI call absent from the spec, even as internal) — an AI summary, not a structural field.
 
-## What actually happens on "Add Models"
+## What actually happens on "Add Models" (history, 2026-04)
 
 Observed sequence from captured network trace (AI-assisted auto-link):
 
@@ -45,9 +54,9 @@ POST /api/aiservice/model/objects/lookupTable
 POST /api/aiservice/model/objects/multiFormAttributes                          (per-table)
 ```
 
-The batch API is carrying all the semantic work. Without seeing batch bodies (UI capture doesn't include bodies), the precise operation codes aren't documented here — but the resulting metadata state is what's enumerated above.
+The batch API is carrying all the semantic work. Without seeing batch bodies (UI capture doesn't include bodies), the precise operation codes aren't documented here — but the resulting metadata state is what's enumerated above. (2026-10-05: `/api/model/batch` and `/api/aiservice/model/*` are absent from the tenant spec even as internal paths; the workspace/pipeline calls are public. Script links with the documented endpoints in the box above, not by replaying this trace.)
 
-## What gets imported vs what doesn't
+## What gets imported vs what doesn't (history, 2026-04)
 
 Observed deltas between parent and child after "Add Models":
 
@@ -60,25 +69,17 @@ Observed deltas between parent and child after "Add Models":
 | Security filter (row-level) | **None imported** | Row-level security stays on the source model |
 | ACL entries | **None imported** | Object permissions stay on the source |
 
-## Federation at query time — the missing piece
+## Federation at query time (resolved 2026-10-05)
 
-The exec summary claims the two models are "linked through shared product and supplier dimensions." Since no stored pointer exists, the federation must happen at query execution time. The hypothesis is:
+The 2026-04 hypothesis was that federation happens by runtime name matching because "no stored pointer exists". Superseded: composed models store their base models (`externalDataModels`) and attribute connections (`links`) — see the box at the top — and the 2026-09-18 observation below shows explicitly linked, differently named attributes surfacing as one column.
 
-- When a dashboard queries the child model, Mosaic's federation engine sees attribute name matches across models that share a common schema folder or project.
-- Cross-model joins resolve at runtime via name-conformed dimensions (same attribute name → logically same entity → join key).
+## Implications for automation (corrected 2026-10-05)
 
-This is not documented in our tenant and we have not captured the query-time routing. Treat as hypothesis until a Trino / dashboard capture confirms.
-
-## Implications for automation
-
-1. **There is no "link models" REST operation to script.** To replicate the UI's data-mesh effect programmatically:
-   - Create matching attributes with the same name in each model.
-   - Ensure the shared attribute's lookup-table column semantics match (same business key).
-   - Do not attempt to reference objectIds across models — Mosaic does not store those references and the API will reject writes that try.
-2. **Imported objects are independent.** Patching `Product Category (2)` in the child does NOT affect `Product Category` in the parent. The two drift over time; plan a reconciliation workflow if you need them in sync.
+1. **Script links with the documented endpoints** — `POST …/externalDataModels` for each base model, then `POST …/links` (or `PUT …/links` for the whole list) for each attribute connection, in a changeset. Earlier text said there was no link operation and told you to copy same-named attributes into each model; don't. The composed model references base-model objectIds through `externalDataModels[].objects` and the links.
+2. **Imported copies (the 2026-04 import flow) are independent** — patching `Product Category (2)` in such a child does NOT affect `Product Category` in the parent. In a composed model built through `externalDataModels`, base-model fact-metric function/format changes did propagate (2026-09-18 below).
 3. **Don't rely on the exec summary** for automation decisions — it's AI-generated text, not a structural contract. Parse shared names directly from each model's attribute listing instead.
 4. **Security filters and ACLs are per-model.** If the parent has a security filter on Product Category and the user expects the filter to apply when querying the child, **it won't**. Re-create the filter on the child or push security down to the warehouse / RLS layer of the underlying datasource.
-5. **Derived metrics don't import.** If you need level / conditional / compound metrics consistent across linked models, re-author them in each.
+5. **Derived metrics don't import.** If you need level / conditional / compound metrics consistent across linked models, re-author them — on a composed model they can be POSTed to the composed model itself, referencing the base models' fact-metric objectIds (2026-09-18 below).
 
 ## Practical: how to tell if two models "look linked"
 
@@ -86,7 +87,8 @@ This is not documented in our tenant and we have not captured the query-time rou
 def find_likely_linked_models(m, project_id: str) -> list[tuple[str, str, list[str]]]:
     """For each pair of Mosaic models in the project, return the shared attribute names."""
     r = m.s.get(f"{m.base}/api/searches/results?type=779&projectId={project_id}&limit=2000")
-    models = [o['id'] for o in r.json().get('result', [])]
+    # 779 is shared with data-import (MTDI) cubes; Mosaic models also carry extType 448 (corrected 2026-10-05)
+    models = [o['id'] for o in r.json().get('result', []) if o.get('extType') in (None, 448)]
     attrs_by_model = {}
     for mid in models:
         r = m.s.get(f"{m.base}/api/model/dataModels/{mid}/attributes")
@@ -102,12 +104,12 @@ def find_likely_linked_models(m, project_id: str) -> list[tuple[str, str, list[s
     return pairs
 ```
 
-Any pair with 3+ shared attribute names is a candidate "linked" pair. This is as close as we can get without a first-class link contract.
+Any pair with 3+ shared attribute names is a candidate "linked" pair. That heuristic predates the documented link contract: for a composed model, read `GET …/externalDataModels` and `GET …/links` instead (2026-10-05).
 
 ## Open questions
 
 - Does the query-time federation actually happen? Need a Trino capture where one SQL touches attributes from both models and observe whether both get queried.
-- Does the `/api/model/dataModels/{mid}/links` POST endpoint (which returned 400 demanding a changeset) create a real persisted link? Worth a test: open a changeset, POST an empty body, inspect the response.
+- ~~Does the `/links` POST create a real persisted link?~~ Answered 2026-10-05: yes — documented (`POST …/links` → 201 with a `linkedAttribute`), body shape in the box at the top.
 - Are there server-side indices that index attributes by name for cross-model resolution? Probably yes — the cognitive-search endpoint (`cognitiveSearchFlags=1`) hints at a semantic index.
 
 ## Observed 2026-09-18 (Strategy ONE Cloud, connect_live composed model)

@@ -90,6 +90,7 @@ class AuthConfig:
     api_token: str = ""
     identity_token: str = ""
     cache: bool = True
+    reuse: bool = False   # keep password / API-token sessions for the next command (MSTR_REUSE_SESSION=1)
     sso_port: int = DEFAULT_SSO_PORT
     sso_host: str = "127.0.0.1"
     sso_timeout: float = 300.0
@@ -108,6 +109,7 @@ class AuthConfig:
             api_token=env("MSTR_API_TOKEN", ""),
             identity_token=env("MSTR_DELEGATE_IDENTITY_TOKEN", ""),
             cache=env("MSTR_SESSION_CACHE", "1").lower() not in ("0", "false", "no", "off"),
+            reuse=env("MSTR_REUSE_SESSION", "0").lower() in ("1", "true", "yes", "on"),
             sso_port=int(env("MSTR_SSO_PORT") or DEFAULT_SSO_PORT),
             sso_host=env("MSTR_SSO_HOST") or "127.0.0.1",
             sso_timeout=float(env("MSTR_SSO_TIMEOUT") or 300),
@@ -137,8 +139,33 @@ class SignIn:
 
 # ── Public API ───────────────────────────────────────────────────────────────
 
+def _reuse_account(cfg: AuthConfig, method: str) -> str:
+    """Cache slot for a reused password / API-token session (one per tenant and identity)."""
+    who = cfg.username.lower() if method in ("password", "ldap") and cfg.username else method
+    return f"session:{cfg.base}|{who}"
+
+
 def sign_in(session: "requests.Session", cfg: AuthConfig) -> SignIn:
-    """Authenticate `session` (sets X-MSTR-AuthToken and the session cookies). Raises AuthError."""
+    """Authenticate `session` (sets X-MSTR-AuthToken and the session cookies). Raises AuthError.
+
+    With cfg.reuse (MSTR_REUSE_SESSION=1) a password / API-token session is cached in the OS
+    secret store and left open, so the next command — and the report instances, search results
+    and jobs it created — continue in the same session. `strategy_auth.py logout` ends it."""
+    if cfg.reuse and cfg.cache and cfg.method in ("auto", "password", "ldap", "api-token"):
+        method = cfg.method if cfg.method != "auto" else _auto_method(cfg)
+        if method in ("password", "ldap", "api-token"):
+            cached = load_cached_session(session, cfg.base, account=_reuse_account(cfg, method))
+            if cached is not None:
+                return SignIn("cached:" + str(cached.get("method", "")), False, str(cached.get("user", "")))
+            result = _sign_in(session, cfg)
+            if result.owns_session and save_session(session, cfg.base, result,
+                                                    account=_reuse_account(cfg, method)):
+                result.owns_session = False
+            return result
+    return _sign_in(session, cfg)
+
+
+def _sign_in(session: "requests.Session", cfg: AuthConfig) -> SignIn:
     if not cfg.base.startswith(("https://", "http://")):
         raise AuthError("MSTR_BASE must be the Library URL, e.g. https://<host>/MicroStrategyLibrary")
     method = cfg.method
@@ -232,7 +259,7 @@ def _login(session: "requests.Session", base: str, body: dict) -> None:
     r = session.post(f"{base}/api/auth/login", json=body, timeout=TIMEOUT)
     token = r.headers.get("X-MSTR-AuthToken")
     if r.status_code not in (200, 204) or not token:
-        mode = body.get("loginMode")
+        mode = int(body.get("loginMode") or 0)
         raise AuthError(f"sign-in with loginMode {mode} ({LOGIN_MODES.get(mode, '?')}) failed: {describe(r)}")
     session.headers["X-MSTR-AuthToken"] = token
 
@@ -686,20 +713,20 @@ def secret_delete(account: str) -> None:
         pass
 
 
-def save_session(session: "requests.Session", base: str, signin: SignIn) -> bool:
+def save_session(session: "requests.Session", base: str, signin: SignIn, account: str = "") -> bool:
     data = {"v": 1, "method": signin.method, "user": signin.user, "saved": int(time.time()),
             "token": session.headers.get("X-MSTR-AuthToken", ""),
             "cookies": [{"name": c.name, "value": c.value, "domain": c.domain, "path": c.path}
                         for c in session.cookies]}
-    stored = secret_set(f"session:{base.rstrip('/')}", json.dumps(data))
+    stored = secret_set(account or f"session:{base.rstrip('/')}", json.dumps(data))
     if not stored and _store_kind() != "none":
         print("[auth] could not cache the session; the next command will ask the browser again.", file=sys.stderr)
     return stored
 
 
-def load_cached_session(session: "requests.Session", base: str) -> dict | None:
+def load_cached_session(session: "requests.Session", base: str, account: str = "") -> dict | None:
     """Restore a cached session into `session` when the server still accepts it."""
-    account = f"session:{base.rstrip('/')}"
+    account = account or f"session:{base.rstrip('/')}"
     raw = secret_get(account)
     if not raw:
         return None
@@ -865,6 +892,16 @@ def cmd_logout(cfg: AuthConfig, forget_api_token: bool) -> dict:
     else:
         out["session"] = "none cached"
     secret_delete(f"session:{cfg.base}")
+    reused = []
+    for method in ("password", "api-token"):   # sessions kept by MSTR_REUSE_SESSION=1
+        account = _reuse_account(cfg, method)
+        t = _session()
+        if load_cached_session(t, cfg.base, account=account) is not None:
+            t.post(f"{cfg.base}/api/auth/logout", timeout=20)
+            reused.append(method)
+        secret_delete(account)
+    if reused:
+        out["reused_sessions_ended"] = reused
     if forget_api_token:
         token = _saved_api_token(cfg.base)
         if token:

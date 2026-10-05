@@ -8,7 +8,7 @@ The goal: stop shipping models with zero relationships, wrong aggregations, or m
 
 ## 0. Before you start — surface, topology, inputs
 
-- [ ] **Confirm the surface first: Mosaic vs classic vs runtime vs admin** (`reference_strategy_surface_matrix.md`). Always classify subType (779 Mosaic vs 776 Intelligent Cube) BEFORE choosing cube vs data-model endpoints (`reference_mosaic_vs_legacy_surfaces.md`).
+- [ ] **Confirm the surface first: Mosaic vs classic vs runtime vs admin** (`reference_strategy_surface_matrix.md`). Always classify subType + extType BEFORE choosing cube vs data-model endpoints: 779 + extType 448 = Mosaic model, 779 with another extType = data-import cube, 776 = Intelligent Cube (`reference_mosaic_vs_legacy_surfaces.md`; corrected 2026-10-05 — 779 alone is not proof of a Mosaic model).
 - [ ] Confirm datasource / project / folder context (`MSTR_PROJECT_ID` / `MSTR_DEST_FOLDER_ID` per `reference_strategy_env.md`) and that you have the inputs for every table: instance, schema, table name, full column list + datatypes. Use `list-datasources`, `list-namespaces`, `list-tables`, `describe-tables` (plural) to batch.
 - [ ] Profile candidate keys, nulls, row counts, and join cardinalities before classifying tables — orphan and cardinality SQL probes are in `reference_data_modeling_foundations.md` → Relationship design.
 - [ ] Confirm the validation artifact (trusted CSV / SQL / reference model) exists. If not, ask the user — per `reference_data_modeling_foundations.md` stopping conditions. If genuinely unavailable, record the comparator as **explicitly pending** — never silently skip it.
@@ -108,7 +108,7 @@ Full conformance recipe + `wire-relationships` helper: `feedback_mosaic_relation
   - Use `predicate_element_list` (Shape B per `reference_mosaic_security_filter.md`) with `elementId = "h<display value>"`. This works without needing to resolve IDs or form subTypes.
   - `predicate_form_qualification` on a CUSTOM DESC form fails with `attribute_form_custom` (8004c767 "not found in metadata"). Use Shape B instead.
 - User resolution: `/api/users?nameBegins=…` or `?abbreviationBegins=…` — `searchTerm` is broken.
-- Member assignment path is `/api/dataModels/{id}/securityFilters/{sfId}/members` with `path: "/Members"` (leading slash, capital M).
+- Member assignment path is `/api/dataModels/{id}/securityFilters/{sfId}/members` with `path: "/Members"` (leading slash, capital M — what a live tenant accepted; the spec's `path` enum says `/members`, so record both).
 - **Sequence ACLs / translations / security filters AFTER base objects exist** — they target object ids that are only stable post-commit (see the changeset ordering in step 7).
 
 ## 7. Write-sequencing + rollback gates
@@ -126,7 +126,7 @@ Fast check: run `GET /api/model/dataModels/{id}/tables/{tid}?showColumns=true` a
 
 **Fix**: remap per the canonical dataType mapping table in `reference_mosaic_publish_path.md`. Either via a dedicated dataType-cleanup pass on the existing tables, or by cloning from a known-good REF model (the memory's recommended pattern).
 
-**Publish routing**: the publish path must match the target surface — subType 779 routes through the Mosaic flow in `reference_mosaic_publish_path.md`, and exactly ONE publish trigger fires per run (`-2147072194` lockout if both fire). Never trust a first-2xx publish heuristic — poll `publishStatus` to per-table `loaded` or run a Trino smoke query before declaring success.
+**Publish routing**: the publish path must match the target surface — subType 779 + extType 448 routes through the documented Mosaic flow in `reference_mosaic_publish_path.md` (instances → publish → publishStatus → delete instance), and exactly ONE publish trigger fires per run (`-2147072194` lockout if both fire). Never trust a first-2xx publish heuristic — poll `publishStatus` until every table is `completed` (the spec enum has no `loaded`; corrected 2026-10-05) or run a Trino smoke query before declaring success.
 
 This gate is the difference between "Mosaic accepts the POST" and "the cube actually materializes and Trino can query it." Do not declare a build done until the published cube answers a Trino smoke query. It only appears in MCP `get_models` (formerly `get_mosaic_models`) once it is also **certified**. Publish alone is not enough for MCP.
 

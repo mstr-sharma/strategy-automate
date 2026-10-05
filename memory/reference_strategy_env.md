@@ -21,6 +21,7 @@ Every script and skill in this repo reads tenant + credential values from enviro
 | `MSTR_SSO_PORT` / `MSTR_SSO_HOST` | no | Loopback port (default 8753) and host (`127.0.0.1` or `localhost`) for the SSO consent page and OAuth redirects. |
 | `MSTR_SSO_BROWSER` / `MSTR_SSO_TIMEOUT` | no | Browser to open (a `webbrowser` name, e.g. `chrome`) and seconds to wait (default 300). |
 | `MSTR_SESSION_CACHE` | no | `0` disables caching browser sessions in the OS secret store. |
+| `MSTR_REUSE_SESSION` | no | `1` keeps password / API-token sessions open and cached between commands (one session for a whole chain); end with `strategy_auth.py logout`. |
 | `MSTR_SECRET_STORE` | no | Force `keychain`, `secret-tool`, `file` or `none`. |
 | `MSTR_MCP_URL` | no | Mosaic MCP endpoint for `strategy_mcp.py` (found from `MSTR_BASE` when unset). |
 | `MSTR_PROJECT_ID` | one-of | Project UUID (32-hex). |
@@ -65,7 +66,7 @@ Every environment has different internal IDs. Do not paste production IDs into m
 
 - **Projects:** `GET /api/projects` → choose by name, read `id`.
 - **Datasources (DB instances):** `python3 skills/build-mosaic-model/scripts/build_mosaic.py list-datasources` → filter by name, read `id`.
-- **Destination folder (for new models):** browse `/api/folders/{id}` from a well-known root (e.g., `preDefined/8` PublicObjects) and pick a target.
+- **Destination folder (for new models):** browse `/api/folders/{id}` from a well-known root (`/api/folders/preDefined/1` = Public Objects; 19 = My Objects; 8 is Public Searches) and pick a target.
 - **Reference TPCH (or other seed) model:** `python3 skills/build-mosaic-model/scripts/build_mosaic.py search-objects --name "<seed model name>" --type 3` → read `id`.
 - **Universal ID form** `45C11FA478E745FEA08D781CEA190FE5` — this IS a Strategy platform-wide constant, shared across all tenants. Safe to use as-is.
 

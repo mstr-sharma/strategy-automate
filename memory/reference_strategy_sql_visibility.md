@@ -22,7 +22,7 @@ into one or more passes against one or more data sources. These are the surfaces
 | **Dashboard datasets** | `POST /api/dossiers/{id}/instances` → `GET /api/dossiers/{id}/instances/{mid}/datasets/sqlView` | `datasets[].sqlStatement` (load SQL + in-memory view SQL per dataset) | dashboards | verified |
 | **Dashboard visualization query details** | `GET /api/dossiers/{id}/instances/{mid}/queryDetails?chapterKey=&visualizationKey=` (document form: `GET /api/documents/{id}/instances/{iid}/queryDetails`) | `chapters[].visualizations[].{queryDetails, sql}` — the Workstation "Query Details" text with per-step timings | grid/graph visualizations | verified |
 | **Datamart** | `GET /api/datamarts/{id}/instances/{iid}/sqlView?preview=true|false` | `{sqlStatement}` | datamart reports | spec only |
-| **In-flight jobs** | `GET /api/monitors/jobs?nodeName=<node>&projectId=<id>` | `jobs[].{sql, template, filter, status, duration…}` | anything executing right now | needs **Monitor Jobs** privilege (else ERR014 -2147213784); not exercised |
+| **In-flight jobs** | `GET /api/v2/monitors/jobs?nodeName=<node>&projectName=<name>` (filters `type` ∈ interactive / subscription / predictive_cache / realtime, `status`, `objectType`) → `GET /api/v2/monitors/jobs/{id}` for `sql`, `templateName`, `filterName`, `stepStatistics`. The v1 `GET /api/monitors/jobs?nodeName=&projectId=` (list rows carry `sql`, `template`, `filter`) is **deprecated** (corrected 2026-10-05) | `jobs[].{status, type, objectName, elapsedTime…}`; SQL on the v2 detail | anything executing right now | needs **Monitor Jobs** privilege (else ERR014 -2147213784); not exercised |
 | **Auto / agent questions** | `POST /api/questions/{questionId}/transformsql` | "transformed full SQL for the question" | Auto Answers questions | spec only |
 
 Privilege for the sqlView / queryDetails family: `DssXmlPrivilegesWebReportSQL` (Web "View SQL"). The telemetry profile
@@ -100,7 +100,7 @@ Runnable, env-driven version: `captures/20261001-engine-sql-visibility/trace_mos
 - A second REST `requests.Session` reusing the auth token must also carry the login cookies on Strategy ONE Cloud (ingress routing) or you get ERR009 "session has expired".
 - `cubes/{id}/sqlView` answers for published (in_memory) models only; for connect_live models use the telemetry profile.
 - `reports/{id}/instances/{iid}/sqlView` is for report instances; a Mosaic cube instance has no SQL view.
-- `GET /api/monitors/jobs` needs the Monitor Jobs privilege; the `sql` field is only present while the job runs.
+- The job monitor needs the Monitor Jobs privilege and only shows a job while it runs. Use `GET /api/v2/monitors/jobs` (+ `/{id}` for the SQL); v1 `GET /api/monitors/jobs` is deprecated, and its `jobType` filter takes only `interactive` / `subscription` / `predictive_cache` / `realtime` — there is no `PUBLISH` job type (corrected 2026-10-05).
 - Keep traced queries scoped (attributes + metrics, no bare `COUNT(*)` over a whole model) — see the job-execution-time-limit note in the MCP tools memory.
 
 ## Related

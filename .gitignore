@@ -47,3 +47,7 @@ library_publications*.json
 *.replicate_report.csv
 *.by_recipient.csv
 *.errors.csv
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/

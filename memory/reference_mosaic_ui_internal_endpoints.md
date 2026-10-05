@@ -1,16 +1,16 @@
 ---
 name: Mosaic UI internal REST endpoints
-description: Endpoints the Studio / Admin & Modeling UI uses that are not in the public OpenAPI surface Claude normally uses. Captured via browser network trace; treat as tenant-internal contracts that can shift between versions.
+description: Endpoints the Studio / Admin & Modeling UI calls, captured via browser network trace. Checked against the 2026 spec (2026-10-05) — workspaces/pipelines are public, /api/iams (identity-provider configs) and a few others are internal, and /api/model/batch plus /api/aiservice/model/* are absent even as internal; treat the absent ones as UI internals that can shift between versions.
 type: reference
 status: captured-unverified
 tags: [mosaic, ui-internal, capture-prone]
 ---
 
-> ⚠️ **Captured-unverified:** the paths in this file come from a browser network-trace of the Mosaic Studio UI. They are NOT in the public OpenAPI surface. They can (and do) change between iServer versions. Before using any endpoint here in an automation, re-capture the current UI network traffic and confirm the path/shape. If you see a capture older than ~90 days and the UI has shipped a minor version since, treat these as **hints, not contracts**. When a wrapped public endpoint exists for the same operation, prefer the public path.
+> ⚠️ **Captured-unverified:** the paths in this file come from a browser network-trace of the Mosaic Studio UI. Checked against the 2026 tenant spec on 2026-10-05, they split three ways: **public** — `/api/dataServer/workspaces` and its `/pipelines` (+ `/pipelines/{id}/tables`, `/refresh`), `GET /api/gateways`, `GET /api/drivers`, `GET /api/folders/preDefined/{folderType}`; **internal** — `/api/iams`, `POST /api/nuggets/status/query`, `GET /api/v2/configurations/featureFlags`, `GET /api/library/dataModels/favorites`; **absent from the spec entirely** — `POST /api/model/batch`, every `/api/aiservice/model/*` path, `…/pipelines/{id}/relationships`, `/api/dataServer/usage/users/{id}`, `/api/model/changesets/{id}/operations`, `/api/model/diagnostics/status`. They can (and do) change between iServer versions. Before using any endpoint here in an automation, re-capture the current UI network traffic and confirm the path/shape. If you see a capture older than ~90 days and the UI has shipped a minor version since, treat these as **hints, not contracts**. When a wrapped public endpoint exists for the same operation, prefer the public path.
 
 ## How these were discovered
 
-Captured from Chrome Network panel while a user edited a Mosaic data model in Strategy Studio. The `/api/openapi.yaml` the repo's helper normally uses does NOT document these paths. They are what the first-party UI actually calls. Treat as production-grade (the UI ships them) but version-sensitive.
+Captured from Chrome Network panel while a user edited a Mosaic data model in Strategy Studio. They are what the first-party UI actually calls. Corrected 2026-10-05: not all of them are undocumented — the workspace/pipeline family is public in the spec, a few are internal, and the batch and AI-service calls are absent (see the box above). Treat the absent ones as version-sensitive UI internals, not production contracts.
 
 ## Workspace / pipeline — the UI's write surface
 
@@ -18,9 +18,9 @@ The UI does NOT write attributes, tables, or relationships directly against `/ap
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/api/dataServer/workspaces` | Open a workspace for the current user/session. Returns `workspaceId`. |
-| POST | `/api/dataServer/workspaces/{wsId}/pipelines/{pipelineId}/relationships` | Add/edit relationships on a specific pipeline (table) within the workspace. |
-| GET | `/api/dataServer/usage/users/{userId}` | Per-user dataServer usage stats (quotas?). |
+| POST | `/api/dataServer/workspaces` | Open a workspace for the current user/session. Returns `workspaceId`. **Public** in the spec (tag Workspaces), as are `GET/PATCH/DELETE …/workspaces/{id}`, `POST …/pipelines`, `GET/PATCH/DELETE …/pipelines/{id}`, `POST …/pipelines/{id}/refresh` and `…/pipelines/{id}/tables`. |
+| POST | `/api/dataServer/workspaces/{wsId}/pipelines/{pipelineId}/relationships` | Add/edit relationships on a specific pipeline (table) within the workspace. Not in the spec. |
+| GET | `/api/dataServer/usage/users/{userId}` | Per-user dataServer usage stats (quotas?). Not in the spec. |
 
 Implication: automation scripts can *probably* bypass this and write directly to `/api/model/dataModels/.../...` (which is what our `build_mosaic.py` does), but the UI's approach is interesting because:
 - It allows *partial* edits to be rolled back without touching the committed model.
@@ -36,7 +36,7 @@ Returns 200. The UI bundles many operations (create multiple attributes, set mul
 
 `showChanges=true` returns the diff that was applied; `showChanges=false` is fire-and-forget (also seen in capture).
 
-**For our helper scripts:** consider adopting this. Currently `build_mosaic.py build` makes N POSTs per N objects within a changeset; a single batched POST would be faster and more atomic.
+**For our helper scripts (corrected 2026-10-05):** the path is absent from the spec, even as internal. `build_mosaic.py`'s `batch_call()` tries it and falls back to per-op POSTs on 404; keep the documented per-object writes as the primary path (`reference_mosaic_batch_api.md`).
 
 ## Changeset rebase (conflict resolution)
 
@@ -50,11 +50,11 @@ Other `operationType` values likely exist (`cherry-pick`, `squash`?). Probe the 
 
 ## Changeset flags used by the UI
 
-- `POST /api/model/changesets?enableOperationHistory=true` — the UI opens changesets with an operation-history flag so undo/redo works across the editing session. Our helpers don't set this.
+- `POST /api/model/changesets?enableOperationHistory=true` — the UI opens changesets with an operation-history flag so undo/redo works across the editing session. Our helpers don't set this. (The spec declares only `schemaEdit` on this operation — the flag is UI-internal; noted 2026-10-05.)
 
 ## Model-level flags
 
-- `PATCH /api/model/dataModels/{id}?showExecutiveSummary=true` — when the UI patches the model, it can request the server regenerate an AI executive summary inline. The summary is presumably stored back on the model for subsequent reads.
+- `PATCH /api/model/dataModels/{id}?showExecutiveSummary=true` — when the UI patches the model, it can request the server regenerate an AI executive summary inline. The summary is presumably stored back on the model for subsequent reads. (Not a declared parameter in the spec; noted 2026-10-05.)
 
 ## AI service hooks
 
@@ -62,30 +62,30 @@ These power the UI's "Auto" / "Suggest" features:
 
 | Method | Path | Trigger |
 |---|---|---|
-| POST | `/api/aiservice/model/objects/linking` | AI-auto-detect relationships between unlinked objects |
-| POST | `/api/aiservice/model/overview` | AI-generate model overview/description |
-| GET | `/api/model/diagnostics/status` | Model diagnostics health check |
-| POST | `/api/nuggets/status/query` | AI indexing / "nuggets" status |
-| GET | `/api/iams` | IAMs (Intelligent Agent Management Service) enumeration |
+| POST | `/api/aiservice/model/objects/linking` | AI-auto-detect relationships between unlinked objects (not in the spec) |
+| POST | `/api/aiservice/model/overview` | AI-generate model overview/description (not in the spec) |
+| GET | `/api/model/diagnostics/status` | Model diagnostics health check (not in the spec) |
+| POST | `/api/nuggets/status/query` | AI indexing / "nuggets" status (internal) |
+| GET | `/api/iams` | **Identity-provider configurations** (IdP/OAuth objects: vendor, auth/token URLs, client id); internal. Not an agent service — corrected 2026-10-05. |
 
-The `aiservice` family is brand-new to this repo's knowledge base. Automation that wants to "build a model like a human would" should probably call `aiservice/model/objects/linking` after table import instead of re-implementing shared-column inference in the helper.
+The `aiservice/model/*` family is absent from the tenant spec, even as internal (checked 2026-10-05). Use it at most as an optional suggestion source behind the existing heuristics (`reference_mosaic_ai_service.md`); for cross-model attribute connections use the documented `…/links` endpoints (`reference_mosaic_model_linking.md`).
 
 ## Platform / discovery reads triggered on model-editor open
 
 - `GET /api/v2/configurations/featureFlags` — tenant-wide feature flags; check before assuming an endpoint/shape is available.
 - `GET /api/gateways` — datasource gateways list (cloud connectivity).
 - `GET /api/drivers` — installed driver list (JDBC/ODBC adapters available for datasource creation).
-- `GET /api/folders/preDefined/73` — **new predefined folder id** (we previously documented 7 = PublicObjects, 8 = SchemaObjects, 9 = My Objects, etc.). `73` is model-editor-related; meaning unknown without further probing.
+- `GET /api/folders/preDefined/73` — predefined folder `73` = `CONFIGURE_DB_ROLES` (the database-instance configuration folder) per mstrio-py's `PredefinedFolders` enum, which fits a model editor listing database instances. Predefined ids (corrected 2026-10-05; the old "7 = Public Objects, 8 = Schema Objects, 9 = My Objects" was wrong): **1 = Public Objects, 19 = My Objects (profile objects), 24 = Schema Objects**; 7 / 8 / 9 are Public Reports / Public Searches / Public Templates.
 - `GET /api/library/dataModels/favorites` — per-user model favorites (Library home page).
 
 ## Search-related type codes observed
 
-- `type=779` — data model (matches our existing docs)
-- `type=776` — logical table (matches)
-- `type=23042` — **unknown**, returned by model-picker search alongside 779/776. Candidate: data model "shortcut" or "alias"; probe via `/api/objects/{id}?type=23042` on a known instance.
-- `type=14088` — **unknown**, used in `SUPPORTED_REPORTS_IN_LIBRARY_ONLY` filter search. Candidate: a report/dashboard composite subtype.
+These are object **subtype** codes passed through the search `type` filter (resolved 2026-10-05 from mstrio-py's `ObjectSubTypes` and the Web API constants):
 
-Both type codes are likely documented in the OpenAPI spec under `ObjectType` enums; worth a `yq`-style grep of the spec.
+- `type=779` — `report_emma_cube`: Mosaic data model when extType = 448, otherwise a data-import cube
+- `type=776` — `report_cube`: classic Intelligent Cube (not a logical table — that is subtype 3840)
+- `type=23042` — `UNSTRUCTURED_DATA` (unstructured-data object), returned by the model picker alongside 779/776
+- `type=14088` — `AI_DATASET_COLLECTION`, used in the `SUPPORTED_REPORTS_IN_LIBRARY_ONLY` filter search
 
 ## Fact metric expression read with `showPotentialTables`
 
@@ -108,6 +108,6 @@ Even though the user "did a lot of actions", the MCP browser-extension capture w
 - Table add with Snowflake vs Postgres (does the UI use the same `importSource` shape we do, or a different one?)
 - Security filter creation in UI (vs the `md_security_filter` shape we reverse-engineered)
 - ACL edits on Mosaic objects (whether the UI exposes this at all)
-- Model linking / data-mesh (the UI affordance exists, API shape unknown)
+- ~~Model linking / data-mesh (API shape unknown)~~ — documented since January 2026: `POST …/externalDataModels` + `GET/POST/PUT …/links` (`reference_mosaic_model_linking.md`; corrected 2026-10-05)
 
 These are the highest-value next captures. Use Chrome DevTools HAR export or Copy-as-cURL instead of MCP for those specific flows — MCP capture proved unreliable across tab boundaries.

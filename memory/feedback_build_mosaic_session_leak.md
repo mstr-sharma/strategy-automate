@@ -40,7 +40,7 @@ Modeling-Service wrapper returns the same condition with `8004cb0a`. If present,
 
 - `main()` wraps dispatch in `try/finally: m.logout()` (`skills/build-mosaic-model/scripts/build_mosaic.py`, `main()`), which now sends `POST /api/auth/logout` and also discards any changeset left open.
 - Project-scoped requests run in an iServer interactive session for that project; a session that is never logged out reaps on the ~30-min idle timer. (Until 2026-10-05 that was every session — see Root cause.)
-- The default project interactive-session cap on most Strategy ONE Cloud tenants is ~5 per user per project.
+- The cap is a project setting ("maximum interactive sessions per user"): the product default is 20; the cloud tenants observed here set about 5.
 - **Which calls count:** anything touching `/api/objects/...`, `/api/model/...`, `/api/dataModels/...`, `/api/cubes/...`.
 - **Which calls don't count:** `/api/projects`, `/api/datasources`, `/api/users`, `/api/auth/*`.
 
@@ -55,7 +55,7 @@ Modeling-Service wrapper returns the same condition with `8004cb0a`. If present,
 3. **Save the model_id immediately after build and treat it as idempotent.** If you hit the cap between build and publish, wait ~30 min then re-invoke publish alone — don't re-run build.
 4. **Suppress the classify preflight on known-Mosaic models.** In ad-hoc scripts, skip `classify_object_surface` and call `_mosaic_publish_verified()` directly when you already know the model is subType 779 (e.g., you just created it). One fewer project-scoped call = one fewer session.
 5. **Use `describe-tables` (plural) for discovery.** It takes repeatable `--source instanceId:namespace:table` and does all describes in ONE login. Never loop `describe-table` (singular) from the shell.
-6. **Proactively probe session count before risky writes.** `GET /api/sessions` is not project-scoped; if you see a high session count and a long-running `dateCreated`, pause.
+6. **Proactively check open sessions before risky writes.** `GET /api/sessions` describes only the current session; to count your connections use `build_mosaic.py kill-sessions` (lists them; needs a monitoring privilege) or `GET /api/monitors/userConnections`.
 7. **Order of operations to minimize cap pressure:** discovery (`list-datasources`, `list-namespaces`, `describe-tables` plural) → `build-from-config` with all post-build ops folded in → validate via Trino (separate, single session). Do not interleave `api-call` probes against `/api/model/...` between steps.
 
 ## Recovery when the cap is already hit

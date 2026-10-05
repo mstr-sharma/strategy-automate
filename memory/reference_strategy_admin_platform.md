@@ -15,9 +15,9 @@ Two lanes share "datasource" language:
 
 Important paths:
 
-- Catalog: `/api/datasources/{id}/catalog/namespaces`, `/tables`, `/tableSchemas`, `/tables/{tableId}`, `/result`, `/sqlQuery`.
-- Admin: `/api/datasources`, `/api/datasources/{id}`, `/api/datasources/connections`, `/api/datasources/logins`, `/api/datasources/mappings`, `/api/datasources/{id}/projects`, `/api/datasources/{id}/jobPriorities`.
-- DB object helpers: `/api/dbobjects/dbmss`, `/api/dbobjects/dsns`, `/api/dbobjects/drivers`, `/api/dbConnections`.
+- Catalog (namespace-scoped; corrected 2026-10-05): `GET /api/datasources/{id}/catalog/namespaces` → `GET …/catalog/namespaces/{ns}/tables` → `GET …/namespaces/{ns}/tables/{tableId}` (columns) and `…/tables/{tableId}/result` (preview); `…/namespaces/{ns}/tableSchemas` is internal; catalog settings `GET/PATCH …/catalog/settings`. There is no un-scoped `…/catalog/tables/{tableId}`. SQL preview `POST /api/datasources/{id}/sqlQuery` is internal.
+- Admin: `/api/datasources`, `/api/datasources/{id}`, `/api/datasources/connections`, `/api/datasources/logins`, `/api/datasources/mappings`, `/api/datasources/{id}/projects`, `/api/datasources/{id}/jobPriorities`; connection test `POST /api/datasources/{id}/test` (204).
+- DB object helpers: `GET /api/drivers`, `GET /api/gateways`. The `/api/dbobjects/dbmss|dsns|drivers` paths are **deprecated** and `/api/dbConnections` is internal + deprecated (corrected 2026-10-05).
 - OAuth sources: `/api/datasources/{id}/oauth/auth`, `/oauth/token`.
 
 Never write datasource passwords/logins to memory or repo. For destructive datasource changes, verify dependent projects and mappings first.
@@ -60,8 +60,9 @@ Avoid `keep_both` rules if the user needs undo/rollback support.
 Common monitor/cache lanes:
 
 - Cube cache monitor: `/api/monitors/caches/cubes`, `/api/monitors/caches/cubes/{cacheId}`, `/aggregatedUsages`, `/manipulations/{id}/status`.
-- Content caches: `/api/monitors/caches/contents`.
-- Object/element cache purge: `/api/monitors/projects/{projectId}/cache/{cacheType}`.
+- Content caches: `GET /api/monitors/caches/contents?clusterNode=<node>` (`clusterNode` required — so is it on `…/caches/cubes`); alter/remove with `PATCH /api/v2/monitors/caches/contents?clusterNode=<node>` (v1 PATCH deprecated).
+- Object/element cache purge: `DELETE /api/monitors/projects/{projectId}/caches/{element|object|report|all}` → 204 (plural `caches`; corrected 2026-10-05).
+- Jobs: `GET /api/v2/monitors/jobs?nodeName=<node>`, cancel via `DELETE /api/v2/monitors/jobs/{id}` or `POST /api/v2/monitors/cancelJobs` (v1 job paths deprecated). User connections: `GET /api/monitors/userConnections`, `DELETE /api/monitors/userConnections/{id}`. Details: `reference_strategy_monitoring_jobs_alerts.md`.
 - Project load/unload/status: `/api/monitors/projects/status`, `/api/monitors/iServer/nodes/.../projects/...`.
 - Cluster/nodes: `/api/monitors/iServer/nodes`, `/api/iserver/clusterStartupMembership`.
 - Library/server status and restarts: `/api/monitors/libraryServer/status`.
@@ -76,7 +77,7 @@ Search variants:
 - Metadata search: `POST /api/metadataSearches/results`, then `GET /api/metadataSearches/results` or `/tree`; better for stored result sets and tree views.
 - Folder browse: `/api/folders`, `/api/folders/{id}`, `/api/folders/preDefined/{folderType}`.
 - Object management/search: `/api/objects`, `/api/objects/{id}`, bulk copy/move/delete, ownership, inspection, recommendations.
-- Lineage/dependencies: dependency/dependent paths in OpenAPI; verify object type/subtype first.
+- Lineage/dependencies: `POST /api/metadataSearches/results?usesObject=<id>;<type>` (or `usedByObject=`) → `GET /api/metadataSearches/results?searchId=<id>`; quick `GET /api/searches/results?usesObjectId=<id>`; counts `POST /api/searches/dependents/count`. There is no `/api/objects/{id}/dependencies|dependents` (corrected 2026-10-05). Verify object type/subtype first.
 
 When modifying existing objects, resolve by ID and type, then read the object before writing. Names are not unique.
 
@@ -84,7 +85,7 @@ When modifying existing objects, resolve by ID and type, then read the object be
 
 Settings/properties are layered:
 
-- Server/project settings: `/api/iserver/settings`, `/api/projects/{id}/settings`, public/default settings endpoints.
+- Server/project settings (corrected 2026-10-05): the public surface is v2 — `GET/PUT/PATCH /api/v2/iserver/settings` (+ `/config`) and `GET/PUT/PATCH /api/v2/projects/{id}/settings` (+ `/config`). The v1 `/api/iserver/settings`, `/api/iserver/settings/publicsettings` and `/api/projects/{id}/settings` are internal.
 - Object VLDB: `/api/objects/{id}/vldb/propertySets`, `/api/objects/{id}/vldb/propertySets/{name}`.
 - Object extended properties: `/api/objects/{id}/type/{type}/propertySets...`.
 - Modeling applicable properties: `.../applicableAdvancedProperties`, `.../applicableVldbProperties`.

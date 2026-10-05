@@ -8,8 +8,10 @@ single sign-on, with dynamic client registration and refresh tokens.
   python3 strategy_mcp.py query --project "<project>" --sql 'SELECT ... LIMIT 100'
   python3 strategy_mcp.py logout                   # revoke the refresh token and forget everything
 
-The MCP endpoint is found from MSTR_BASE (GET /.well-known/oauth-protected-resource on the
-Library host) unless MSTR_MCP_URL names it. The token it gets is scoped to the MCP server:
+The tenant runs two MCP servers: the Mosaic one ({host}/collaboration/mcp/mosaic — get_projects,
+get_models, get_semantics, query; the default here) and the agent one ({host}/collaboration/mcp/agent).
+Pick with --server mosaic|agent, or name any endpoint with MSTR_MCP_URL / --mcp-url. The token is
+scoped to that MCP server:
 the Strategy REST API does not accept it, so REST scripts sign in with strategy_auth.py
 (`--auth-method sso` uses the same single sign-on through the browser).
 
@@ -21,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import secrets
 import sys
 import time
@@ -49,16 +52,34 @@ def _origin(url: str) -> str:
     return f"{parts.scheme}://{parts.netloc}"
 
 
-def discover(http: Any, mcp_url: str = "", base: str = "") -> dict:
+SERVERS = {"mosaic": "/collaboration/mcp/mosaic", "agent": "/collaboration/mcp/agent"}
+
+
+def _metadata_from_challenge(http: Any, mcp_url: str) -> str:
+    """The MCP way: an unauthenticated call answers 401 with
+    WWW-Authenticate: Bearer resource_metadata="<url>"."""
+    try:
+        r = http.post(mcp_url, timeout=30, json={"jsonrpc": "2.0", "id": 0, "method": "ping"},
+                      headers={"Accept": "application/json, text/event-stream"})
+    except Exception:
+        return ""
+    m = re.search(r'resource_metadata="([^"]+)"', r.headers.get("WWW-Authenticate", ""))
+    return m.group(1) if m and m.group(1).startswith(_origin(mcp_url)) else ""
+
+
+def discover(http: Any, mcp_url: str = "", base: str = "", server: str = "mosaic") -> dict:
     """{resource, issuer, authorization_endpoint, token_endpoint, registration_endpoint, ...}."""
-    if mcp_url:
-        path = urllib.parse.urlsplit(mcp_url).path
-        candidates = [f"{_origin(mcp_url)}/.well-known/oauth-protected-resource{path}",
-                      f"{_origin(mcp_url)}/.well-known/oauth-protected-resource"]
-    elif base:
-        candidates = [f"{_origin(base)}/.well-known/oauth-protected-resource"]
-    else:
-        raise McpError("set MSTR_MCP_URL or MSTR_BASE")
+    if not mcp_url:
+        if not base:
+            raise McpError("set MSTR_MCP_URL or MSTR_BASE")
+        mcp_url = _origin(base) + SERVERS.get(server, SERVERS["mosaic"])
+    origin, path = _origin(mcp_url), urllib.parse.urlsplit(mcp_url).path
+    first, _, rest = path.lstrip("/").partition("/")
+    candidates = [c for c in (
+        _metadata_from_challenge(http, mcp_url),
+        f"{origin}/.well-known/oauth-protected-resource{path}",
+        f"{origin}/{first}/.well-known/oauth-protected-resource/{rest}" if rest else "",
+    ) if c]
     resource_meta = None
     for url in candidates:
         r = http.get(url, timeout=30)
@@ -66,8 +87,8 @@ def discover(http: Any, mcp_url: str = "", base: str = "") -> dict:
             resource_meta = r.json()
             break
     if not resource_meta or not resource_meta.get("authorization_servers"):
-        raise McpError("the tenant publishes no OAuth protected-resource metadata for its MCP server")
-    resource = mcp_url or resource_meta["resource"]
+        raise McpError(f"no OAuth protected-resource metadata for {mcp_url}")
+    resource = resource_meta.get("resource") or mcp_url
     issuer = resource_meta["authorization_servers"][0].rstrip("/")
     issuer_path = urllib.parse.urlsplit(issuer).path
     for url in (f"{_origin(issuer)}/.well-known/oauth-authorization-server{issuer_path}",
@@ -285,6 +306,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--base", default="", help="Library URL used to find the MCP server (env MSTR_BASE)")
     ap.add_argument("--mcp-url", default=os.environ.get("MSTR_MCP_URL", ""), help="MCP endpoint (env MSTR_MCP_URL)")
+    ap.add_argument("--server", choices=sorted(SERVERS), default="mosaic",
+                    help="which of the tenant's MCP servers when --mcp-url is not given (default mosaic)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("login", help="sign in through the browser and keep the tokens")
     sub.add_parser("tools", help="list the MCP server's tools")
@@ -301,17 +324,18 @@ def main(argv: list[str] | None = None) -> int:
     http = requests.Session()
     try:
         cfg = sa.AuthConfig.from_env(base=args.base)
-        meta = discover(http, args.mcp_url, cfg.base)
+        meta = discover(http, args.mcp_url, cfg.base, args.server)
         if args.cmd == "login":
             login(http, meta, cfg)
             print(json.dumps({"ok": True, "mcp": meta["resource"]}, indent=2))
             return 0
         if args.cmd == "logout":
             store = Tokens(meta["resource"], f"http://{cfg.sso_host}:{cfg.sso_port}/oauth/callback")
-            tokens, client = store.tokens(), store.client()
-            if tokens and client and meta.get("revocation_endpoint") and tokens.get("refresh_token"):
+            tokens, registered = store.tokens(), store.client()
+            if tokens and registered and meta.get("revocation_endpoint") and tokens.get("refresh_token"):
                 form = {"token": tokens["refresh_token"], "token_type_hint": "refresh_token",
-                        "client_id": client["client_id"], "client_secret": client.get("client_secret", "")}
+                        "client_id": registered["client_id"],
+                        "client_secret": registered.get("client_secret", "")}
                 http.post(meta["revocation_endpoint"], data=form, timeout=30)
             store.forget()
             print(json.dumps({"ok": True, "forgotten": meta["resource"]}, indent=2))

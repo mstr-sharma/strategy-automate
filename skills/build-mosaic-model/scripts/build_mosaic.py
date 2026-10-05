@@ -61,6 +61,8 @@ from typing import Any
 import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_PLATFORM = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir, "strategy-platform", "scripts"))
+sys.path.insert(0, _PLATFORM)   # shared core: sign-in, API client, MCP
 import schema_object_translator as sot  # noqa: E402
 import mosaic_safety as ms  # noqa: E402
 import strategy_auth  # noqa: E402
@@ -534,7 +536,12 @@ def cmd_kill_sessions(m: MSTR, args):
     connections too: filter with --project / --idle-minutes before --yes.
     """
     m.login()
-    me = (m.get("/api/sessions/userInfo").json() or {}).get("username", "")
+    info = m.get("/api/sessions/userInfo").json() or {}   # id + fullName; no login name here
+    me, me_full = "", str(info.get("fullName") or "")
+    if info.get("id"):
+        u = m.get(f"/api/users/{info['id']}")
+        if u.ok:
+            me = str((u.json() or {}).get("username") or "")
     nodes_r = m.get("/api/monitors/iServer/nodes")
     if nodes_r.status_code in (401, 403):
         die("listing user connections needs a monitoring privilege on this tenant; stale sessions "
@@ -542,7 +549,9 @@ def cmd_kill_sessions(m: MSTR, args):
     nodes = [n.get("name") for n in ((nodes_r.json() or {}).get("nodes") or []) if n.get("name")] or [None]
     conns = []
     for node in nodes:
-        params = {"username": me, "limit": 1000}
+        params: dict = {"limit": 1000}
+        if me:
+            params["username"] = me
         if node:
             params["clusterNode"] = node
         r = m.get("/api/monitors/userConnections", params=params)
@@ -558,7 +567,12 @@ def cmd_kill_sessions(m: MSTR, args):
         stamp = strategy_auth._epoch(str(last)[:19] + "Z") if last else None
         return (now - stamp) / 60 if stamp else None
 
-    picked = [c for c in conns if (c.get("username") or "").lower() == me.lower()
+    def mine(c: dict) -> bool:
+        if me:
+            return (c.get("username") or "").lower() == me.lower()
+        return bool(me_full) and (c.get("userFullName") or "") == me_full
+
+    picked = [c for c in conns if mine(c)
               and (not args.project or args.project in (c.get("projectName"), c.get("projectId")))
               and (idle_minutes(c) or 0) >= args.idle_minutes]
     rows = [{"id": c.get("id"), "project": c.get("projectName"), "application": c.get("applicationType"),
@@ -569,7 +583,7 @@ def cmd_kill_sessions(m: MSTR, args):
         for c in picked:
             if m.delete(f"/api/monitors/userConnections/{c.get('id')}").status_code in (200, 204):
                 disconnected += 1
-    print(json.dumps({"user": me, "connections": rows, "disconnected": disconnected,
+    print(json.dumps({"user": me or me_full, "connections": rows, "disconnected": disconnected,
                       "dry_run": not args.yes}, indent=2))
 
 
@@ -974,7 +988,7 @@ def _normalize_catalog_datatype(dt: dict | None) -> dict | None:
 
 # Fact-metric number formats as Modeling `format.values[]` tokens. number_category
 # enum verified 2026-09-17 against UI-built metrics: 0=Fixed, 1=Currency, 2=Date,
-# 3=Time, 4=Percentage, 5=Fraction, 6=Scientific, 7=Special, 8=Custom, 9=General
+# 3=Time, 4=Percentage, 5=Fraction, 6=Scientific, 7=Custom, 8=Special, 9=General
 # (an earlier table used 2 for currency and 7 for scientific, which render as Date
 # and Special). See memory/feedback_mosaic_ship_bar.md "Metric formats".
 def _fmt_tokens(category: int, decimals: int, pattern: str, *extra: dict) -> list[dict]:
@@ -1536,7 +1550,6 @@ def _batch_fallback(
         "/attributes":  f"/api/model/dataModels/{model_id}/attributes",
         "/factMetrics": f"/api/model/dataModels/{model_id}/factMetrics",
         "/metrics":     f"/api/model/dataModels/{model_id}/metrics",
-        "/facts":       f"/api/model/dataModels/{model_id}/facts",
     }
     passed, failed = [], []
     for index, op in enumerate(ops):
@@ -2615,13 +2628,7 @@ def _assign_security_filter_members(m: MSTR, model_id: str, sf_id: str, member_i
     r = m.patch(f"/api/dataModels/{model_id}/securityFilters/{sf_id}/members", json=patch_body)
     if r.ok:
         return True
-    # Older/local modeling endpoint shape seen in early skill iterations.
-    r2 = m.post(f"/api/model/dataModels/{model_id}/securityFilters/{sf_id}/members",
-                json={"users": [{"id": mid} for mid in member_ids]})
-    if r2.ok:
-        return True
-    print(f"  WARN security-filter members: PATCH {r.status_code} {r.text[:160]} | "
-          f"POST {r2.status_code} {r2.text[:160]}", file=sys.stderr)
+    print(f"  WARN security-filter members: PATCH {format_mstr_error(r)}", file=sys.stderr)
     return False
 
 
@@ -2809,17 +2816,12 @@ def _apply_acl(m: MSTR, object_id: str, grants: list[str], model_id=None,
         print(f"  ✓ ACL set on {object_id} ({len(acl)} trustees via data model endpoint)", file=sys.stderr)
         return
 
-    # Legacy/global fallback retained for older tenants or non-data-model objects.
-    trustees = []
-    for trustee_id, ace in acl.items():
-        if ace.get("granted"):
-            trustees.append({"trustee":{"id": trustee_id}, "rights": ace["granted"], "type":"grant"})
-        if ace.get("denied"):
-            trustees.append({"trustee":{"id": trustee_id}, "rights": ace["denied"], "type":"deny"})
-    r = m.post(f"/api/objects/{object_id}/acl", json={"trustees": trustees, "type":"replace"})
-    if not r.ok:
-        die(f"acl on {object_id}: {r.status_code} {r.text[:300]}")
-    print(f"  ✓ ACL set on {object_id} ({len(trustees)} entries)", file=sys.stderr)
+    # Objects outside a data model: the REST API has no /api/objects/{id}/acl; classic ACLs are
+    # read with GET /api/objects/{id}?type=<t> and written with PUT /api/objects/{id}?type=<t>.
+    # Not wrapped yet — say so instead of calling an endpoint that 404s.
+    die(f"set-acl without --model-id (a classic object) is not wrapped yet. Read the ACL with "
+        f"`api-call --path /api/objects/{object_id} --param type=<objectType>` and write it with "
+        f"PUT on the same path (see memory/reference_mosaic_acl.md).")
 
 
 def _apply_translations(m: MSTR, model_id: str, entries: list[str], default_sub_type="data_model"):
@@ -2889,9 +2891,11 @@ def _certify(m: MSTR, object_id: str, obj_type: int = 3) -> bool:
 
 
 def classify_object_surface(m: MSTR, object_id: str) -> dict:
-    """Decide whether an object is Mosaic (subtype 779) vs a classic cube (776) vs other.
+    """Decide whether an object is a Mosaic model (subtype 779 + extType 448), a data-import
+    cube (779, other extType), a classic cube (776) or something else.
 
-    Returns {"subtype": int, "surface": "mosaic_data_model|classic_cube|other", "name": str}.
+    Returns {"subtype": int, "extType": int|None, "surface":
+    "mosaic_data_model|data_import_cube|classic_cube|other", "name": str}.
     Pure read. Must be called before any endpoint that differs between surfaces (publish,
     refresh, execute, ACL, security filter, serve mode). See
     memory/reference_mosaic_vs_legacy_surfaces.md for the full pair cheat sheet.
@@ -2902,10 +2906,15 @@ def classify_object_surface(m: MSTR, object_id: str) -> dict:
             f"({r.status_code}); cannot route legacy-vs-Mosaic safely.")
     d = r.json()
     subtype = int(d.get("subtype") or 0)
-    surface = ("mosaic_data_model" if subtype == 779
-               else "classic_cube"   if subtype == 776
-               else "other")
-    return {"subtype": subtype, "surface": surface, "name": d.get("name")}
+    ext_type = d.get("extType")
+    # Subtype 779 (report_emma_cube) is shared by Mosaic models and data-import (MTDI)
+    # cubes; mstrio-py tells them apart by extType 448 (DATA_IMPORT_DATASET).
+    if subtype == 779:
+        surface = ("mosaic_data_model" if ext_type in (None, 448, "448")
+                   else "data_import_cube")
+    else:
+        surface = "classic_cube" if subtype == 776 else "other"
+    return {"subtype": subtype, "extType": ext_type, "surface": surface, "name": d.get("name")}
 
 
 def _mosaic_publish_verified(m: MSTR, model_id: str, *, poll_seconds: int = 180,
@@ -2915,14 +2924,16 @@ def _mosaic_publish_verified(m: MSTR, model_id: str, *, poll_seconds: int = 180,
     Flow (see memory/reference_mosaic_publish_path.md):
       1. POST /api/dataModels/{id}/instances           -> 204 with X-MSTR-DataModelInstanceId header
       2. POST /api/dataModels/{id}/publish             body {"tables":[{id,refreshPolicy:replace}]}
-      3. poll GET /api/dataModels/{id}/publishStatus   until every table is "loaded"
+      3. poll GET /api/dataModels/{id}/publishStatus   until every table is "completed"
+                                                       (older tenants said "loaded") or one is "error"
+      4. DELETE /api/dataModels/{id}/instances/{instanceId} (kept on timeout: the job may still run)
 
     Fails loud on:
       - missing instance header
-      - non-204 publish response
-      - terminal error status (-2147212544 QueryEngine stall etc.)
-      - timeout before every table is "loaded"
-    Never falls back to /api/cubes/* — that endpoint 2xxs but leaves a Mosaic model unpublished.
+      - non-2xx publish response
+      - terminal error status (-2147212544 QueryEngine stall etc.) or a table in "error"
+      - timeout before every table finishes
+    Never falls back to /api/cubes/{id}?cubeAction=publish — internal and deprecated in the spec.
     """
     # discover tables (ids required in publish body)
     r = m.get(f"/api/model/dataModels/{model_id}/tables")
@@ -2940,49 +2951,64 @@ def _mosaic_publish_verified(m: MSTR, model_id: str, *, poll_seconds: int = 180,
         die(f"_mosaic_publish_verified: no X-MSTR-DataModelInstanceId header in "
             f"/instances response ({r1.status_code}); cannot proceed.")
 
-    # 2. publish with tables[] body
-    hdr = {"X-MSTR-DataModelInstanceId": inst}
-    r2 = m.post(f"/api/dataModels/{model_id}/publish",
-                headers=hdr,
-                json={"tables": [{"id": tid, "refreshPolicy": "replace"} for tid in tids]})
-    if r2.status_code not in (200, 202, 204):
-        die(f"_mosaic_publish_verified: publish POST {r2.status_code} {r2.text[:300]}")
-    print(f"  ✓ mosaic publish started instanceId={inst}", file=sys.stderr)
+    timed_out = False
+    try:
+        # 2. publish with tables[] body
+        hdr = {"X-MSTR-DataModelInstanceId": inst}
+        r2 = m.post(f"/api/dataModels/{model_id}/publish",
+                    headers=hdr,
+                    json={"tables": [{"id": tid, "refreshPolicy": "replace"} for tid in tids]})
+        if r2.status_code not in (200, 202, 204):
+            die(f"_mosaic_publish_verified: publish POST {r2.status_code} {r2.text[:300]}")
+        print(f"  ✓ mosaic publish started instanceId={inst}", file=sys.stderr)
 
-    # 3. poll until loaded
-    deadline = time.time() + poll_seconds
-    last = None
-    while time.time() < deadline:
-        rs = m.get(f"/api/dataModels/{model_id}/publishStatus", headers=hdr)
-        try: js = rs.json()
-        except Exception: js = {"raw": rs.text}
-        last = js
-        st = js.get("status") if isinstance(js, dict) else None
-        tbl = js.get("tables") or []
-        if isinstance(st, int) and st < 0:
-            die(f"_mosaic_publish_verified: terminal error status={st} body={json.dumps(js)[:400]}")
-        if isinstance(js, dict) and js.get("code"):
-            die(f"_mosaic_publish_verified: server error {js.get('code')}: {js.get('message','')[:300]}")
-        failed_tables = [t for t in tbl if (t.get("status") or "").lower() == "error"]
-        if failed_tables:
-            die(f"_mosaic_publish_verified: table(s) failed to load: {json.dumps(failed_tables)[:400]}")
-        if tbl and all((t.get("status") or "").lower() in ("loaded", "completed") for t in tbl):
-            print(f"  ✓ mosaic publish COMPLETE: {len(tbl)} tables loaded.", file=sys.stderr)
-            return
-        time.sleep(poll_interval)
-    die(f"_mosaic_publish_verified: timeout after {poll_seconds}s; last status: "
-        f"{json.dumps(last)[:400] if last else 'none'}. "
-        f"This signature historically indicates tenant-side QueryEngineServer trouble or "
-        f"dirty dataTypes; see memory/reference_mosaic_publish_path.md and "
-        f"captures/2026-04-22-queryengine-publish-incident/README.md.")
+        # 3. poll until loaded
+        deadline = time.time() + poll_seconds
+        last = None
+        while time.time() < deadline:
+            rs = m.get(f"/api/dataModels/{model_id}/publishStatus", headers=hdr)
+            try: js = rs.json()
+            except Exception: js = {"raw": rs.text}
+            last = js
+            st = js.get("status") if isinstance(js, dict) else None
+            tbl = js.get("tables") or []
+            if isinstance(st, int) and st < 0:
+                die(f"_mosaic_publish_verified: terminal error status={st} body={json.dumps(js)[:400]}")
+            if isinstance(js, dict) and js.get("code"):
+                die(f"_mosaic_publish_verified: server error {js.get('code')}: {js.get('message','')[:300]}")
+            failed_tables = [t for t in tbl if (t.get("status") or "").lower() == "error"]
+            if failed_tables:
+                die(f"_mosaic_publish_verified: table(s) failed to load: {json.dumps(failed_tables)[:400]}")
+            if tbl and all((t.get("status") or "").lower() in ("loaded", "completed") for t in tbl):
+                print(f"  ✓ mosaic publish COMPLETE: {len(tbl)} tables loaded.", file=sys.stderr)
+                return
+            time.sleep(poll_interval)
+        timed_out = True
+        die(f"_mosaic_publish_verified: timeout after {poll_seconds}s; last status: "
+            f"{json.dumps(last)[:400] if last else 'none'}. "
+            f"This signature historically indicates tenant-side QueryEngineServer trouble or "
+            f"dirty dataTypes; see memory/reference_mosaic_publish_path.md and "
+            f"captures/2026-04-22-queryengine-publish-incident/README.md.")
+    finally:
+        # The documented flow ends by deleting the publish instance. Keep it only when the
+        # publish may still be running (timeout) — deleting it then could abort the job.
+        if not timed_out:
+            try:
+                m.delete(f"/api/dataModels/{model_id}/instances/{inst}")
+            except Exception:
+                pass
 
 
 def _classic_cube_publish(m: MSTR, cube_id: str) -> None:
-    """Publish a classic Intelligent Cube (subtype 776). Separate from Mosaic publish."""
-    r = m.post(f"/api/cubes/{cube_id}?cubeAction=publish", json={})
+    """Publish a classic Intelligent Cube (subtype 776). Separate from Mosaic publish.
+    POST /api/v2/cubes/{id} is the public call (202 + job); the v1 cubeAction=publish form is
+    internal and deprecated in the spec, kept only as a fallback for older servers."""
+    r = m.post(f"/api/v2/cubes/{cube_id}")
+    if r.status_code in (404, 405):
+        r = m.post(f"/api/cubes/{cube_id}?cubeAction=publish", json={})
     if not r.ok:
-        die(f"_classic_cube_publish: {r.status_code} {r.text[:300]}")
-    print(f"  ✓ classic cube publish accepted (202 expected).", file=sys.stderr)
+        die(f"_classic_cube_publish: {format_mstr_error(r)}")
+    print("  ✓ classic cube publish accepted (202 expected).", file=sys.stderr)
 
 
 def _publish(m: MSTR, model_id: str, *, poll_seconds: int = 180,
@@ -3004,9 +3030,9 @@ def _publish(m: MSTR, model_id: str, *, poll_seconds: int = 180,
     elif info["surface"] == "classic_cube":
         _classic_cube_publish(m, model_id)
     else:
-        die(f"_publish: object {model_id} is subtype {info['subtype']} ({info['name']}); "
-            f"not a Mosaic data model or classic cube. Refusing to guess. See "
-            f"memory/reference_mosaic_vs_legacy_surfaces.md.")
+        die(f"_publish: object {model_id} is subtype {info['subtype']} / extType {info.get('extType')} "
+            f"({info['name']}) — {info['surface']}, not a Mosaic data model or classic cube. "
+            f"Refusing to guess. See memory/reference_mosaic_vs_legacy_surfaces.md.")
 
 
 def cmd_set_serve_mode(m: MSTR, args):
@@ -5011,7 +5037,7 @@ def build_parser():
                     help="INSTANCE:SCHEMA:T1,T2,... (repeatable, for multi-source models)")
     sp.add_argument("--instance"); sp.add_argument("--schema"); sp.add_argument("--tables", nargs="*")
     sp.add_argument("--dest-folder", default=DEFAULT_DEST_FOLDER)
-    sp.add_argument("--data-serve-mode", default="connect_live", choices=["connect_live","in_memory","hybrid"])
+    sp.add_argument("--data-serve-mode", default="connect_live", choices=["connect_live","in_memory","off_memory"])
     sp.add_argument("--attr-cols",   nargs="*", default=[], help="column names to force as attributes")
     sp.add_argument("--metric-cols", nargs="*", default=[], help="column names to force as metrics")
     sp.add_argument("--skip-cols",   nargs="*", default=[],
@@ -5089,7 +5115,7 @@ def build_parser():
                     help="Fallback warehouse schema if classic table metadata "
                          "lacks namespace.")
     sp.add_argument("--data-serve-mode",
-                    choices=["connect_live", "in_memory", "hybrid"],
+                    choices=["connect_live", "in_memory", "off_memory"],
                     default="connect_live")
     sp.add_argument("--publish", action="store_true",
                     help="Publish to in-memory after build (forces "
@@ -5102,7 +5128,7 @@ def build_parser():
 
     sp = sub.add_parser("set-serve-mode")
     sp.add_argument("--model-id", required=True)
-    sp.add_argument("--mode", required=True, choices=["connect_live","in_memory","hybrid"])
+    sp.add_argument("--mode", required=True, choices=["connect_live","in_memory","off_memory"])
 
     sp = sub.add_parser("publish"); sp.add_argument("--model-id", required=True)
     sp.add_argument("--poll-seconds", type=int, default=180,

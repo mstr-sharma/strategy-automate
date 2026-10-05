@@ -16,6 +16,8 @@ from collections import Counter
 from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_PLATFORM = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir, "strategy-platform", "scripts"))
+sys.path.insert(0, _PLATFORM)   # shared core: sign-in, API client, MCP
 from _client import (  # noqa: E402
     Auth, InventoryClient, add_auth_args, client_from_args, collect_named_values,
     collect_texts, dedupe_by_id, dump_inventory, expression_kind, items_from_payload,

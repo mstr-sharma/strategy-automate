@@ -1,10 +1,12 @@
 ---
 name: Mosaic model batch API — bundled operations, partial success, HTTP 207
-description: The Studio UI performs most model edits through `POST /api/model/batch`, bundling many sub-operations into one request with partial-success semantics. The endpoint returns HTTP 207 Multi-Status when any sub-op fails under `allowPartialSuccess=true`. Our helpers should migrate from per-object PUT/POST loops to the batch surface for performance and to match the UI's contract.
+description: The Studio UI performs most model edits through `POST /api/model/batch` (seen in browser traces), bundling many sub-operations into one request with partial-success semantics and HTTP 207 Multi-Status. The path is absent from the tenant's OpenAPI spec, even as internal (checked 2026-10-05), so it is an unsupported UI internal; build_mosaic.py's batch_call falls back to per-op POSTs on 404, and the documented per-object Modeling endpoints remain the supported write path.
 type: reference
 ---
 
-## The endpoint
+> **Status (corrected 2026-10-05):** `POST /api/model/batch` is **not in the spec** — not public, not internal (1,190 paths checked). Everything below comes from UI network captures. `build_mosaic.py`'s `batch_call()` already treats a 404 as "no batch here" and replays the ops as individual POSTs (`_batch_fallback`). Don't make batch the primary path; the per-object `/api/model/dataModels/{id}/...` writes are the documented contract.
+
+## The endpoint (UI capture; not in the spec)
 
 ```
 POST /api/model/batch?allowPartialSuccess={true|false}&showChanges={true|false}
@@ -56,12 +58,11 @@ Current `build_mosaic.py build` makes N+M+P separate POSTs per N attributes, M m
 
 Specifically for **relationships**, batch replaces the problematic `PUT /attributes/{id}/relationships` which has "replaces full list" semantics (documented footgun in `reference_mosaic_rest_gotchas.md`). Batch sub-ops appear to be per-relationship add/remove, not per-child replace — no risk of wiping other parents.
 
-## Migration plan
+## Migration plan (reassessed 2026-10-05)
 
-1. Add a helper `build_mosaic.batch_call(m: MSTR, cs: str, ops: list[dict]) -> list[dict]` that POSTs and parses 207 responses.
-2. Rewrite `cmd_build`'s per-object loops to accumulate a `pending_ops` list and flush via one `batch_call`.
-3. Rewrite the relationship pass to use `op: "addRelationship"` sub-ops inside batch, rather than PUT.
-4. Keep the existing per-object paths as fallbacks for tenants where batch is disabled (probe via `GET /api/v2/configurations/featureFlags`).
+1. Done: `build_mosaic.batch_call(m, model_id, changeset_id, ops, atomic=...)` POSTs, parses 200/207/400, and on **404 falls back to per-op individual POSTs** (`_batch_fallback`).
+2. Because the endpoint is not in the spec, don't rewrite `cmd_build`'s per-object loops onto batch or move the relationship pass to `addRelationship` sub-ops; keep the documented per-object writes as the primary path and batch as an opportunistic optimization.
+3. A feature-flag probe (`GET /api/v2/configurations/featureFlags`, itself internal) cannot prove batch exists — only a 2xx from the call does.
 
 ## HTTP 207 handling
 

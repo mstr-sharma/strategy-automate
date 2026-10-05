@@ -1,12 +1,14 @@
 ---
 name: Strategy REST surface delta, April → October 2026
-description: Dated inventory of REST paths that appeared in the public OpenAPI spec between the April 2026 snapshot (652 paths) and 2026-10-01 (762 public, 1,178 with internal), grouped by family with their summaries, plus the one removed path and the refresh procedure.
+description: Dated inventory of REST paths that appeared in the public OpenAPI spec between the April 2026 snapshot (652 paths) and 2026-10-01 (762 public, 1,178 with internal; the 2026-10-05 fetch has 774 public of 1,190), grouped by family with their summaries, plus the one removed path and the refresh procedure.
 type: reference
 ---
 
 # Strategy REST surface delta (public spec), 2026-04-21 → 2026-10-01
 
 Counts are from `{Library}/api/openapi.yaml` (`info.version: "2026"`) on a Strategy ONE Cloud tenant: **652** public paths in the April snapshot kept in this repo's first commit (`openapi.yaml`, since trimmed), **762** public paths today, **1,178** with `?visibility=all`. New public paths: **111**; removed: **1**. Internal-only additions (not listed here, `visibility: internal`): 416, mostly under `/v2`, `/admin`, `/iserver`, `/mstrServices`, `/objects`, `/config`. Treat internal paths as reachability, never as a contract.
+
+**Update 2026-10-05:** a fresh `?visibility=all` fetch has **1,190** paths, of which **774** carry at least one public (unmarked) operation. The per-family lists below are still the 2026-10-01 delta.
 
 ## Highlights worth wiring into automation
 
@@ -19,8 +21,12 @@ Counts are from `{Library}/api/openapi.yaml` (`info.version: "2026"`) on a Strat
   the first documented export/import path for a Mosaic model; `GET …/externalDataModels/{externalId}/objects` reads what a
   composed model imported from each base model (pairs with `reference_mosaic_model_linking.md`).
 - **Explorer MCP servers** — `GET/POST /api/explorer/mcp/servers`, `PUT/DELETE …/{name}`, `…/connect`, `…/disconnect`,
-  `…/status`, `…/jsonrpc` (proxy JSON-RPC to a named server), `…/callback` (OAuth): the Library can now hold MCP server
-  configurations and proxy calls — the admin surface behind "direct Mosaic access over MCP".
+  `…/status`, `…/jsonrpc` (proxy JSON-RPC to a named server), `…/callback` (OAuth). Corrected 2026-10-05: this is Explorer's
+  registry of **external** MCP servers that Explorer calls **as a client** (`McpServerDefinition`: `name`, `url`, `auth`,
+  `allowedTools`, per-user connect/OAuth) — **not** the admin surface of Strategy's own MCP servers. The tenant serves two MCP
+  servers of its own: **Mosaic** at `{host}/collaboration/mcp/mosaic` (get_projects / get_models / get_semantics / query) and
+  **Agents** at `{host}/collaboration/mcp/agent`, both signing in through OAuth at `{host}/collaboration` (`/authorize`,
+  `/token`, dynamic client `/register`); see `reference_mcp_tools.md`.
 - **Scripts** — `POST /api/scripts/conversion` (Command Manager script → Python, `/bulk` + status), evaluation history and logs,
   log-retention settings.
 - **Admin bulk operations** — `POST /api/privileges/bulkUpdate` (grant/revoke/replace with a change-journal comment),
@@ -32,7 +38,8 @@ Counts are from `{Library}/api/openapi.yaml` (`info.version: "2026"`) on a Strat
   (bulk nugget creation), `POST /api/autoExpert/intake`, `GET/PUT /api/explorer/config`, `/api/explorer/webSearch/config`,
   Explorer chats (`POST /api/explorer/chats/{chatId}/messages`), `GET/PUT/POST/DELETE /api/ontology/vocabularies…`.
 - **Flows** — `GET/POST /api/flows`, `PATCH /api/flows/{id}` (user-scoped Flow objects).
-- **Cubes** — `POST /api/cubes/dumpcubes` (dump cube instances to external resources).
+- **Cubes** — `POST /api/cubes/dumpcubes` (summary: "dump cubes to external resources") is the **Enable-for-AI trigger**: body `{cubeObjects:[{cubeId, cubeType}]}`; poll `POST /api/v2/bots/cubes/status` body `{cubeIds:[…]}`. mstrio-py's `enable_for_ai()` / `get_enable_for_ai_status()` call exactly these (corrected 2026-10-05).
+- **Mosaic parameters** — values on a data-model instance: `GET/PATCH /api/v2/cubes/{id}/instances/{instanceId}/parameters`. Definitions: `GET /api/model/dataModels/{id}/parameters` — documented (REST docs, September 2026) but **missing from this tenant's spec**.
 - **Removed** — `/api/telemetry/dashboards/interactions` (use `/api/telemetry/objects/interactions`).
 
 ## New public paths by family
@@ -232,7 +239,7 @@ Counts are from `{Library}/api/openapi.yaml` (`info.version: "2026"`) on a Strat
 
 ### /api/v2 (5)
 
-- `/api/v2/bots/cubes/status` — `POST` Get agent cube status.
+- `/api/v2/bots/cubes/status` — `POST` Get agent cube status. (The Enable-for-AI status poll for `POST /api/cubes/dumpcubes`.)
 - `/api/v2/bots/{botId}/caches/temp/check` — `POST` Check temp cache status
 - `/api/v2/bots/{botId}/caches/temp/promote` — `POST` Promote temp cache entry
 - `/api/v2/cubes/{cubeId}/instances/{instanceId}/parameters` — `GET` List the parameters of a Mosaic data model instance; `PATCH` Change the parameter values of a Mosaic data model instance
@@ -248,7 +255,7 @@ Counts are from `{Library}/api/openapi.yaml` (`info.version: "2026"`) on a Strat
 
 | Release | Documented additions | Paths in this inventory |
 | --- | --- | --- |
-| September 2026 | Apply Parameters to a Data Model Instance | `/api/dataModels/{dataModelId}/instances/{instanceId}` family (parameters on a data-model instance) |
+| September 2026 | Apply Parameters to a Data Model Instance | `GET /api/model/dataModels/{id}/parameters` (definitions — documented, not in this tenant's spec) + `POST /api/v2/cubes/{id}/instances` → `GET/PATCH /api/v2/cubes/{id}/instances/{instanceId}/parameters` (values). Corrected 2026-10-05: not the `/api/dataModels/{id}/instances/{instanceId}` family |
 | May 2026 | Save a Data Model as a New Data Model | `POST /api/model/dataModels/{id}/saveAs` |
 | April 2026 | Export a Data Model, Restore a Data Model, Create unstructured data | `POST …/export`, `POST …/restore`, `POST /api/nuggets` |
 | March 2026 | Unstructured Data APIs | `/api/nuggets…` (see `skills/create-unstructured-data/`) |

@@ -23,9 +23,9 @@ Run in order; stop at the first fail.
 2. **Session health + capacity**:
    `GET /api/sessions` → confirm `fullName` matches the expected user; record `timeout`.
 3. **Project reachable**:
-   `GET /api/projects` → confirm the target project's `status==0` (loaded). `status==1` means unloaded; load via `POST /api/projects/{id}?action=load` (admin).
+   `GET /api/projects` → confirm the target project's `status==0` (active/loaded). Corrected 2026-10-05: **`-1` = offline (unloaded)**; positive values are idle states (1 exec-idle, 2 request-idle, 4 warehouse-exec-idle, 7 full-idle), `-2` offline-pending, `-3` error, `-4` online-pending (mstrio-py `ProjectStatus`). Load (admin) with `PATCH /api/monitors/projects/status?projectId=<id>` body `{"status":"loaded"}` (all nodes) or `PATCH /api/monitors/iServer/nodes/{node}/projects/{id}` (one node) — there is no `POST /api/projects/{id}?action=load`. Details: `reference_strategy_project_loading.md`.
 4. **Datasource connectivity**:
-   `POST /api/datasources/{id}/testConnection` per datasource in use → expect 200.
+   `POST /api/datasources/{id}/test` per datasource in use → expect 204 (there is no `/testConnection`; corrected 2026-10-05).
 5. **Feature flags**:
    `GET /api/v2/configurations/featureFlags` → confirm in-memory publish / AI service / Trino federation are enabled on this tenant.
 6. **Modeling-service identity token**:
@@ -35,9 +35,9 @@ Run in order; stop at the first fail.
 8. **Destination folder writeable** (only before model/object creation):
    `GET /api/folders/{destFolderId}` → confirm `acg` includes write bits; `POST /api/folders/` is a preflight alternative.
 9. **Publish queue sanity** (only before in-memory Mosaic publish):
-   `GET /api/monitors/jobs?jobTypes=PUBLISH` → confirm no stuck publish for the same model.
+   `GET /api/v2/monitors/jobs?nodeName=<node>&projectName=<project>&objectType=cube` → confirm no long-running job for the same model (match `objectId`). Corrected 2026-10-05: the v1 `GET /api/monitors/jobs` is deprecated, and there is no `PUBLISH` job type — `type` is one of `interactive` / `subscription` / `predictive_cache` / `realtime`. Cube-cache state (`GET /api/monitors/caches/cubes?clusterNode=<node>&projectIds=<id>`, `state.processing`) is the other signal.
 
-If step 9 is unavailable on the tenant, fall back to: attempt a publish on a known-good small Mosaic model (canary) and confirm it reaches `status:"loaded"` within 60s.
+If step 9 is unavailable on the tenant (Monitor Jobs privilege), fall back to: attempt a publish on a known-good small Mosaic model (canary) and confirm every table reaches `status:"completed"` within 60s (the per-table enum has no `loaded`).
 
 ## Helper-integration idea
 

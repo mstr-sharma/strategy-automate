@@ -272,7 +272,8 @@ class Client:
             self.user_id, self.user_name = info.get("id"), info.get("fullName")
 
     def _login_via_strategy_auth(self) -> None:
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                         os.pardir, os.pardir, "strategy-platform", "scripts")))
         import strategy_auth
         self.session.headers.pop("X-MSTR-AuthToken", None)
         self.session.cookies.clear()

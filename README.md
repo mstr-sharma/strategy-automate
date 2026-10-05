@@ -5,6 +5,7 @@ Skills, field-verified notes and Python helpers that let AI coding agents automa
 - **Build Mosaic semantic models** from warehouse tables: plan a star schema, create tables, attributes and metrics, wire relationships, set ACLs and security filters, then publish and certify (`build_mosaic.py`).
 - **Check the result** with a structural gate (`validate-model`) and paired queries against a trusted reference (`strategy_validate_models.py`).
 - **Migrate and administer classic projects**: inventory schema objects, trace reports to tables, convert classic objects to Mosaic, replay Library publications, upload documents for AI agents.
+- **Reach every REST operation safely**: list, describe and call any of the ~1,700 operations in the tenant's own OpenAPI spec, validated before sending, with domain skills for admin, distribution, content, migration, operations and AI work (`strategy_api.py`).
 - **Sign in the way your tenant does**: single sign-on through the browser (SAML, OIDC, any IdP), API tokens, LDAP or standard passwords — no password needed for SSO accounts (`strategy_auth.py`, `strategy_mcp.py`).
 - **Reuse what was learned**: dated, tenant-verified notes on endpoints, payloads and error codes, indexed in [`memory/MEMORY.md`](memory/MEMORY.md).
 
@@ -34,13 +35,24 @@ strategy-automate/
 │   ├── feedback_*.md                        # durable fixes learned from failures
 │   └── checklist_*.md                       # modeling playbook + review gate
 ├── skills/
-│   ├── build-mosaic-model/        # the execution skill
+│   ├── strategy-platform/         # the core every other skill uses
+│   │   ├── SKILL.md
+│   │   └── scripts/
+│   │       ├── strategy_auth.py         # sign-in: password, LDAP, API token, browser SSO, identity token, OIDC
+│   │       ├── strategy_api.py          # list / describe / call ANY REST operation, validated against the tenant spec
+│   │       ├── strategy_mcp.py          # Mosaic + Agent MCP client with the MCP connector's OAuth sign-in
+│   │       └── _client.py               # shared BaseMSTR, auth args, search, inventory helpers
+│   ├── strategy-automation/SKILL.md      # NLQ router: classifies a request, hands it to the owning skill
+│   ├── strategy-admin/SKILL.md           # users, groups, security roles, privileges, SCIM, tenants, settings
+│   ├── strategy-distribution/SKILL.md    # subscriptions, schedules, events, contacts, history list
+│   ├── strategy-content/SKILL.md         # reports, dashboards, documents, objects, search, cubes, datasets
+│   ├── strategy-migration/SKILL.md       # packages, migrations, project duplication, Git
+│   ├── strategy-ops/SKILL.md             # monitors, jobs, caches, connections, telemetry, server scripts
+│   ├── strategy-ai/SKILL.md              # agents, bots, questions, MCP readiness
+│   ├── build-mosaic-model/        # Mosaic modeling execution skill
 │   │   ├── SKILL.md
 │   │   ├── examples/              # model / attribute / relationship / validation plan templates
 │   │   └── scripts/
-│   │       ├── strategy_auth.py         # shared sign-in: password, LDAP, API token, browser SSO, identity token, OIDC
-│   │       ├── strategy_mcp.py          # Mosaic MCP client with the MCP connector's OAuth sign-in
-│   │       ├── _client.py               # shared BaseMSTR, auth args, search, inventory helpers
 │   │       ├── build_mosaic.py          # CLI: catalog, build, publish, relationships, SF, ACL, certify, validate, … (see --help)
 │   │       ├── mosaic_safety.py         # stateless defensive helpers (error parsing, expression builders, merge-aware PUT)
 │   │       ├── preflight_model_check.py
@@ -53,9 +65,8 @@ strategy-automate/
 │   │       └── strategy_validate.py           # live-tenant runtime-workflow validator
 │   ├── create-unstructured-data/  # upload documents / decks as AI-agent knowledge
 │   ├── strategy-data-modeling/SKILL.md   # Kimball-first planning layer
-│   ├── strategy-automation/SKILL.md      # NLQ router + surface classifier
-│   └── strategy-validation/SKILL.md      # paired-query numeric-correctness validator
-├── tests/                         # hermetic unit tests (run in CI)
+│   └── strategy-validation/SKILL.md      # paired-query numeric-correctness validator, Test Center
+├── tests/                         # hermetic unit tests + REST contract test (run in CI)
 ├── captures/                      # dated tenant transcripts; raw payloads stay local
 ├── pyproject.toml uv.lock LICENSE # deps + lint config; MIT
 └── .github/workflows/tests.yml    # CI: unittest (3.9 / 3.11 / 3.13) + ruff
@@ -79,7 +90,7 @@ Required: `MSTR_BASE` and either `MSTR_PROJECT_ID` or `MSTR_PROJECT_NAME`. For b
 
 | Your account | What to set |
 |---|---|
-| Single sign-on (SAML / OIDC / any IdP), no Strategy password | nothing — run `python3 skills/build-mosaic-model/scripts/strategy_auth.py login` once; it opens your browser, you click **Allow**, and later commands reuse the session from the OS keychain |
+| Single sign-on (SAML / OIDC / any IdP), no Strategy password | nothing — run `python3 skills/strategy-platform/scripts/strategy_auth.py login` once; it opens your browser, you click **Allow**, and later commands reuse the session from the OS keychain |
 | SSO, but runs must not open a browser | `strategy_auth.py login --save-api-token --lifetime-minutes 480` |
 | Standard or LDAP account | `MSTR_USER` + `MSTR_PASSWORD` (+ `MSTR_LOGIN_MODE=16` for LDAP) |
 | CI / service account | `MSTR_API_TOKEN` |
@@ -97,7 +108,7 @@ python3 -m pip install --user requests
 ### 3. Verify tenant connectivity
 
 ```bash
-python3 skills/build-mosaic-model/scripts/strategy_auth.py methods
+python3 skills/strategy-platform/scripts/strategy_auth.py methods
 python3 skills/build-mosaic-model/scripts/build_mosaic.py auth-probe
 python3 skills/build-mosaic-model/scripts/build_mosaic.py list-datasources
 ```
@@ -116,7 +127,7 @@ The repo is **LLM-agnostic**. [`AGENTS.md`](AGENTS.md) is the canonical entry po
 | Cursor / Cline / Continue / Aider / Windsurf | [`CURSOR.md`](CURSOR.md) | Point IDE agent at `AGENTS.md` as the rules file. |
 | Any other LLM | [`AGENTS.md`](AGENTS.md) | No configuration needed — read the file + memory index and proceed. |
 
-**MCP-aware chat apps** — connect the Strategy Mosaic MCP server (per your vendor's connector). The memory and skills reference MCP tools by standard name: `get_projects`, `get_models` (older servers: `get_mosaic_models`), `get_semantics`, `query`; the server lists and resolves **certified** models only. Scripts can call the same server with the same single sign-on through [`strategy_mcp.py`](skills/build-mosaic-model/scripts/strategy_mcp.py). Without MCP, every tool has a REST fallback documented in [`AGENTS.md`](AGENTS.md).
+**MCP-aware chat apps** — connect the Strategy Mosaic MCP server (per your vendor's connector). The memory and skills reference MCP tools by standard name: `get_projects`, `get_models` (older servers: `get_mosaic_models`), `get_semantics`, `query`; the server lists and resolves **certified** content only — Mosaic models plus governed classic cubes, reports and datasets. A tenant also runs a separate Agent MCP server. Scripts can call either with the same single sign-on through [`strategy_mcp.py`](skills/strategy-platform/scripts/strategy_mcp.py). Without MCP, every tool has a REST fallback documented in [`AGENTS.md`](AGENTS.md).
 
 ## Typical tasks
 
@@ -204,14 +215,20 @@ python3 skills/build-mosaic-model/scripts/strategy_semantic_mine.py --mode rever
 
 See [`memory/reference_strategy_legacy_to_mosaic_mining.md`](memory/reference_strategy_legacy_to_mosaic_mining.md) — it's the start-here hub for classic → Mosaic migrations (4-step sequence: mining → field-study → blueprint/clone decision → build).
 
-### Automate an API surface that has no typed helper yet
+### Automate anything else — admin, subscriptions, reports, migrations, monitoring, agents
+
+Every one of the ~1,700 REST operations is reachable through one spec-validated tool, and each area has an owning skill with its workflows (`memory/reference_strategy_api_surface.md` maps them):
 
 ```bash
-python3 skills/build-mosaic-model/scripts/build_mosaic.py openapi-search "<domain word>" --context 3
-python3 skills/build-mosaic-model/scripts/build_mosaic.py api-call --method GET --path /api/projects
+API="python3 skills/strategy-platform/scripts/strategy_api.py"
+$API tags                                   # every API area and the skill that owns it
+$API ops --tag strategy-distribution        # e.g. everything about subscriptions and schedules
+$API describe createSubscription            # parameters, auto-filled headers, body skeleton
+$API call createSubscription --body @sub.json          # dry run: prints the request
+$API call createSubscription --body @sub.json --yes    # sends it
 ```
 
-Generic REST reachability is part of platform-hook coverage. Promote to a typed helper when the workflow becomes common, risky, multi-step, or needs strict verification or cleanup.
+`call` validates parameters and body against the tenant's spec, fills the project / changeset / `Prefer` headers, and refuses to send a write without `--yes`. Promote a workflow to a typed helper when it becomes common, risky, multi-step, or needs strict verification or cleanup.
 
 ## Memory, conventions, and security
 

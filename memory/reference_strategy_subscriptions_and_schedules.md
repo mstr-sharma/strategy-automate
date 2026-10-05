@@ -1,33 +1,47 @@
 ---
 name: Strategy subscriptions, schedules, and distribution
 subtype: stub
-description: Stub reference for Strategy's delivery surface — email/file/history-list/print/mobile/cache subscriptions, schedule triggers, transmitter selection, recipient resolution. Captures the endpoint families; needs per-transmitter verified payloads added as they're exercised.
+description: Stub reference for Strategy's delivery surface — email/file/history-list/printer/mobile/cache/cloud-drive subscriptions, schedule triggers, transmitter selection, recipient resolution — plus the documented scheduled Mosaic refresh (a `data_model` subscription with `refreshCondition`). Captures the endpoint families; needs per-transmitter verified payloads added as they're exercised.
 type: reference
 ---
 
 Part of the platform coverage contract (see `reference_strategy_automation_coverage.md`). Not yet a wrapped helper — treat as **generic REST hook** until a typed wrapper ships in `skills/build-mosaic-model/scripts/`.
 
-## Endpoint families
+## Endpoint families (corrected 2026-10-05 against the tenant spec)
 
-- `GET/POST /api/subscriptions` — list/create subscriptions. Delivery types: `EMAIL`, `FILE`, `PRINT`, `HISTORY_LIST`, `CACHE_UPDATE`, `MOBILE`, `PUSH_NOTIFICATION`.
-- `GET /api/schedules` — list time/event triggers (`time_based`, `event_based`).
-- `GET /api/transmitters` — available delivery transmitters (email server, file location, etc.).
-- `GET /api/contacts`, `GET /api/contact_collections` — recipient directory. Classic contacts + linked user accounts.
-- `POST /api/subscriptions/{id}/sendNow` — force immediate run.
-- `DELETE /api/subscriptions/{id}` — remove.
+- `GET/POST /api/subscriptions` — list/create subscriptions; `GET/PUT/PATCH/DELETE /api/subscriptions/{id}`, `GET …/{id}/status`, `POST /api/subscriptions/query` (cross-project). Delivery `mode` enum for `POST /api/subscriptions` (spec, 2026-10-05): `EMAIL`, `HISTORY_LIST`, `CACHE`, `FTP`, `FILE`, `MOBILE`, `ONEDRIVE`, `SHAREPOINT`, `S3`, `GOOGLEDRIVE`, `GCS`. (`PRINTER`, `SNAPSHOT`, `PERSONAL_VIEW`, `SHARED_LINK` appear only on the recipient/address endpoints.) Content `type` includes `data_model` for Mosaic refresh (below).
+- `GET/POST /api/schedules`, `GET/PUT/DELETE /api/schedules/{id}` (also `GET /api/v2/schedules`) — time / event triggers (`time_based`, `event_based`); `POST /api/events/{id}/trigger` fires an event-based schedule.
+- `GET/POST /api/transmitters`, `GET/PUT/DELETE /api/transmitters/{id}` — delivery transmitters; devices via `GET/POST /api/v2/devices`.
+- `GET/POST /api/contacts`, `POST /api/contacts/query`; `GET/POST /api/contactGroups`, `POST /api/contactGroups/query` — recipient directory (there is no `/api/contact_collections`).
+- `POST /api/subscriptions/{id}/send` (also `/api/v2/subscriptions/{id}/send`) → 202 — run an existing subscription now; the optional body carries prompt answers (`{contentId, instanceId}`) for prompted content. There is no `/sendNow` path; `sendNow: true` on create/update also sends.
+- `DELETE /api/subscriptions/{id}` — remove (unsubscribe).
+- Data alerts are subscriptions too (`alert: true`, read-only on the `Subscription` body).
 
 ## Key knowledge gaps (flag to fill on next live use)
 
 - Verified payload shape per delivery type (email: subject, body, attach-format — file: path template, format, overwrite policy).
 - Prompt answer persistence inside a subscription (how `promptAnswers` is attached; cube vs report differences).
-- Recipient handling for Mosaic-derived content (do Mosaic dashboards route through `/api/subscriptions` at all, or only published reports/documents/dossiers?).
+- Recipient handling for Mosaic-derived content (do Mosaic dashboards route through `/api/subscriptions` at all, or only published reports/documents/dossiers?). Mosaic model *refresh* does route through it — see below.
 - Cache-update subscription vs cube refresh overlap.
 
-## Routing rules
+## Routing rules (corrected 2026-10-05)
 
-- **Mosaic model refresh on a schedule** → do NOT use `/api/subscriptions` with `CACHE_UPDATE`. Use the Mosaic-native `POST /api/dataModels/{id}/publish` with `refreshPolicy:"add"|"replace"|"update"|"upsert"` triggered from an external scheduler (or the UI's schedule panel). See `reference_mosaic_publish_path.md`.
+- **Mosaic model refresh on a schedule IS a subscription** (REST docs `mosaic/publish/schedule-refresh-a-data-model`, available since August 2025). Earlier text said to avoid `/api/subscriptions` and drive `POST /api/dataModels/{id}/publish` from an external scheduler — wrong. `POST /api/subscriptions` with:
+
+  ```json
+  {"name": "<name>", "sendNow": false,
+   "schedules": [{"id": "<schedule id>"}],
+   "contents": [{"id": "<data model id>", "type": "data_model",
+                 "refreshCondition": {
+                   "tables": [{"id": "<table id>", "refreshPolicy": "upsert"}],
+                   "filters": [{"type": "refresh", "qualification": {"tree": {"type": "predicate_form_qualification", "...": "..."}}}]}}],
+   "delivery": {"mode": "HISTORY_LIST"}}
+  ```
+
+  `refreshCondition.tables[].refreshPolicy` takes the publish policies (`add` / `update` / `upsert` / `replace` / …); or set `refreshCondition.datasetRefreshPolicy` as the default for every table (required when `tables` is empty — it then also covers tables added later). `filters` is optional (attribute form qualifications). Update with `PUT /api/subscriptions/{id}`, read back with `GET /api/subscriptions/{id}`. A one-off refresh is still the publish flow in `reference_mosaic_publish_path.md`.
 - **Report/dossier delivery** → classic subscriptions path.
-- **In-app alerts** → route through `reference_strategy_monitoring_jobs_alerts.md` (separate surface from subscriptions).
+- **Classic cube refresh on a schedule** → a `CACHE`-mode subscription on the cube.
+- **Data alerts** → alert subscriptions (same `/api/subscriptions` surface); see `reference_strategy_monitoring_jobs_alerts.md` for the monitor side.
 
 ## mstrio-py coverage
 
@@ -95,7 +109,7 @@ Resolve the ID placeholders at run time:
 
 Observed server behaviors (tenant-family: Strategy ONE Cloud, library version current on 2026-04-23 — recheck on tenants with different iServer build):
 
-- `sendNow` is a **write-only** field on the `Subscription` body. There is no separate `/api/subscriptions/{id}/sendNow` path in `/api/openapi.yaml` on this tenant family — immediate preview must be requested during create/update, not as a follow-up endpoint.
+- `sendNow` is a **write-only** field on the `Subscription` body. There is no `/api/subscriptions/{id}/sendNow` path, but an existing subscription can be run later with `POST /api/subscriptions/{id}/send` (→ 202; also v2) — corrected 2026-10-05; the 2026-04 note said a follow-up send endpoint did not exist.
 - Passing recipient `type:"user"` plus `addressId` is accepted on write, but the saved subscription **normalizes** the recipient to `type:"personal_address"` with `id` equal to the address ID, not the user ID. Always re-read via `GET` after create if downstream code depends on the recipient shape.
 - `formatMode:"DEFAULT"` and `viewMode:"DEFAULT"` are accepted on write but **persisted** as `formatMode:"CURRENT_PAGE"` and `viewMode:"BOTH"`. Treat the GET-after-create response as source of truth.
 - A bare auth-token header is not enough for follow-up reads — the client must preserve the login session cookies (`JSESSIONID`, `iSession`). `requests.Session()` in Python matches tenant behavior; bare `urllib` probes return `ERR009 session expired` on subsequent calls.

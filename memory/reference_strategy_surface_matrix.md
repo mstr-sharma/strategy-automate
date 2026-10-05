@@ -153,7 +153,7 @@ DDA/MDX cube (runtime retrieval/execution; treat as execution/data-access surfac
 Mosaic data model (not the same thing as a classic cube — created and edited with `/api/model/dataModels`, not `/api/model/cubes`):
 
 - Semantic editing: `/api/model/dataModels/{dataModelId}/tables|attributes|metrics|factMetrics|relationships|securityFilters`.
-- Data serve mode: `connect_live`, `in_memory`, and tenant-supported `hybrid`.
+- Data serve mode: `connect_live`, `in_memory`, `off_memory` (the spec's enum; earlier notes said `hybrid`, which does not exist).
 - Publish/materialization: see `reference_mosaic_publish_path.md` — the one publish file (UI-verified `/api/cubes/{id}?cubeAction=publish` trigger vs the 3-step `/api/dataModels` flow, single-trigger rule, dataType preconditions).
 - Query/semantic inspection: prefer Mosaic MCP (`get_semantics`, `query`) when connected; otherwise use REST cube/model APIs as available.
 

@@ -5,7 +5,7 @@ type: reference
 ---
 Every Mosaic model is a composition of these 6 patterns. Before declaring relationships for a new schema, classify each FK by archetype. Complements `reference_mosaic_modeling_concepts.md` (payload shapes) with the decision map from ERD → Mosaic relationships.
 
-All payloads go through `PUT /api/model/dataModels/{modelId}/attributes/{childId}/relationships?changesetId=…` with one entry in `relationships[]` per archetype instance. `relationshipTable` is where the join physically occurs.
+All payloads go through `PUT /api/model/dataModels/{modelId}/attributes/{childId}/relationships` with the changeset in the `X-MSTR-MS-Changeset` header (the spec has no `?changesetId=` parameter; corrected 2026-10-05) and one entry in `relationships[]` per archetype instance. `relationshipType` ∈ `one_to_one` / `one_to_many` / `many_to_one` / `many_to_many`. `relationshipTable` is where the join physically occurs.
 
 ## A — Star (dim → fact, single-column FK)
 
@@ -37,7 +37,7 @@ All payloads go through `PUT /api/model/dataModels/{modelId}/attributes/{childId
 
 **Shape:** `PARTSUPP → LINEITEM` on `(PARTKEY, SUPPKEY)` together; inventory snapshots keyed on (date, location, sku); audit tables keyed on (entity, effective_date).
 
-**Encoding:** compound attribute on the parent (PARTSUPP) whose key is a concatenation or compound of both columns. Emit it with either (a) one ID form whose expression is `CONCAT(PARTKEY, '_', SUPPKEY)` or (b) multiple `category:"ID"` forms that Mosaic treats as a compound key. Declare one relationship from this compound attribute to the fact's grain via the fact table.
+**Encoding:** compound attribute on the parent (PARTSUPP) whose key is a concatenation or compound of both columns. Emit it with either (a) one ID form whose expression is `CONCAT(PARTKEY, '_', SUPPKEY)` or (b) a **form group** — one form `{"name":"ID","category":"ID","isFormGroup":true,"childForms":[{"name":"ID (1)"},{"name":"ID (2)"}]}` plus one simple form per key column, with `keyForm` pointing at the group (corrected 2026-10-05: not "multiple `category:"ID"` forms"; shape in `reference_mosaic_modeling_concepts.md`). Declare one relationship from this compound attribute to the fact's grain via the fact table.
 
 **Never:** declare two independent single-key `one_to_many` rels (Part → LineItem on PARTKEY, Supplier → LineItem on SUPPKEY). Each row in LINEITEM matches every row in PARTSUPP sharing *either* key, producing a Cartesian burst; metrics are wrong by a factor of N.
 

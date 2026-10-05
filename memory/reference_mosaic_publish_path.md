@@ -1,16 +1,27 @@
 ---
 name: Mosaic in-memory publish — endpoints, single-trigger rule, and dataType preconditions
-description: The ONE publish file for Mosaic data models (subType 779). Two publish endpoints exist on Strategy ONE Cloud tenants — the UI's `/api/cubes/{id}?cubeAction=publish` (202) and the Modeling-native 3-step `/api/dataModels/{id}/instances` + `/publish` + `/publishStatus` flow. Pick exactly ONE per run (firing both locks `publishStatus` into 500 iServerCode -2147072194). Either path silently no-ops or stalls (-2147212544) unless physical-table dataTypes are clean pipeline types, not warehouse-catalog sentinels. Load before any Mosaic publish/refresh.
+description: The ONE publish file for Mosaic data models (subType 779 + extType 448). The documented flow is `POST /api/dataModels/{id}/instances` → `POST …/publish` (tables[].refreshPolicy) → `GET …/publishStatus` (per-table `completed`) → `DELETE …/instances/{instanceId}`; `POST /api/cubes/{id}?cubeAction=publish` (what the Studio UI fired in 2026-04 captures) is internal + deprecated in the spec — tenant-observed fallback only. Pick exactly ONE trigger per run (firing both locks `publishStatus` into 500 iServerCode -2147072194). Either path silently no-ops or stalls (-2147212544) unless physical-table dataTypes are clean pipeline types, not warehouse-catalog sentinels. Load before any Mosaic publish/refresh.
 type: reference
 ---
 
-## Background — a 2026-04-22 memory was half wrong
+> **Current rule (2026-10-05)** — from the REST docs (`common-workflows/mosaic/publish/refresh-a-data-model`, available since August 2025) and the tenant's OpenAPI spec (tag Data Models, all public):
+>
+> 1. `POST /api/dataModels/{id}/instances` → 204; instance id in the `X-MSTR-DataModelInstanceId` response header.
+> 2. `POST /api/dataModels/{id}/publish` with that header and body `{"tables":[{"id":"<tableId>","refreshPolicy":"replace"}]}` → 204. `refreshPolicy` ∈ add / delete / update / upsert / replace / ignore / reserved; table ids from `GET /api/model/dataModels/{id}/tables`.
+> 3. `GET /api/dataModels/{id}/publishStatus` (same header) → `{status, tables:[{id, status}]}`. Per-table `status` enum: `reserved`, `waiting`, `publishing`, `completed`, `error`, `schema_comparison_completed`, `schema_comparison_error`. Done = every table `completed`; stop on `error` / `schema_comparison_error`. There is no `loaded` (older text below said so; `build_mosaic.py publish` now accepts `loaded|completed`).
+> 4. `DELETE /api/dataModels/{id}/instances/{instanceId}` → 204 once the publish is done.
+>
+> `POST /api/cubes/{id}?cubeAction=publish` is `publishCube` in the spec — **internal and deprecated**, described as publishing an "Intelligent cube or MTDI cube". Use it only as a tenant-observed fallback when the documented flow fails, never in the same run as steps 1–3. Whatever the trigger, confirm with an independent probe (cube-execute probe or Trino/MCP query) — `publishStatus` under-reported on this tenant family (history below). A *scheduled* refresh is a subscription, not a publish call (`reference_strategy_subscriptions_and_schedules.md`).
+>
+> Everything below this box is dated tenant observation (history). Where it conflicts with the box, the box wins; the dataType preconditions and completion-probe advice still apply.
 
-`reference_mosaic_vs_legacy_surfaces.md` declared "`/api/cubes/*` is NOT the publish path for a Mosaic data model — use `POST /api/dataModels/{id}/publish`." After 2026-04-23, corrected: both paths work for a properly-typed Mosaic model. The real failure mode that memory captured was the dirty dataTypes — not the endpoint choice (see "DataType preconditions" below). Keep that memory for the classification rules (subType 779 vs 776) and the endpoint-pair cheat sheet; read this one for the actual publish trigger. Observations here are from a Strategy ONE Cloud tenant; recheck endpoint choice on different iServer build families.
+## Background (history, 2026-04) — a 2026-04-22 memory was half wrong
 
-## What the Studio UI calls when you click "Publish"
+`reference_mosaic_vs_legacy_surfaces.md` declared "`/api/cubes/*` is NOT the publish path for a Mosaic data model — use `POST /api/dataModels/{id}/publish`." After 2026-04-23, corrected: both paths work for a properly-typed Mosaic model. The real failure mode that memory captured was the dirty dataTypes — not the endpoint choice (see "DataType preconditions" below). Keep that memory for the classification rules (subType 779 + extType 448 vs 776) and the endpoint-pair cheat sheet; read this one for the actual publish trigger. Observations here are from a Strategy ONE Cloud tenant; recheck endpoint choice on different iServer build families.
 
-Single request:
+## What the Studio UI calls when you click "Publish" (history — tenant observation, 2026-04)
+
+Single request (internal + deprecated `publishCube` in the spec — see the box at the top):
 ```
 POST /api/cubes/{modelId}?cubeAction=publish
 Headers: X-MSTR-AuthToken, X-MSTR-ProjectID
@@ -22,9 +33,9 @@ The server queues a CubeServer publish job (visible as `Cube report "<model name
 
 No instance header is needed. No body is needed. The cube materializes for Trino federation automatically; no follow-up "activate" step.
 
-## The Modeling-native 3-step flow (also works, use for fine-grained refresh)
+## The Modeling-native 3-step flow (the documented flow — see the box at the top)
 
-Use when you need per-table refresh policies (add / replace / delete / update / upsert / ignore / reserved) or when you need the returned instance id for polling.
+The default trigger. It is also the only one with per-table refresh policies (add / replace / delete / update / upsert / ignore / reserved) and a returned instance id for polling. Delete the instance when done (`DELETE /api/dataModels/{modelId}/instances/{instanceId}`).
 
 ```
 # 1. Create a data-model instance (no body). 204; instance id in RESPONSE HEADER.
@@ -40,29 +51,33 @@ Body: {"tables":[{"id":"<tid>","refreshPolicy":"replace"}, ...]}    # one entry 
 # 3. Poll status.
 GET /api/dataModels/{modelId}/publishStatus
 Headers: X-MSTR-DataModelInstanceId: <inst>
--> 200 {"status": <int>, "tables":[{"id","status":"reserved|schema_comparison_completed|loaded|error", ...}]}
+-> 200 {"status": <int>, "tables":[{"id","status":"reserved|waiting|publishing|completed|error|schema_comparison_completed|schema_comparison_error", ...}]}
+
+# 4. Clean up.
+DELETE /api/dataModels/{modelId}/instances/{inst}
+-> 204
 ```
 
-Top-level statuses observed:
-- `0` — all tables loaded (happy end).
+Top-level statuses observed (tenant history). The spec documents the top-level `status` as an EnumDSSXMLStatus value (0 MsgID, 1 Result, 4 JobRunning, 5 InSQLEngine, 6 InQueryEngine, 13 Waiting, …), so the readings below are tenant interpretations, not the enum — `1` may well mean "result ready", not "running". Decide completion from the per-table enum plus an independent probe:
+- `0` — all tables done (happy end).
 - `1` — job queued/running. Tables list may be empty for the first tens of seconds.
 - `5` — reserved.
 - `6` — schema comparison completed.
 - `-2147418587` — terminal failure after partial table completion. Observed with several tables reporting `completed`, followed by a cube execute probe returning `-2147072488` (not published). Treat as a failed materialization, not a still-running publish. Capture the full per-table status before the instance expires, then inspect clean dataTypes, large fact-table feasibility, warehouse availability/resume, and CubeServer health.
 - `-2147212544` — CubeServer parallel-mode stall. With REF-clean dataTypes this is rare; with warehouse-catalog types it is the default outcome on the observed Strategy ONE Cloud tenant family (see "DataType preconditions" below).
 
-Per-table statuses: `reserved` → `schema_comparison_completed` → `loaded` (happy), or terminate at `error`.
+Per-table statuses (spec enum `TablePublishStatus.status`): `reserved`, `waiting`, `publishing`, `completed`, `error`, `schema_comparison_completed`, `schema_comparison_error`. Happy end = `completed`; terminal failure = `error` or `schema_comparison_error`. (Corrected 2026-10-05: earlier versions said the happy end was `loaded` — that value is not in the enum; `build_mosaic.py publish` accepts `loaded|completed`.)
 
 **Instance id lifetime.** The X-MSTR-DataModelInstanceId expires within a couple minutes; if you see repeated `404 ERR004 "Message not found in user history list"` on `publishStatus`, your instance was reaped — mint a new one and re-publish. A short-lived session (one Python process, keep polling in the same `requests.Session`) rarely trips this; longer polling with multiple login cycles does.
 
-## Which path to use in automation
+## Which path to use in automation (corrected 2026-10-05)
 
 | Situation | Use |
 |---|---|
-| "Just publish this model; don't care about refresh policies" | `/api/cubes/{id}?cubeAction=publish` — simplest, matches UI, no instance management. |
-| "Publish and confirm every table loaded" | 3-step Modeling flow — only this returns per-table status. |
+| "Just publish this model; don't care about refresh policies" | 3-step Modeling flow with `refreshPolicy:"replace"` on every table, then delete the instance. (Earlier versions said `/api/cubes/{id}?cubeAction=publish` — internal + deprecated in the spec; keep it as the fallback when the documented flow fails on a tenant, never in the same run.) |
+| "Publish and confirm every table is done" | 3-step Modeling flow — only this returns per-table status. |
 | "Incremental refresh (add/update specific tables)" | 3-step Modeling flow with specific `refreshPolicy`. |
-| "Policy gate before declaring validation ready" | Always poll `/publishStatus` until every table `status:"loaded"`. Don't trust the 202/204 alone. |
+| "Policy gate before declaring validation ready" | Poll `/publishStatus` until every table `status:"completed"` (no `loaded` in the enum) AND confirm with an independent probe. Don't trust the 202/204 alone. |
 
 ## Completion polling — what actually works (2026-06-11 correction)
 
@@ -94,12 +109,12 @@ Run IN ORDER (each one short session; scripts in `captures/20260611-pharma-build
 
 When publishing an in-memory Mosaic data model, call **exactly one** of the two publish endpoints per run:
 
-- `POST /api/cubes/{id}?cubeAction=publish` — UI-equivalent, returns 202 immediately, no instance needed. Poll by Trino probe or `GET /api/cubes/{id}`.
-- `POST /api/dataModels/{id}/instances` + `POST /api/dataModels/{id}/publish` + `GET /api/dataModels/{id}/publishStatus` — three-step, uses instance id, only this returns per-table status.
+- `POST /api/dataModels/{id}/instances` + `POST /api/dataModels/{id}/publish` + `GET /api/dataModels/{id}/publishStatus` (+ instance delete) — the documented three-step flow, uses instance id, only this returns per-table status.
+- `POST /api/cubes/{id}?cubeAction=publish` — UI-equivalent in 2026-04 captures, internal + deprecated in the spec, returns 202 immediately, no instance needed. Fallback only. Poll by Trino probe or the cube-execute probe (not `GET /api/cubes/{id}` — definition-only, see above).
 
 Do NOT issue both. If you fire `/api/cubes` first and then follow up with the 3-step `publish` POST, Strategy sees two publish jobs racing on the same cube. The CubeServer serializes them (accepts the first, queues/rejects the second), and `publishStatus` against the LOSING instance id returns `500 ERR001 iServerCode -2147072194` "is being published by job N" for the full duration of the winning job. Your polling loop sees the error continuously, times out, and reports failure — even though the cube is actually being published successfully.
 
-### Observed
+### Observed (history)
 
 Strategy ONE Cloud tenant, multi-DB in-memory model (captured run):
 - `/api/cubes/{id}?cubeAction=publish` → 202 (started publish job N).
@@ -110,23 +125,31 @@ Strategy ONE Cloud tenant, multi-DB in-memory model (captured run):
 ### Fix pattern — single trigger + MCP/Trino count(*) completion probe
 
 ```python
-# Single-trigger, Trino-probe publish
-r = s.post(f"{BASE}/api/cubes/{MID}?cubeAction=publish")
-assert r.status_code == 202
+# Single trigger = the documented 3-step flow (corrected 2026-10-05; the 2026-04 version of
+# this snippet fired the internal/deprecated /api/cubes/{id}?cubeAction=publish instead)
+inst = s.post(f"{BASE}/api/dataModels/{MID}/instances").headers["X-MSTR-DataModelInstanceId"]
+hdr = {"X-MSTR-DataModelInstanceId": inst}
+r = s.post(f"{BASE}/api/dataModels/{MID}/publish", headers=hdr,
+           json={"tables": [{"id": t, "refreshPolicy": "replace"} for t in TABLE_IDS]})
+assert r.status_code == 204
 
-# Poll by checking the Trino/MCP catalog, not by 3-step status
+# Poll publishStatus for per-table "completed", but let an independent probe decide
 deadline = time.time() + 600
 while time.time() < deadline:
     time.sleep(15)
+    st = s.get(f"{BASE}/api/dataModels/{MID}/publishStatus", headers=hdr).json()
+    if any(t.get("status") in ("error", "schema_comparison_error") for t in st.get("tables", [])):
+        raise RuntimeError(st)
     probe = s.post(f"{MCP_BASE}/query",
                    json={"schema": PROJECT_NAME.lower(),
                          "query": f'SELECT count(*) FROM "{model_name.lower()}"'})
     if probe.ok and "count" in probe.json(): break
+s.delete(f"{BASE}/api/dataModels/{MID}/instances/{inst}")
 ```
 
-Or, if you need per-table status (incremental refresh / schema drift detection), use ONLY the 3-step flow — do NOT combine it with `/api/cubes`.
+If the documented flow fails on a tenant, the fallback is ONE `POST /api/cubes/{MID}?cubeAction=publish` (202) in a separate run, with the same probe — never both triggers in one run.
 
-### Why this tripped a real run
+### Why this tripped a real run (history)
 
 The script was defensive — it tried both paths to be robust against either one failing. In this tenant family BOTH paths succeed, but they serialize on the cube lock, and the losing instance's `publishStatus` call is the one the script polled. Net effect: a working publish looked like an infinite stall.
 
@@ -185,11 +208,11 @@ The fastest way to fix an already-built dirty-typed model is to clone a known-go
 6. Commit tables + attributes + metrics in ONE changeset. The "table has no attribute/metric" commit check (`8004e42f`) requires at least one attribute or metric per table to be created before commit.
 7. Follow up with a second changeset for relationships and a third for security filters.
 
-## Helper-fix note
+## Helper note (updated 2026-10-05)
 
-`build_mosaic.py publish` currently tries `/api/cubes/{id}` first and accepts the 202 as success — which is correct for Mosaic now that we've verified the UI uses this path. But it does NOT follow up with a publish-status poll. Add a poll via the 3-step instance flow after the 202 (or just wait and query via Trino) before reporting success. Otherwise validation can run before the cube finishes materializing. (Do not let the helper fire BOTH triggers — see the single-trigger rule above.)
+`build_mosaic.py publish` classifies the object first (779 + extType 448 → Mosaic), then runs the documented 3-step flow and polls `publishStatus` until every table reads `loaded|completed`, failing on `error`. It never fires `/api/cubes/*` for a Mosaic model; `/api/cubes/{id}?cubeAction=publish` is used only for a classic (776) cube. (The 2026-04 version of this note said the helper tried `/api/cubes/{id}` first with no status poll — no longer true.) Still add an independent probe before declaring validation ready.
 
-## Verified on 2026-04-23 (tenant-family: Strategy ONE Cloud)
+## Verified on 2026-04-23 (history — tenant-family: Strategy ONE Cloud)
 
 - `/api/cubes/{id}?cubeAction=publish` → 202, followed by Trino query success on the materialized model.
 - `/api/dataModels/{id}/publish` with per-table bodies → 204, followed by `publishStatus` returning `status=1 tables:[]` while a parallel `/api/cubes` publish completed. Conclusion: the Modeling-native publish accepts the request but queues it in a way the CubeServer may not always drain on this tenant family — the `/api/cubes` path is the reliable one here. Recheck on other iServer build families.

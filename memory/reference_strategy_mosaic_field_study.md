@@ -1,6 +1,6 @@
 ---
 name: mosaic-portfolio-inventory-rules
-description: Mosaic portfolio inventory rules + legacy↔Mosaic translation — subType-779 REST discovery, the MCP-shows-published-catalog-only rule, the Mosaic sub-resource map, and the object-by-object classic→Mosaic translation matrix. Load when inspecting, cloning, translating, or converting between classic semantic objects and Mosaic data models.
+description: Mosaic portfolio inventory rules + legacy↔Mosaic translation — subType-779 + extType-448 REST discovery, the MCP-shows-published-catalog-only rule, the Mosaic sub-resource map, and the object-by-object classic→Mosaic translation matrix. Load when inspecting, cloning, translating, or converting between classic semantic objects and Mosaic data models.
 type: reference
 ---
 Use this when the user asks to inspect, clone, translate, or convert between legacy (classic project) semantic-layer objects and Mosaic data models. Pair with `reference_strategy_tutorial_semantic_field_study.md` (classic) and `reference_strategy_legacy_to_mosaic_mining.md` (discovery helper).
@@ -17,7 +17,7 @@ Anaconda's OpenSSL hangs on `{MSTR_BASE host}` TLS; use `/usr/bin/python3`.
 
 ## Discovery
 
-- Mosaic data models surface in classic search as **type `3` (report), subType `779` (data_model)**. List via `/api/searches/results?type=3&pattern=4&limit=200&getAncestors=true` and filter `subtype==779`.
+- Mosaic data models surface in classic search as **type `3` (report), subType `779` (`report_emma_cube`) with extType 448**. List via `/api/searches/results?type=3&pattern=4&limit=200&getAncestors=true` and filter `subtype==779` **and** `extType==448` — data-import (MTDI) cubes share subtype 779 (corrected 2026-10-05; mstrio-py's `list_mosaic_models` uses the same subtype + extType pair).
 - **MCP shows certified models only (not merely published; corrected 2026-10-05); prefer REST for metadata truth.** In the verified sweep, MCP `get_mosaic_models` (now `get_models`) returned 133 models where REST search returned **156** — the extra 23 were legacy Hyper / MTDI datasets that still carry subType 779 but have no modern `dataServeMode`. Prefer REST when counts need to match metadata truth; MCP is the certified-catalog view.
 - Expect the occasional anomaly: a model can search as subType 779 yet return `8004e457 "Given object is not a Mosaic model"` on every `/api/model/dataModels/{id}/*` endpoint (one such model in the verified sweep; concrete id in the capture). Verify with a sub-resource probe before treating a search hit as writable.
 - `GET /api/model/dataModels/{id}/securityFilters` returns `8004c738 "User does not have Control access"` whenever the session user did not author the filter — only the owner can list per-model security filters. This is the normal response for the large majority of models when sweeping a tenant (exact stat in the capture); filter these out of inventory rather than treating them as failures.
@@ -53,9 +53,9 @@ All inside `/api/model/dataModels/{dataModelId}`:
 Mosaic `GET /api/model/dataModels/{mid}/attributes/{aid}?showExpressionAs=tree` returns the **same JSON shape** as classic `GET /api/model/attributes/{aid}?showExpressionAs=tree`. Fields:
 
 - `information.{objectId, subType:"attribute", name, dateCreated, dateModified, acg}` — identical semantics.
-- `forms[] = { id, name:"", category:"ID"|"DESC"|"<Custom Label>", type:"system"|"custom", displayFormat, expressions[].{text,tree}, lookupTable, autoMapping }` — in Mosaic, `forms[].name` is frequently empty; identify forms by `category`. Mosaic system forms (`45C11FA478E745FEA08D781CEA190FE5` ID / `516CE79B9CD24BCC85859A495CE5A5C5` DESC) still use the universal UUIDs from classic.
+- `forms[] = { id, name:"", category:"ID"|"DESC"|"<Custom Label>", type:"system"|"custom", displayFormat, expressions[].{text,tree}, lookupTable, autoMapping }` — in Mosaic, `forms[].name` is frequently empty; identify forms by `category`. Mosaic system forms (`45C11FA478E745FEA08D781CEA190FE5` ID / `CCFBE2A5EADB4F50941FB879CCF1721C` DESC) still use the universal UUIDs from classic. (Corrected 2026-10-05: the DESC GUID was recorded as `516CE79B…`; the REST docs' attribute samples use `CCFBE2A5…`.)
 - `keyForm` — same semantics.
-- `displays.{reportTextList, browseTextList}` — same.
+- `displays.{reportDisplays, browseDisplays}` — same (each a list of `{id, name}` form refs; earlier text said `reportTextList` / `browseTextList` — corrected 2026-10-05).
 - `attributeLookupTable` — in Mosaic always points at the pipeline-materialized table; in classic it points at the warehouse lookup table.
 - `relationships[] = { parent:{objectId,name,subType}, child:{...}, relationshipType:"one_to_many"|"one_to_one"|"many_to_many", relationshipTable:{objectId,name} }` — same tuple shape; see note above about auto-inference bias.
 
@@ -106,19 +106,19 @@ Mosaic: **one layer** — `GET /api/model/dataModels/{mid}/hierarchy` returns al
 
 - **Project filter objects** (`type 1`): no direct Mosaic container. Convert to either a security filter on the Mosaic model or a runtime filter at report/dashboard time. Custom-group filters (classic subtype 257) must be rebuilt as consolidations or logical metric conditions.
 - **Prompts** (`type 10`): no Mosaic endpoint exists. Prompts are runtime concerns; migrate their semantics into runtime filters, agent questions, or dashboard-level inputs.
-- **Security filters**: classic `/api/model/securityFilters/{id}` + `/members` is project-scoped; Mosaic `/api/model/dataModels/{mid}/securityFilters/{sfid}` + `/members` is model-scoped. Expression/qualification JSON is the same shape. Reassign membership per target model.
+- **Security filters**: classic `/api/model/securityFilters/{id}` (definition) + `PATCH /api/securityFilters/{id}/members` is project-scoped; Mosaic `/api/model/dataModels/{mid}/securityFilters/{sfid}` (definition) + `PATCH /api/dataModels/{mid}/securityFilters/{sfid}/members` is model-scoped (member paths drop the `/model` prefix). Expression/qualification JSON is the same shape. Reassign membership per target model.
 - **Consolidations / custom groups**: not visible in Mosaic. Express as compound metrics with `case_when` / nested operator expressions, or as model-level filters.
 
 ## Governance translation
 
-- **ACL**: classic `GET/PUT /api/objects/{id}/acl?type=...` is global; Mosaic-contained objects **must** use `PATCH /api/model/dataModels/{mid}/objects/{oid}/acl?subType=...` inside a changeset. Rights mask is the same (read=1, write=2, delete=4, control=32, execute=128, browse=64, use=512, inherit=1024).
+- **ACL**: classic `GET /api/objects/{id}?type=...` (read `acl[]`) / `PUT /api/objects/{id}?type=...` with an `acl` body is global — there is no `/api/objects/{id}/acl` sub-resource; Mosaic-contained objects **must** use `PATCH /api/model/dataModels/{mid}/objects/{oid}/acl?subType=...` inside a changeset. Rights mask is the same EnumDSSXMLAccessRightFlags on both: browse=1, use_execute=2, read=4, write=8, delete=16, control=32, use=64, execute=128 (view 197, modify 221, full 255). Corrected 2026-10-05 — the old read=1/write=2/delete=4/browse=64/use=512/inherit=1024 table was wrong; see `reference_mosaic_acl.md`.
 - **Translations**: classic `/api/objects/{type}/{id}/translations` vs Mosaic `/api/model/dataModels/{mid}/objects/{oid}/translations?subType=...` inside a changeset. Same `name.translationValues` + `description.translationValues` shape keyed by locale.
-- **Certification**: `PATCH /api/objects/{id}` `{certifiedInfo:{certified:true}}` works on both legacy objects and Mosaic-contained objects; the Mosaic model itself is certified through this same global endpoint using its model id.
-- **VLDB**: `GET/PATCH /api/objects/{id}/vldbProperties?type=...` still the path; for Mosaic, pass the model id. Model-scoped VLDB overrides live at data-model level, not per-metric.
+- **Certification**: `PUT /api/objects/{id}/certify?type=...&certify=true` is the global endpoint (the spec has no `PATCH /api/objects/{id}`; corrected 2026-10-05); the Mosaic model itself is certified through it using its model id.
+- **VLDB**: there is no `/api/objects/{id}/vldbProperties` (corrected 2026-10-05). Modeling objects carry VLDB overrides in `advancedProperties` (read with `showAdvancedProperties=true`); the object-level `GET/DELETE /api/objects/{id}/vldb/propertySets` + `PUT …/vldb/propertySets/{name}` paths are internal and described for datasets/documents. Model-scoped VLDB overrides live at data-model level, not per-metric.
 
 ## Storage / runtime translation
 
-- **In-memory Mosaic models** back onto the Intelligent Cube family — `POST /api/cubes/{id}/publish` (or studio-verified `POST /api/cubes/{id}`) publishes; `POST /api/cubes/{id}/refresh?refreshType=update|add|replace|incremental` refreshes. Incremental filter set via `PATCH /api/cubes/{id}` `incrementalRefresh.filterId`.
+- **In-memory Mosaic models** back onto the Intelligent Cube family, but publish/refresh goes through the documented data-model flow: `POST /api/dataModels/{id}/instances` → `POST …/publish` with per-table `refreshPolicy` (add / update / upsert / replace / …) → `GET …/publishStatus` → delete the instance (`reference_mosaic_publish_path.md`). Corrected 2026-10-05: `POST /api/cubes/{id}/publish`, `POST /api/cubes/{id}/refresh` and `PATCH /api/cubes/{id}` are not in the spec, and `POST /api/cubes/{id}` (what Studio fired in 2026-04 captures) is internal + deprecated. Scheduled refresh is a subscription (`reference_strategy_subscriptions_and_schedules.md`).
 - **Connect-live Mosaic models** skip cube storage but still require a `pipeline` table shape on verified tenants. Direct `warehouse_partition_table` wiring is documented in `reference_mosaic_rest_api.md` but was not observed in production use.
 - **Hyper / MTDI Super Cubes** that now appear as subType 779 (`dataServeMode == ""`): treat as read-only. Do not attempt changeset writes; they need an explicit upgrade path that isn't covered by `/api/model/dataModels` writes.
 
