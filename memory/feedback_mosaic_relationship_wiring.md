@@ -64,7 +64,7 @@ Even with an explicit `relationships[]` block in the dictionary, `PUT /api/model
 
 ## Fallback — explicit ERD
 
-If the dictionary approach is too verbose (many tables, many FKs), supply an ERD (`.dbml` / `.sql` / `.json`) covering every cross-table join. The ERD disables auto-conformance, so EVERY shared-column pair must be listed. Do not mix styles.
+If the dictionary approach is too verbose (many tables, many FKs), supply an ERD (`.dbml` / `.sql` / `.json`) covering every cross-table join. The ERD **replaces relationship inference only** — `build_mosaic.py` swaps its inferred descriptor→entity and entity→entity relationships for the ERD list wholesale (`inferred_rels = []` then rebuild from `explicit_rels`). Shared-column conformance still runs as before: entity attributes, conformed descriptor columns and conform-by-name merges are created whether or not an ERD is passed. So the ERD must list every relationship you want (nothing inferred survives), but it does NOT need to, and cannot, undo a conformance merge. Dictionary `relationships[]` behaves the same way. (Corrected 2026-10-05; an earlier version said the ERD disables auto-conformance. The build log line "shared-column inference disabled" meant relationship inference.)
 
 Relationships in an ERD, same rule as step 3: never declare parent/child that share a logical attribute — auto-conformance will have already merged them, and Mosaic will reject.
 

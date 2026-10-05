@@ -1706,7 +1706,7 @@ def cmd_build(m: MSTR, args):
         explicit_rels.extend(load_erd(erd_path))
     if explicit_rels:
         print(f"→ Using {len(explicit_rels)} explicit relationships from dictionary/ERD "
-              f"(shared-column inference disabled).", file=sys.stderr)
+              f"(relationship inference replaced; column conformance still runs).", file=sys.stderr)
 
     # Resolve instance IDs and fetch table metadata
     print(f"→ Resolving {len(sources)} source(s)…", file=sys.stderr)
@@ -2288,7 +2288,7 @@ def cmd_build(m: MSTR, args):
         _apply_security_filter(m, model_id, sf)
     # ── ACL grants ──
     if args.grant or getattr(args, "deny", None):
-        _apply_acl(m, model_id, args.grant, model_id=model_id, sub_type="data_model",
+        _apply_acl(m, model_id, args.grant, model_id=model_id, sub_type="report_emma_cube",
                    denies=getattr(args, "deny", []))
     # ── Translations ──
     if args.translate:
@@ -2578,11 +2578,14 @@ def _parse_acl_entries(entries: list[str], mode: str) -> dict[str, dict]:
 
 
 def _apply_acl(m: MSTR, object_id: str, grants: list[str], model_id=None,
-               sub_type: str = "data_model", denies=None):
+               sub_type: str = "report_emma_cube", denies=None):
     """Apply ACLs.
 
     Data-model-contained objects use the Modeling endpoint:
       PATCH /api/model/dataModels/{modelId}/objects/{objectId}/acl?subType=<objectSubType>
+
+    The model root takes subType=report_emma_cube (logical_table fails with
+    8004e403; the classic POST /api/objects/{id}/acl returns 404 for a model).
 
     Entry syntax: 'trusteeId:rights[:user|user_group]'. Rights can be names
     (read,browse,execute,...) or numeric masks.
@@ -4869,8 +4872,9 @@ def build_parser():
     sp = sub.add_parser("set-acl")
     sp.add_argument("--model-id", help="required for data-model-contained objects")
     sp.add_argument("--object-id", required=True)
-    sp.add_argument("--sub-type", default="data_model",
-                    help="object subtype for data model ACL endpoint, e.g. data_model, fact_metric, attribute")
+    sp.add_argument("--sub-type", default="report_emma_cube",
+                    help="object subtype for data model ACL endpoint: report_emma_cube (model root, default), "
+                         "attribute, metric, fact_metric, logical_table (contained table)")
     sp.add_argument("--grant", action="append", default=[], help="'trusteeId:rights' (repeatable)")
     sp.add_argument("--deny", action="append", default=[], help="'trusteeId:rights' (repeatable)")
 

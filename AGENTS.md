@@ -102,8 +102,8 @@ For Mosaic work, distinguish the entry path:
 Each AI tool configures MCP servers through its own settings — this repo does NOT ship MCP server configuration. When a correctly-configured Mosaic MCP session exists, the following tool names are available and referenced by memory/skills:
 
 - `get_projects` — list projects in the connected catalog.
-- `get_mosaic_models` — list Mosaic data models (published catalog view).
-- `get_semantics` — return the annotated attribute/metric surface for a Mosaic model.
+- `get_mosaic_models` (newer servers: `get_models`) — list **certified** models only; a published but uncertified model does not appear.
+- `get_semantics` — return the annotated attribute/metric surface for a Mosaic model. Name lookup fails until the model is certified.
 - `query` — execute a Trino-compatible SQL query against the published Mosaic layer.
 
 The memory writes say "MCP" — don't hunt for a server-id prefix. If your tool exposes these four tool names under any namespace, you're good.
