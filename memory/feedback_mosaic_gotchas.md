@@ -1,6 +1,6 @@
 ---
 name: Mosaic API gotchas learned
-description: Undocumented-or-surprising Mosaic REST behaviors — lifecycle symptom journal. Catalog base64 IDs, X-MSTR-IdentityToken grant-dependent (default off), changeset commit rounds, managed-attribute trap (8004cd15), publish/delete paths, /api/users lockdown, ACL endpoint asymmetry, snowflake + entity-first patterns. Exact payload shapes live in reference_mosaic_rest_gotchas.md; session cap in feedback_build_mosaic_session_leak.md. Pair with reference_strategy_error_codes.md to grep from symptom to fix.
+description: Undocumented-or-surprising Mosaic REST behaviors — lifecycle symptom journal. Catalog base64 IDs, X-MSTR-IdentityToken tenant-dependent (on for changeset pipelines), changeset commit rounds, managed-attribute trap (8004cd15), publish/delete paths, /api/users lockdown, ACL endpoint asymmetry, snowflake + entity-first patterns. Exact payload shapes live in reference_mosaic_rest_gotchas.md; session cap in feedback_build_mosaic_session_leak.md. Pair with reference_strategy_error_codes.md to grep from symptom to fix.
 type: feedback
 tags: [mosaic, build, payload, error-code]
 ---
@@ -45,7 +45,7 @@ tags: [mosaic, build, payload, error-code]
 ## Auth + changesets + session
 
 ### X-MSTR-IdentityToken for Mosaic data-model changesets is grant-dependent
-`POST /api/auth/identityToken` returns the token in a response header. On some tenants changeset commits fail (400) without it; on others it **downgrades** the write to config-level privileges and the write 403s with `8004cb09` — see `feedback_mosaic_identity_token_privilege_downgrade.md` (and `reference_strategy_authentication.md`). Default to identity-OFF and add it only when a commit fails for lack of it; mint it after `X-MSTR-ProjectID` is set.
+`POST /api/auth/identityToken` returns the token in a response header. On some tenants changeset commits fail (400) without it; on others it **downgrades** the write to config-level privileges and the write 403s with `8004cb09` — see `feedback_mosaic_identity_token_privilege_downgrade.md` (and `reference_strategy_authentication.md`). `build_mosaic.py` mints it for its changeset pipelines (the verified Cloud tenant's commits 400 without it, 2026-08-19) and skips it for reads; drop it only when a write 403s with `8004cb09`. Mint it after `X-MSTR-ProjectID` is set.
 **Why:** Early Mosaic build scripts failed commits until the `identityToken` call was added to every Modeling-Service write; later Strategy ONE Cloud builds ran clean without it.
 **How to apply:** when a tenant needs it, fetch the identity token after login for Mosaic data-model writes; `MSTR.login(identity=True)` in the Mosaic helper does this. Do not automatically add identity token to classic/project Modeling Service reads/writes such as `/api/model/attributes`, `/api/model/metrics`, `/api/model/facts`, or `/api/model/securityFilters`; on a verified Strategy Cloud tenant it caused false project errors.
 
