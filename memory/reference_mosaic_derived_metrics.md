@@ -131,7 +131,7 @@ shape (`/factMetrics`, `?changesetId=`, an invented `conditionality` block). Run
 `skills/build-mosaic-model/scripts/build_mosaic.py`).
 
 All three writes go in **ONE changeset** (it rides the `X-MSTR-MS-Changeset` header). The verified
-run had the identity token ON; the general default is OFF (grant-dependent) — if Modeling writes 403
+run had the identity token ON (build_mosaic's default for changeset pipelines) — if Modeling writes 403
 with `8004cb09`, drop it (`feedback_mosaic_identity_token_privilege_downgrade.md`).
 
 **(a) Create the unfiltered metric** — `POST /api/model/dataModels/{mid}/metrics?showAdvancedProperties=true`,

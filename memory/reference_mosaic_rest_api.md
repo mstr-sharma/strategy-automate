@@ -4,7 +4,7 @@ description: Verified endpoint paths and payload shapes for the {MSTR_BASE host}
 type: reference
 originSessionId: initial-session
 ---
-All paths prefixed with `{BASE} = {MSTR_BASE}`. Unless otherwise noted, send `X-MSTR-AuthToken`, `X-MSTR-ProjectID`, and for Mosaic data-model writes `X-MSTR-MS-Changeset`. `X-MSTR-IdentityToken` is grant-dependent: default off; add it only when a write fails with a wrong-project / no-changeset error, never to fix `8004cb09` (`feedback_mosaic_identity_token_privilege_downgrade.md`), and never on classic/project Modeling Service endpoints.
+All paths prefixed with `{BASE} = {MSTR_BASE}`. Unless otherwise noted, send `X-MSTR-AuthToken`, `X-MSTR-ProjectID`, and for Mosaic data-model writes `X-MSTR-MS-Changeset`. `X-MSTR-IdentityToken` is tenant-dependent. `build_mosaic.py` mints it for Mosaic data-model changeset pipelines (`login(identity=True)`: on the verified Cloud tenant, commits returned 400 without it, 2026-08-19) and leaves it off for plain reads and classic/project Modeling calls; if a write 403s with `8004cb09`, rerun without it (`feedback_mosaic_identity_token_privilege_downgrade.md`). Never send it on classic/project Modeling Service endpoints.
 
 ## OpenAPI / docs
 - Raw machine-readable spec: `GET /api/openapi.yaml` (OpenAPI 3.0.1, title `Strategy REST`, version `2026` as of 2026-04-21).
@@ -13,7 +13,7 @@ All paths prefixed with `{BASE} = {MSTR_BASE}`. Unless otherwise noted, send `X-
 
 ## Auth
 - `POST /api/auth/login` body `{username,password,loginMode:1}` → response header `X-MSTR-AuthToken` (lowercase `X-Mstr-Authtoken` on some responses).
-- `POST /api/auth/identityToken` → header `X-MSTR-IdentityToken`. Grant-dependent for Mosaic data-model Modeling Service writes (default off — see above); avoid for classic/project Modeling Service unless a specific endpoint proves it needs it.
+- `POST /api/auth/identityToken` → header `X-MSTR-IdentityToken`. Tenant-dependent for Mosaic data-model changesets (on in build_mosaic's pipelines — see above); avoid for classic/project Modeling Service unless a specific endpoint proves it needs it.
 - `POST /api/auth/logout` — logout. (`DELETE /api/auth/login` is not in the spec and answers 404 — corrected 2026-10-05.)
 
 ## Datasources / warehouse catalog (verified 2026-04-20)

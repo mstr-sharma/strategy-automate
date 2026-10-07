@@ -29,7 +29,7 @@ Run in order; stop at the first fail.
 5. **Feature flags**:
    `GET /api/v2/configurations/featureFlags` → confirm in-memory publish / AI service / Trino federation are enabled on this tenant.
 6. **Modeling-service identity token**:
-   `POST /api/auth/identityToken` → expect 200 + `X-MSTR-IdentityToken`. Grant-dependent for Mosaic writes (default off — `feedback_mosaic_identity_token_privilege_downgrade.md`); not used for classic/project writes.
+   `POST /api/auth/identityToken` → expect 200 + `X-MSTR-IdentityToken`. Tenant-dependent: build_mosaic mints it for Mosaic changeset pipelines, drops it on a `8004cb09` 403 (`feedback_mosaic_identity_token_privilege_downgrade.md`); not used for classic/project writes.
 7. **Gateways + drivers** (only before new datasource creation):
    `GET /api/gateways`, `GET /api/drivers` → confirm the target database driver is installed.
 8. **Destination folder writeable** (only before model/object creation):
