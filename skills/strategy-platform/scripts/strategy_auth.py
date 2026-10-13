@@ -673,13 +673,14 @@ that works only with a secret they already hold.</small></p>
 const CFG = JSON.parse(document.getElementById('cfg').textContent);
 const $ = (id) => document.getElementById(id);
 $('tenant').textContent = CFG.base;
-let token = null, user = '', timer = null;
+let token = null, user = '', timer = null, lastProbe = '';
 function show(msg, buttons) {
   $('msg').textContent = msg;
   for (const b of ['signin', 'allow', 'cancel']) $(b).hidden = !buttons.includes(b);
 }
 async function probe() {
   const r = await fetch(CFG.base + '/api/auth/token', {credentials: 'include', cache: 'no-store'});
+  lastProbe = 'GET /api/auth/token answered HTTP ' + r.status;
   if (r.status === 401 || r.status === 403) return null;
   if (!r.ok) throw new Error('Strategy answered HTTP ' + r.status + ' while checking your session.');
   const t = r.headers.get('X-MSTR-AuthToken');
@@ -734,9 +735,12 @@ $('signin').addEventListener('click', () => {
   const started = Date.now();
   const tick = async () => {
     let t = null;
-    try { t = await probe(); } catch (e) { /* identity provider still loading */ }
+    try { t = await probe(); } catch (e) { lastProbe = String(e.message || e); }
     if (t) { try { if (w) w.close(); } catch (e) { /* COOP may sever the handle */ } window.focus(); return ready(t); }
     if (Date.now() - started > CFG.timeoutMs) return show('Sign-in timed out. Try again.', ['signin', 'cancel']);
+    if (Date.now() - started > 15000)   // say what Strategy answers instead of waiting silently
+      show('Still not signed in as far as this page can tell (' + lastProbe + '). If you are signed in in '
+           + 'another tab, reload this page.', ['signin', 'cancel']);
     timer = setTimeout(tick, 1500);
   };
   timer = setTimeout(tick, 1000);
@@ -744,7 +748,8 @@ $('signin').addEventListener('click', () => {
 (async () => {
   try {
     const t = await probe();
-    if (t) ready(t); else show("Sign in with your organization's single sign-on to continue.", ['signin', 'cancel']);
+    if (t) ready(t); else show("Sign in with your organization's single sign-on to continue. (" + lastProbe + ')',
+                               ['signin', 'cancel']);
   } catch (e) { show(String(e.message || e), ['cancel']); }
 })();
 </script></body></html>
