@@ -5024,7 +5024,9 @@ def conditional_metric_body(name: str, function: str, source: dict, fmt_values: 
     if filter_id:
         body["conditionality"] = {
             "filter": {"objectId": filter_id, "subType": "filter", "isEmbedded": True},
-            "embedMethod": "report_into_metric_filter", "removeElements": True}
+            # removeElements False: the report's own filter on the same attribute still applies. With True the
+            # condition replaced it, so a customer-filtered report read the whole-estate total (verified live).
+            "embedMethod": "report_into_metric_filter", "removeElements": False}
     return body
 
 

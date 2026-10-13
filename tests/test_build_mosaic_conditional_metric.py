@@ -79,7 +79,7 @@ class BodyBuilderTests(unittest.TestCase):
         self.assertEqual(body["conditionality"], {
             "filter": {"objectId": FILTER_ID, "subType": "filter", "isEmbedded": True},
             "embedMethod": "report_into_metric_filter",
-            "removeElements": True,
+            "removeElements": False,
         })
         self.assertEqual(body["expression"]["tokens"],
                          bm.conditional_metric_tokens("Sum", SOURCE, FILTER_ID))

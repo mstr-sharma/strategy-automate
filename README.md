@@ -69,7 +69,7 @@ strategy-automate/
 ├── tests/                         # hermetic unit tests + REST contract test (run in CI)
 ├── captures/                      # dated tenant transcripts; raw payloads stay local
 ├── pyproject.toml uv.lock LICENSE # deps + lint config; MIT
-└── .github/workflows/tests.yml    # CI: unittest (3.9 / 3.11 / 3.13) + ruff
+└── .github/workflows/tests.yml    # CI: unittest on 3.9–3.14 + macOS, ruff, mypy, bandit, coverage
 ```
 
 ## Setup
@@ -244,7 +244,7 @@ Security posture for humans: no hardcoded credentials, tenant IDs, real company 
 The suite is offline and hermetic: no tenant, no network beyond loopback, no Keychain.
 
 ```bash
-python3 -m unittest discover -s tests          # the whole suite (~370 tests, ~15 s)
+python3 -m unittest discover -s tests          # the whole suite (432 tests, ~15 s)
 python3 tests/tools/check.py                   # the CI gates: tests, ruff, mypy, bandit, coverage
 python3 tests/tools/check.py --online deps     # OSV audit of every package in uv.lock
 python3 tests/live/smoke.py --project "<p>"    # read-only checks against YOUR tenant (signs in with auto)
