@@ -64,9 +64,9 @@ SKILL_TAGS: dict[str, tuple[str, ...]] = {
                          "Shared File Store"),
     "strategy-migration": ("Migrations", "Migration Groups", "Packages", "Project Duplications", "Git Service"),
     "strategy-ops": ("Monitors", "Telemetry", "Change Journal", "Performance Statistics", "HangDetector", "Scripts",
-                     "Tasks", "Flows", "Workflows", "Insight Engine*"),
-    "strategy-ai": ("Agent", "Auto Bots", "AutoExpert", "AI Storage", "Explorer", "Ontology", "QuestionSet",
-                    "Recommendations"),
+                     "Tasks", "Flows", "Workflows", "Insight Engine*", "Registrations"),
+    "strategy-ai": ("Agent", "Auto Bots", "AutoExpert", "Auto Console", "AI Storage", "Explorer", "Ontology",
+                    "QuestionSet", "Recommendations"),
     "build-mosaic-model": ("Data Models", "Mosaic", "Changesets", "Workspaces", "Open Semantic Layer", "Model Server",
                            "Data Server", "Attributes", "Facts", "Metrics", "Filters", "Transformations",
                            "Hierarchies", "System Hierarchy", "User Hierarchies", "Tables", "Schema",
@@ -668,6 +668,9 @@ def main(argv: list[str] | None = None) -> int:
     sa.add_auth_method_arg(c_p)
     ex = sub.add_parser("export-index", help="write VERB<TAB>path<TAB>area<TAB>visibility<TAB>operationId lines (CI fixture)")
     ex.add_argument("--out", required=True)
+    ex.add_argument("--merge", action="store_true",
+                    help="keep the operations already in --out and add this tenant's new ones (tenants publish different "
+                         "subsets of the spec, so the fixture is the union of the reference tenants)")
     cov = sub.add_parser("coverage", help="per-area coverage of the repo; --write regenerates the surface note")
     cov.add_argument("--repo", default=os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                                                      os.pardir, os.pardir, os.pardir)))
@@ -686,11 +689,19 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "describe":
             out = cmd_describe(find_operation(spec, args.operation))
         elif args.cmd == "export-index":
-            lines = sorted(f"{o.verb}\t{o.path}\t{o.tag}\t{'internal' if o.internal else 'public'}\t{o.id}"
-                           for o in operations(spec))
+            index = {(o.verb, o.path): f"{o.verb}\t{o.path}\t{o.tag}\t{'internal' if o.internal else 'public'}\t{o.id}"
+                    for o in operations(spec)}
+            added = len(index)
+            if args.merge and os.path.exists(args.out):
+                with open(args.out, encoding="utf-8") as f:
+                    kept = {(line.split("\t")[0], line.split("\t")[1]): line for line in f.read().splitlines() if line.strip()}
+                added = len(set(index) - set(kept))
+                index = {**index, **kept}          # an operation already listed keeps its line
+            lines = sorted(index.values())
             with open(args.out, "w", encoding="utf-8") as f:
                 f.write("\n".join(lines) + "\n")
-            out = {"operations": len(lines), "written": args.out}
+            out = {"operations": len(lines), "new from this tenant" if args.merge else "from this tenant": added,
+                   "written": args.out}
         elif args.cmd == "coverage":
             rows, totals = cmd_coverage(spec, args.repo)
             if args.write:

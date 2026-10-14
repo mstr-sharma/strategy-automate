@@ -152,9 +152,11 @@ def run(args: argparse.Namespace) -> Smoke:
         r.raise_for_status()
         state["spec"] = r.json()
         live, fixture = _spec_index(state["spec"]), _fixture_index()
-        return (f"{len(live)} operations; vs tests/fixtures: {len(fixture - live)} gone, "
-                f"{len(live - fixture)} new" + (" — refresh with `strategy_api.py export-index`"
-                                                 if fixture != live else ""))
+        # tenants publish different subsets of the spec: the fixture is the union of the reference tenants, so
+        # operations missing here are normal; operations new here are worth adding
+        new = live - fixture
+        return (f"{len(live)} operations; vs tests/fixtures: {len(fixture - live)} not published by this tenant, "
+                f"{len(new)} new" + (" — add them with `strategy_api.py export-index --merge`" if new else ""))
 
     def contract() -> str:
         if args.no_contract:

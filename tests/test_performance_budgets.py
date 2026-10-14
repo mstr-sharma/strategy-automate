@@ -58,7 +58,7 @@ class SpecBudgets(Budget):
         self.assertGreater(len(ops), 1600)
 
     def test_lookups_validation_and_listings(self):
-        ids = [o.id for o in api.operations(self.spec)][::40]
+        ids = [o.key() for o in api.operations(self.spec)][::40]   # "VERB /path": operationIds are not unique across the spec
 
         def lookups():
             for ref in ids:
