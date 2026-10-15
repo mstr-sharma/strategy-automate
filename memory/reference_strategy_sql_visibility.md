@@ -112,6 +112,9 @@ equality predicate) appears in each source pass, which only the complete plan sh
 blank-line-separated blocks ending `Save As TempTableN`, some led by a `Using … Calendar …` line; a UI that wants the
 filter visible must lift those blocks out and show them before the join. The plan is built from equality filters only
 (date ranges and `<>` are not in it).
+When building that plan from a transient report, the view-filter constant's `type` is `"character"` on some tenants
+and `"string"` on others: try both before dropping the filter; feed it only top-level equality predicates (none from
+inside an OR).
 
 ## Related
 - `reference_mcp_tools.md` (Trino/MCP query surface), `reference_mosaic_rest_gotchas.md` (Trino column naming),
