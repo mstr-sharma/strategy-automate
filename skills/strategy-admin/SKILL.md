@@ -156,6 +156,14 @@ $API call toggleTenant -p tenantId=<T> -p enabled=false
 $API call removeTenantMembers --body '{"members":[{"memberId":"<U>","memberTypeValue":34}]}'
 ```
 - Users and groups are object type 34; adding a group assigns its users. Removed members are unassigned until added to another tenant. `deleteTenant` only on explicit request.
+- **Check the privilege scope before promising a tenant** (first live run, 2026-10-15): `createTenant` answered HTTP 500
+  `ERR001` "You do not have privilege(s) [{0}] to create objects of type '{1}'" for an account whose
+  `GET /api/sessions/privilegesAll` listed "Create and manage tenants" — that listing merges project-scoped grants, and
+  tenant creation needs the privilege at the environment (configuration) level. The same account got 403 "Administer
+  environment" on an environment-level telemetry read despite listing it. Projects show their owner as `tenantId` in
+  `GET /api/projects`; `getTenantData` returns 200 `"Unknown Tenant - <id>"` for any id it cannot resolve, so it is not
+  an existence check. Content enters a tenant only through a project it owns (project duplication or a migration
+  package import with a destination tenant); members are users and groups only.
 
 ### 10. Vault connections
 ```bash
