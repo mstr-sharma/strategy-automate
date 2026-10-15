@@ -116,6 +116,16 @@ When building that plan from a transient report, the view-filter constant's `typ
 and `"string"` on others: try both before dropping the filter; feed it only top-level equality predicates (none from
 inside an OR).
 
+## Mosaic SQL endpoint: window-function gap (verified 2026-10-15)
+
+On the Trino surface, an aggregate window over a whole partition is computed as a running value: `SUM(v) OVER
+(PARTITION BY g)` (no ORDER BY) returns, for each row, the sum of the partition's rows whose `v` is at most this row's
+(the largest row gets the true total); AVG and MAX behave the same; an explicit `ROWS BETWEEN UNBOUNDED PRECEDING AND
+UNBOUNDED FOLLOWING` frame is ignored the same way; `COUNT(*) OVER (PARTITION BY g)` fails with an internal error.
+Correct: `OVER ()`, `SUM(...) OVER (PARTITION BY g ORDER BY t)` running totals, RANK / ROW_NUMBER / LAG (LAG's first
+row is 0, not NULL), scalar sub-queries and joins to a GROUP BY of the same CTE (the workaround for per-group totals or
+shares). Comparing a client's result with "the same SQL on Trino" cannot catch this: verify by recomputing.
+
 ## Related
 - `reference_mcp_tools.md` (Trino/MCP query surface), `reference_mosaic_rest_gotchas.md` (Trino column naming),
   `reference_strategy_monitoring_jobs_alerts.md` (cache/job monitors), `reference_mosaic_vs_legacy_surfaces.md`.

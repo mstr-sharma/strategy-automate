@@ -200,10 +200,9 @@ To mirror in an app what a group's members get from the engine:
   `members` field, so a count read from it is always 0.
 - **Denied metrics**: per metric/fact metric, the object ACL (`reference_mosaic_acl.md`); treat the object as denied
   when any of browse 1 / read 4 / use 64 / execute 128 is set in the trustee's `denied` mask, not only `== 255`.
-- **PII-masked metrics**: the definition (`GET /api/model/dataModels/{mid}/{metrics|factMetrics}/{id}`, not the list)
-  carries `pii: {level: "sensitive", presetMaskType: "full", operation: {type: "range_mask", defaultMask: {symbol: "*",
-  fixedLength: 8, …}}}`. An admin/operator session reads the values unmasked on the SQL endpoint; an app emulating a
-  restricted member masks them itself (`********`). The member-side behaviour was not observed (no member user).
+- **PII-flagged metrics**: the definition (`GET /api/model/dataModels/{mid}/{metrics|factMetrics}/{id}`, not the list)
+  carries `pii: {level: "sensitive", presetMaskType: "full", …}`. Mosaic only flags PII today — no masking on the SQL
+  endpoint — so restrict a PII metric for a group with an object ACL deny like any other restricted metric.
 - **WHERE equals the security filter** only while every metric is report-level with filtering applied (no level metric
   ignoring the filter attribute, conditional metrics keep the report filter, `removeElements: false`); check before an app
   emulates a filter by adding the predicate after WHERE.
