@@ -103,6 +103,16 @@ Runnable, env-driven version: `captures/20261001-engine-sql-visibility/trace_mos
 - The job monitor needs the Monitor Jobs privilege and only shows a job while it runs. Use `GET /api/v2/monitors/jobs` (+ `/{id}` for the SQL); v1 `GET /api/monitors/jobs` is deprecated, and its `jobType` filter takes only `interactive` / `subscription` / `predictive_cache` / `realtime` — there is no `PUBLISH` job type (corrected 2026-10-05).
 - Keep traced queries scoped (attributes + metrics, no bare `COUNT(*)` over a whole model) — see the job-execution-time-limit note in the MCP tools memory.
 
+
+## Multi-pass queries: where a security filter shows (verified 2026-10-15)
+
+For a query whose metrics need several passes (different metric filters or both stores), the telemetry profile's pass is
+only the final join of the temp tables (`CrossJoin` / `LeftOuterJoin TempTableN`); the security filter (or any
+equality predicate) appears in each source pass, which only the complete plan shows. In the plan text the passes are
+blank-line-separated blocks ending `Save As TempTableN`, some led by a `Using … Calendar …` line; a UI that wants the
+filter visible must lift those blocks out and show them before the join. The plan is built from equality filters only
+(date ranges and `<>` are not in it).
+
 ## Related
 - `reference_mcp_tools.md` (Trino/MCP query surface), `reference_mosaic_rest_gotchas.md` (Trino column naming),
   `reference_strategy_monitoring_jobs_alerts.md` (cache/job monitors), `reference_mosaic_vs_legacy_surfaces.md`.

@@ -188,3 +188,22 @@ m.s.patch(f"{B}/api/dataModels/{MODEL}/securityFilters/{sf}/members",
                                    "value": [USER_ID]}]})
 # 204 = success
 ```
+
+## Reading a group's effective rules (verified 2026-10-15)
+
+To mirror in an app what a group's members get from the engine:
+- **Filters**: list `GET /api/model/dataModels/{mid}/securityFilters`, keep those whose
+  `GET /api/dataModels/{mid}/securityFilters/{sfId}/members` lists the group (members come back under `users` or
+  `userGroups`), then `GET /api/model/dataModels/{mid}/securityFilters/{sfId}?showFilterTokens=true` for
+  `qualification.text` and `qualification.tree.predicateTree` (`attribute.name`, `elements[].display`).
+- **Group members**: `GET /api/usergroups/{groupId}/members` (a list). The `/api/usergroups?nameBegins=` listing has no
+  `members` field, so a count read from it is always 0.
+- **Denied metrics**: per metric/fact metric, the object ACL (`reference_mosaic_acl.md`); treat the object as denied
+  when any of browse 1 / read 4 / use 64 / execute 128 is set in the trustee's `denied` mask, not only `== 255`.
+- **PII-masked metrics**: the definition (`GET /api/model/dataModels/{mid}/{metrics|factMetrics}/{id}`, not the list)
+  carries `pii: {level: "sensitive", presetMaskType: "full", operation: {type: "range_mask", defaultMask: {symbol: "*",
+  fixedLength: 8, …}}}`. An admin/operator session reads the values unmasked on the SQL endpoint; an app emulating a
+  restricted member masks them itself (`********`). The member-side behaviour was not observed (no member user).
+- **WHERE equals the security filter** only while every metric is report-level with filtering applied (no level metric
+  ignoring the filter attribute, conditional metrics keep the report filter, `removeElements: false`); check before an app
+  emulates a filter by adding the predicate after WHERE.

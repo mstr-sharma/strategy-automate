@@ -145,3 +145,9 @@ Legacy path `GET /api/objects/{modelId}?type=3&showACL=true` still works for **r
 - `GET /api/objects/{id}?showACL=true` (without `type`) returns **400** — type parameter is required.
 - `GET /api/model/dataModels/{mid}/objects/{mid}/acl` (without `subType`) returns **500**.
 - The Modeling ACL endpoints return 200 with structurally correct but potentially wrong-object ACL if `subType` mismatches the real subtype. Always verify `subType` before write.
+
+## Reading "is this object denied to the trustee?"
+
+Use the bits, not the full mask: denied when `denied & (1 | 4 | 64 | 128)` (browse, read, use, execute) is nonzero.
+`denied == 255` misses a partial deny that still blocks queries. Effective-rules recipe (filters, members, PII):
+`reference_mosaic_security_filter.md` → "Reading a group's effective rules".
