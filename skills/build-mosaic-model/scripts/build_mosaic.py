@@ -2415,6 +2415,32 @@ def cmd_build(m: MSTR, args):
             print(f"    WARN displays on attribute {aid}: {format_mstr_error(rd)}", file=sys.stderr)
             failures["displays"] += 1
 
+    # Every attribute created below, by its resolved name: a later column the dictionary gives the same name joins it
+    # (conformance by identical name) instead of POSTing a duplicate, which Studio refuses with 8004e409. Entity keys
+    # and conformed dimensions register here too, so a differently named FK (EPICOR_PRODUCT_ID named "Product")
+    # conforms to the entity attribute built from PRODUCT_ID.
+    attrs_by_resolved_name: dict[str, dict] = {}   # lower(resolved name) -> {"id","table_id"}
+
+    def _append_expression_to_attribute(aid: str, tid: str, tname: str, cname: str) -> bool:
+        """Add a (table, column) expression to an existing attribute's ID form.
+        Must fetch with showExpressionAs=tokens first -- without it, pre-existing
+        expressions come back as read-only `text` with no `tokens`/`tree`, and
+        PATCHing the form back as-is fails with 8004ccde "the tree or token is
+        required for expression"."""
+        rr = m.get(f"/api/model/dataModels/{model_id}/attributes/{aid}?showExpressionAs=tokens")
+        if not rr.ok:
+            print(f"    WARN conform-by-name GET {aid}: {rr.status_code} {rr.text[:200]}", file=sys.stderr)
+            return False
+        cur = rr.json()
+        forms = cur.get("forms", [])
+        if not _add_table_expression_to_form(forms, tid, tname, cname):
+            return False
+        rp = m.patch(f"/api/model/dataModels/{model_id}/attributes/{aid}", json={"forms": forms})
+        if not rp.ok:
+            print(f"    WARN conform-by-name PATCH {aid}: {rp.status_code} {rp.text[:200]}", file=sys.stderr)
+            return False
+        return True
+
     # 1) Create entity attributes for each unique PK column, expressions on all occurrences
     # Build a case-insensitive reverse map so Postgres (lowercase) col names match UPPERCASE entity_pks.
     col_tables_upper = {c.upper(): c for c in col_tables}
@@ -2454,6 +2480,7 @@ def cmd_build(m: MSTR, args):
             continue
         _patch_displays(aid, [f["id"] for f in resp.get("forms",[]) if f.get("id")])
         entity_attr_of_table[home["table"]] = aid
+        attrs_by_resolved_name[name.lower()] = {"id": aid, "table_id": home["table_id"]}
         created_attrs[pk_col.lower()] = [{"id": aid, "table": home["table"],
                                           "table_id": home["table_id"], "name": name, "role":"entity"}]
         total_attrs += 1
@@ -2468,6 +2495,14 @@ def cmd_build(m: MSTR, args):
         ov = _dict_override(f"{home['table']}.{col}")
         if ov.get("name"):        name = ov["name"]
         if ov.get("description"): desc = ov["description"]
+        same = attrs_by_resolved_name.get(name.lower())
+        if same:                     # the dictionary names it like an entity built above: conform, never duplicate
+            joined = [o for o in occs if _append_expression_to_attribute(same["id"], o["table_id"], o["table"], col)]
+            if len(joined) < len(occs):
+                failures["attributes"] += 1
+            created_attrs[col.lower()] = [{"id": same["id"], "table": o["table"], "table_id": o["table_id"], "name": name, "role": "conformed_by_name"} for o in joined]
+            print(f"  + conformed-by-name '{name}' += {col} on {len(joined)} tables", file=sys.stderr)
+            continue
         expressions = [
             {"expression": {"tokens":[{"type":"column_reference","value": col}]},
              "tables": [{"objectId": o["table_id"], "subType":"logical_table", "name": o["table"]}]}
@@ -2492,6 +2527,7 @@ def cmd_build(m: MSTR, args):
             failures["attributes"] += 1
             continue
         _patch_displays(aid, [f["id"] for f in resp.get("forms",[]) if f.get("id")])
+        attrs_by_resolved_name[name.lower()] = {"id": aid, "table_id": home["table_id"]}
         created_attrs[col.lower()] = [{"id": aid, "table": home["table"],
                                         "table_id": home["table_id"], "name": name, "role":"conformed"}]
         total_attrs += 1
@@ -2509,27 +2545,6 @@ def cmd_build(m: MSTR, args):
     # "Customer" -- verified against a real build that this previously did
     # NOT happen: the second occurrence 400'd as a duplicate attribute name
     # and was silently dropped, not merged.)
-    attrs_by_resolved_name: dict[str, dict] = {}   # lower(resolved name) -> {"id","table_id"}
-
-    def _append_expression_to_attribute(aid: str, tid: str, tname: str, cname: str) -> bool:
-        """Add a (table, column) expression to an existing attribute's ID form.
-        Must fetch with showExpressionAs=tokens first -- without it, pre-existing
-        expressions come back as read-only `text` with no `tokens`/`tree`, and
-        PATCHing the form back as-is fails with 8004ccde "the tree or token is
-        required for expression"."""
-        rr = m.get(f"/api/model/dataModels/{model_id}/attributes/{aid}?showExpressionAs=tokens")
-        if not rr.ok:
-            print(f"    WARN conform-by-name GET {aid}: {rr.status_code} {rr.text[:200]}", file=sys.stderr)
-            return False
-        cur = rr.json()
-        forms = cur.get("forms", [])
-        if not _add_table_expression_to_form(forms, tid, tname, cname):
-            return False
-        rp = m.patch(f"/api/model/dataModels/{model_id}/attributes/{aid}", json={"forms": forms})
-        if not rp.ok:
-            print(f"    WARN conform-by-name PATCH {aid}: {rp.status_code} {rp.text[:200]}", file=sys.stderr)
-            return False
-        return True
 
     for key, tid in table_id_map.items():
         inst_id, schema, tname = key
