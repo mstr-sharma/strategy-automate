@@ -358,6 +358,14 @@ class MSTR:
         for tmpl in ENDPOINT_CANDIDATES[kind]:
             path = tmpl.format(**fmt)
             r = self.get(path)
+            # a source database that is waking up (serverless Postgres suspends when idle) answers a connection error
+            # first: retry the same endpoint a few times before treating it as not working
+            for wait in (5, 10, 20):
+                if r.ok or not _source_waking(r):
+                    break
+                print(f"  ↻ {kind}: the source database is not reachable yet; retrying in {wait}s", file=sys.stderr)
+                time.sleep(wait)
+                r = self.get(path)
             if r.ok:
                 return path, (r.json() if r.text else {})
             last_err = (path, r.status_code, r.text[:200])
@@ -367,6 +375,11 @@ class MSTR:
             print(f"  WARN {kind}: no working endpoint. last attempt: {last_err}", file=sys.stderr)
             return None, None
         die(f"{kind}: no working endpoint. last attempt: {last_err}")
+
+
+def _source_waking(r) -> bool:
+    """Strategy's answer when it cannot open a connection to a source database (ERR001 'Database error connection')"""
+    return r.status_code in (500, 502, 503) and ("Database error connection" in r.text or "-2147216380" in r.text)
 
 
 def die(msg):
