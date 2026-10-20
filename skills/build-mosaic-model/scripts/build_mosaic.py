@@ -2833,7 +2833,8 @@ def cmd_build(m: MSTR, args):
             summary["post_build"]["publish"] = "skipped: the model has build failures"
             summary["published"] = False
         else:
-            summary["published"] = step("publish", lambda: _publish(m, model_id, skip_classify=True) or True)
+            summary["published"] = step("publish", lambda: _publish(m, model_id, skip_classify=True,
+                                                                  poll_seconds=getattr(args, "publish_wait", 180)) or True)
     # ── Certify — last, and only a model that built cleanly: certified models are what the
     #    Mosaic MCP server offers to agents ──
     if args.certify:
@@ -5557,6 +5558,8 @@ def cmd_build_from_config(m: MSTR, args):
     ns.translate    = [_config_translation_entry(t, args.config) for t in spec.get("translations", [])]
     ns.certify      = spec.get("certify", False)
     ns.publish      = spec.get("publish", False)
+    # how long to wait for an in-memory publish to confirm (cross-store models can take several minutes); bounded
+    ns.publish_wait = max(60, min(1800, int(spec.get("publish_wait_seconds", 180) or 180)))
     cmd_build(m, ns)
 
 
