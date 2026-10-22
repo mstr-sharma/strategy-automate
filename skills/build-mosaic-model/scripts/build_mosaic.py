@@ -2205,7 +2205,8 @@ def cmd_build(m: MSTR, args):
         explicit_rels.extend(load_erd(erd_path))
     if explicit_rels:
         print(f"→ Using {len(explicit_rels)} explicit relationships from dictionary/ERD "
-              f"(relationship inference replaced; column conformance still runs).", file=sys.stderr)
+              f"(added to the inferred ones; an explicit relationship wins over an inferred one between the same "
+              f"two attributes).", file=sys.stderr)
 
     # Resolve instance IDs and fetch table metadata
     print(f"→ Resolving {len(sources)} source(s)…", file=sys.stderr)
@@ -2728,7 +2729,9 @@ def cmd_build(m: MSTR, args):
         seen.add(sig); pairs.add((p["id"], c["id"])); deduped.append((p,c,label,rt,rty))
     inferred_rels = deduped
 
-    # Allow ERD/dict to override inference wholesale (only when explicitly provided)
+    # Explicit (ERD/dictionary) relationships join the inferred ones; where both relate the same two attributes, in
+    # either direction, the explicit one wins. They used to replace inference wholesale, so a single explicit
+    # hierarchy (Category → Product) silently dropped every descriptor → key and key → fact relationship.
     if explicit_rels:
         def _find_attr(ref: str):
             t, _, col = (ref or "").partition(".")
@@ -2740,6 +2743,7 @@ def cmd_build(m: MSTR, args):
             # on a different table is a different attribute — wiring it would be wrong.
             shared = [e for e in entries if e.get("role") in ("entity", "conformed")]
             return shared[0] if shared else None
+        inferred_kept = inferred_rels
         inferred_rels = []
         unmapped = []
         for rel in explicit_rels:
@@ -2757,6 +2761,8 @@ def cmd_build(m: MSTR, args):
             print(f"  WARN {len(unmapped)} explicit relationship(s) don't map to two model attributes "
                   f"(table or column not modeled here, or both ends are one attribute): "
                   f"{'; '.join(unmapped[:5])}{' …' if len(unmapped) > 5 else ''}", file=sys.stderr)
+        explicit_pairs = {frozenset((p["id"], c["id"])) for p, c, *_ in inferred_rels}
+        inferred_rels += [rel for rel in inferred_kept if frozenset((rel[0]["id"], rel[1]["id"])) not in explicit_pairs]
 
     rels_ok = 0
     if inferred_rels and not args.skip_relationships:
