@@ -87,7 +87,7 @@ class RecommendTests(unittest.TestCase):
         refunds = next(r for r in recs if r["fact"] == "shopa_refunds" and r["kind"] == "star")
         self.assertEqual(refunds["stores"], ["PostgreSQL", "Snowflake"])
         customer = next(x for x in refunds["spec"]["attributes"] if any(f["column"] == "customer_id" for f in x["forms"]))
-        self.assertEqual({f["column"] for f in customer["forms"]}, {"CUSTOMER_ID", "customer_id"})   # one attribute across stores
+        self.assertEqual({f["column"] for f in customer["forms"] if f["category"] == "ID"}, {"CUSTOMER_ID", "customer_id"})   # one attribute across stores
         self.assertTrue(all(r["checked"] for r in recs), [(r["name"], r["problems"]) for r in recs if not r["checked"]])
 
     def test_already_modeled_tables_rank_lower_and_avoid_keeps_one_store(self):
@@ -157,7 +157,9 @@ class StarSchemaByRoleNames(unittest.TestCase):
         self.assertEqual(metrics["Contamination Pct"]["function"], "avg")
         self.assertEqual(metrics["Units Produced"]["function"], "sum")
         self.assertTrue(all("format" not in m for m in spec["metrics"]))      # the builder formats from name and type
-        self.assertTrue({"Plant Name", "Machine Name", "Machine Type"} <= attrs)
+        self.assertTrue({"Machine Type", "Country"} <= attrs)
+        named = {a["name"]: f["column"] for a in spec["attributes"] for f in a["forms"] if f["category"] == "DESC"}
+        self.assertEqual(named.get("Machine"), "MACHINE_NAME"); self.assertEqual(named.get("Plant"), "PLANT_NAME")   # names are name forms
 
     def test_each_table_gets_its_conformed_key(self):
         plan = mp.from_spec(self.recs[0]["spec"], {"tables": list(self.graph["tables"].values())}, {})

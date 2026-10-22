@@ -436,6 +436,22 @@ def spec_from_tables(cat: dict[str, Any], prof: dict[str, Any] | None = None, na
                            "forms": [{"name": "ID", "category": "ID", "table": t, "column": c} for t, c in occ]})
         keyed |= {(t, c) for t, c in occ}
     homes = {e["home"] for e in pre}
+    # a dimension's name for its key (MACHINE_NAME for Machine, NAME, DESCRIPTION, LABEL) is that key's name form, so
+    # reports read "Press Line 3", not a code; on the key's own table it depends on the key one to one. Of several keys
+    # homed on one table, the one most tables share takes it (Plant, not the dimension-only Plant Key)
+    for att, e in sorted(zip(attributes, pre), key=lambda ae: -len(ae[1]["members"])):
+        home_col = next((c for t, c in e["members"] if t == e["home"]), "")
+        stem = re.sub(KEY_COLUMN, "", home_col).strip("_").casefold()
+        t = next((x for x in tables if x["table"] == e["home"]), None)
+        if not t or not stem:
+            continue
+        stems = list(dict.fromkeys([stem, stem.split("_")[-1]]))       # SOURCE_PLANT_ID: source_plant, then plant
+        names = [f"{x}_{sfx}" for x in stems for sfx in ("name", "desc", "description", "label", "title")] + ["name", "description", "label", "title"]
+        col = next((c["name"] for n in names for c in t["columns"] if c["name"].casefold() == n and _family(c.get("dataType")) == "text"
+                    and (t["table"], c["name"]) not in keyed), None)
+        if col:
+            att["forms"].append({"name": "Name", "category": "DESC", "table": t["table"], "column": col})
+            keyed.add((t["table"], col))
     for t in tables:
         # a dimension: named as one, or the home of a key other tables carry (its numbers describe it unless they measure)
         dimension = bool(STAR_DIM.match(t["table"])) or (t["table"] in homes and not STAR_ANY.match(t["table"]))
