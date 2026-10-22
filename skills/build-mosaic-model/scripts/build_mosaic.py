@@ -1366,6 +1366,12 @@ def commit_cs(m: MSTR, cs: str):
     m.s.headers.pop("X-MSTR-MS-Changeset", None)
     if not r.ok:
         discard_cs(m, cs)   # a failed commit leaves the changeset (and any schema lock) open
+        if r.status_code == 400 and not (r.text or "").strip():
+            # Strategy answers an empty 400 when it will not accept the changeset as a whole: a definition it cannot
+            # hold together (an attribute keyed on the wrong table, a form whose columns disagree in type) or a session
+            # without an identity token. Nothing in the changeset was kept.
+            die(f"commit {cs}: HTTP 400 with no message: Strategy refused the changeset as a whole, so nothing in it was "
+                f"kept. Check the plan's findings (attribute keys and their tables, form column types) and build again.")
         die(f"commit {cs}: {format_mstr_error(r)}")
     if isinstance(getattr(m, "open_changesets", None), set):
         m.open_changesets.discard(cs)

@@ -1,0 +1,516 @@
+{
+ "tables": {
+  "DS1/MANUFACTURING/DIM_DATE": {
+   "datasource_id": "DS1",
+   "datasource": "Warehouse",
+   "dbms": "Snowflake",
+   "schema": "MANUFACTURING",
+   "table": "DIM_DATE",
+   "columns": [
+    {
+     "name": "CALENDAR_DATE",
+     "dataType": {
+      "type": "date",
+      "precision": 10,
+      "scale": 0
+     }
+    },
+    {
+     "name": "CALENDAR_MONTH",
+     "dataType": {
+      "type": "int64",
+      "precision": 8,
+      "scale": 0
+     }
+    },
+    {
+     "name": "CALENDAR_YEAR",
+     "dataType": {
+      "type": "int64",
+      "precision": 8,
+      "scale": 0
+     }
+    },
+    {
+     "name": "DATE_KEY",
+     "dataType": {
+      "type": "int64",
+      "precision": 8,
+      "scale": 0
+     }
+    },
+    {
+     "name": "DAY_OF_WEEK",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    },
+    {
+     "name": "FISCAL_MONTH_NUM",
+     "dataType": {
+      "type": "int64",
+      "precision": 8,
+      "scale": 0
+     }
+    },
+    {
+     "name": "FISCAL_QUARTER",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    },
+    {
+     "name": "FISCAL_YEAR",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    },
+    {
+     "name": "IS_WEEKEND",
+     "dataType": {
+      "type": "integer",
+      "precision": 2,
+      "scale": 0
+     }
+    }
+   ],
+   "rows": 730,
+   "pk": [
+    "DATE_KEY"
+   ],
+   "family": "DIM_DATE"
+  },
+  "DS1/MANUFACTURING/DIM_MACHINE": {
+   "datasource_id": "DS1",
+   "datasource": "Warehouse",
+   "dbms": "Snowflake",
+   "schema": "MANUFACTURING",
+   "table": "DIM_MACHINE",
+   "columns": [
+    {
+     "name": "COMMISSIONED_DATE",
+     "dataType": {
+      "type": "date",
+      "precision": 10,
+      "scale": 0
+     }
+    },
+    {
+     "name": "MACHINE_CODE",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    },
+    {
+     "name": "MACHINE_KEY",
+     "dataType": {
+      "type": "int64",
+      "precision": 8,
+      "scale": 0
+     }
+    },
+    {
+     "name": "MACHINE_NAME",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    },
+    {
+     "name": "MACHINE_TYPE",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    },
+    {
+     "name": "PLANT_KEY",
+     "dataType": {
+      "type": "int64",
+      "precision": 8,
+      "scale": 0
+     }
+    },
+    {
+     "name": "RECORD_SOURCE",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    },
+    {
+     "name": "SOURCE_PLANT_ID",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    },
+    {
+     "name": "STATUS",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    }
+   ],
+   "rows": 71,
+   "pk": [
+    "MACHINE_KEY"
+   ],
+   "family": "DIM_MACHINE"
+  },
+  "DS1/MANUFACTURING/DIM_PLANT": {
+   "datasource_id": "DS1",
+   "datasource": "Warehouse",
+   "dbms": "Snowflake",
+   "schema": "MANUFACTURING",
+   "table": "DIM_PLANT",
+   "columns": [
+    {
+     "name": "COUNTRY",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    },
+    {
+     "name": "PLANT_KEY",
+     "dataType": {
+      "type": "int64",
+      "precision": 8,
+      "scale": 0
+     }
+    },
+    {
+     "name": "PLANT_NAME",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    },
+    {
+     "name": "PLANT_TYPE",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    },
+    {
+     "name": "RUNTIME_CONVENTION",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    },
+    {
+     "name": "SOURCE_PLANT_ID",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    },
+    {
+     "name": "SOURCE_SYSTEM",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    },
+    {
+     "name": "STATE_REGION",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    },
+    {
+     "name": "WEIGHT_UOM",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    },
+    {
+     "name": "YIELD_CONVENTION",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    }
+   ],
+   "rows": 6,
+   "pk": [
+    "PLANT_KEY"
+   ],
+   "family": "DIM_PLANT"
+  },
+  "DS1/MANUFACTURING/FACT_DOWNTIME_EVENTS": {
+   "datasource_id": "DS1",
+   "datasource": "Warehouse",
+   "dbms": "Snowflake",
+   "schema": "MANUFACTURING",
+   "table": "FACT_DOWNTIME_EVENTS",
+   "columns": [
+    {
+     "name": "DURATION_MINS",
+     "dataType": {
+      "type": "int64",
+      "precision": 8,
+      "scale": 0
+     }
+    },
+    {
+     "name": "EVENT_END",
+     "dataType": {
+      "type": "time_stamp",
+      "precision": 23,
+      "scale": 9
+     }
+    },
+    {
+     "name": "EVENT_ID",
+     "dataType": {
+      "type": "int64",
+      "precision": 8,
+      "scale": 0
+     }
+    },
+    {
+     "name": "EVENT_START",
+     "dataType": {
+      "type": "time_stamp",
+      "precision": 23,
+      "scale": 9
+     }
+    },
+    {
+     "name": "MACHINE_CODE",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    },
+    {
+     "name": "PLANT_ID",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    },
+    {
+     "name": "REASON_CODE",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    }
+   ],
+   "rows": 15000,
+   "pk": [
+    "EVENT_ID"
+   ],
+   "family": "FACT_DOWNTIME"
+  },
+  "DS1/MANUFACTURING/FACT_PRODUCTION_RUNS": {
+   "datasource_id": "DS1",
+   "datasource": "Warehouse",
+   "dbms": "Snowflake",
+   "schema": "MANUFACTURING",
+   "table": "FACT_PRODUCTION_RUNS",
+   "columns": [
+    {
+     "name": "DATE_KEY",
+     "dataType": {
+      "type": "int64",
+      "precision": 8,
+      "scale": 0
+     }
+    },
+    {
+     "name": "MACHINE_CODE",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    },
+    {
+     "name": "PLANNED_TIME_MINS",
+     "dataType": {
+      "type": "int64",
+      "precision": 8,
+      "scale": 0
+     }
+    },
+    {
+     "name": "PLANT_ID",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    },
+    {
+     "name": "RUNTIME_MINS",
+     "dataType": {
+      "type": "int64",
+      "precision": 8,
+      "scale": 0
+     }
+    },
+    {
+     "name": "RUN_ID",
+     "dataType": {
+      "type": "int64",
+      "precision": 8,
+      "scale": 0
+     }
+    },
+    {
+     "name": "SHIFT",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    },
+    {
+     "name": "UNITS_PRODUCED",
+     "dataType": {
+      "type": "int64",
+      "precision": 8,
+      "scale": 0
+     }
+    },
+    {
+     "name": "UNITS_SCRAPPED",
+     "dataType": {
+      "type": "int64",
+      "precision": 8,
+      "scale": 0
+     }
+    }
+   ],
+   "rows": 50000,
+   "pk": [
+    "RUN_ID"
+   ],
+   "family": "FACT_PRODUCTION"
+  },
+  "DS1/MANUFACTURING/FACT_RECYCLING_INTAKE": {
+   "datasource_id": "DS1",
+   "datasource": "Warehouse",
+   "dbms": "Snowflake",
+   "schema": "MANUFACTURING",
+   "table": "FACT_RECYCLING_INTAKE",
+   "columns": [
+    {
+     "name": "CONTAMINATION_PCT",
+     "dataType": {
+      "type": "double",
+      "precision": 5,
+      "scale": 1
+     }
+    },
+    {
+     "name": "DATE_KEY",
+     "dataType": {
+      "type": "int64",
+      "precision": 8,
+      "scale": 0
+     }
+    },
+    {
+     "name": "GROSS_WEIGHT",
+     "dataType": {
+      "type": "double",
+      "precision": 12,
+      "scale": 3
+     }
+    },
+    {
+     "name": "INTAKE_ID",
+     "dataType": {
+      "type": "int64",
+      "precision": 8,
+      "scale": 0
+     }
+    },
+    {
+     "name": "MATERIAL_TYPE",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    },
+    {
+     "name": "PLANT_ID",
+     "dataType": {
+      "type": "utf8_char",
+      "precision": 32000,
+      "scale": 0
+     }
+    },
+    {
+     "name": "RECOVERED_WEIGHT",
+     "dataType": {
+      "type": "double",
+      "precision": 12,
+      "scale": 3
+     }
+    }
+   ],
+   "rows": 19728,
+   "pk": [
+    "INTAKE_ID"
+   ],
+   "family": "FACT_RECYCLING"
+  }
+ },
+ "fks": [],
+ "scopes": [
+  {
+   "datasource": "DS1",
+   "schema": "MANUFACTURING",
+   "patterns": [
+    "*"
+   ]
+  }
+ ],
+ "measured": {
+  "DS1/MANUFACTURING/DIM_DATE|DS1/MANUFACTURING/FACT_RECYCLING_INTAKE": 1.0,
+  "DS1/MANUFACTURING/DIM_DATE|DS1/MANUFACTURING/FACT_PRODUCTION_RUNS": 1.0,
+  "DS1/MANUFACTURING/FACT_RECYCLING_INTAKE|DS1/MANUFACTURING/FACT_PRODUCTION_RUNS": 0.5,
+  "DS1/MANUFACTURING/DIM_MACHINE|DS1/MANUFACTURING/FACT_DOWNTIME_EVENTS": 1.0,
+  "DS1/MANUFACTURING/DIM_MACHINE|DS1/MANUFACTURING/FACT_PRODUCTION_RUNS": 1.0,
+  "DS1/MANUFACTURING/FACT_DOWNTIME_EVENTS|DS1/MANUFACTURING/FACT_PRODUCTION_RUNS": 1.0,
+  "DS1/MANUFACTURING/DIM_PLANT|DS1/MANUFACTURING/DIM_MACHINE": 1.0,
+  "DS1/MANUFACTURING/FACT_DOWNTIME_EVENTS|DS1/MANUFACTURING/FACT_RECYCLING_INTAKE": 1.0
+ }
+}

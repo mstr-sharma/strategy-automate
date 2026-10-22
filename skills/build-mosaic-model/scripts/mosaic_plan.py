@@ -111,7 +111,8 @@ def _unique(prof: dict, table: str, column: str) -> bool | None:
 
 def _table_keys(plan: dict, prof: dict) -> dict[str, dict]:
     """each table's key attribute: unique on the table (measured) and designated by the specification (its lookup is
-    this table, it is shared with other tables, it has name forms). Ties are refused, not guessed."""
+    this table, it is shared with other tables, it has name forms); between two such, the one more tables share (the
+    conformed key, not a surrogate only the dimensions use). Ties beyond that are refused, not guessed."""
     out: dict[str, dict] = {}
     for t in (x["table"] for x in plan["tables"]):
         scored = []
@@ -123,18 +124,19 @@ def _table_keys(plan: dict, prof: dict) -> dict[str, dict]:
             if uniq is False:
                 continue
             score = (4 if a["lookup"] == t else 0) + (2 if len(ids) > 1 else 0) + (1 if len(a["forms"]) > 1 else 0) + (1 if KEYISH.search(ids[t]) else 0)
-            scored.append((score, uniq is True, a["name"]))      # measured unique beats not measured; never compares None
+            scored.append((score, len(ids), uniq is True, a["name"]))      # measured unique beats not measured; never compares None
         if not scored:
             out[t] = {"attribute": None, "note": f"{t} has no single-column key among its attributes; its attributes relate to the rest of the model only through the attributes it shares."}
             continue
         scored.sort(reverse=True)
         best = scored[0]
-        if len(scored) > 1 and scored[1][0] == best[0]:
-            out[t] = {"attribute": None, "ambiguous": [s[2] for s in scored if s[0] == best[0]],
-                      "note": f"{t}: {' and '.join(s[2] for s in scored if s[0] == best[0])} could each be its key; name the table's key in the specification."}
+        if len(scored) > 1 and scored[1][:2] == best[:2]:
+            tied = [x[3] for x in scored if x[:2] == best[:2]]
+            out[t] = {"attribute": None, "ambiguous": tied,
+                      "note": f"{t}: {' and '.join(tied)} could each be its key; name the table's key in the specification."}
             continue
-        out[t] = {"attribute": best[2], "measured": best[1] is True,
-                  "note": None if best[1] else f"{t}: the key {best[2]} is taken from the specification; its uniqueness could not be measured on this source."}
+        out[t] = {"attribute": best[3], "measured": best[2] is True,
+                  "note": None if best[2] else f"{t}: the key {best[3]} is taken from the specification; its uniqueness could not be measured on this source."}
     return out
 
 
@@ -342,6 +344,21 @@ def _short_table(table: str) -> str:
     return _friendly(re.sub(r"^[A-Za-z]+(?:_[A-Za-z]+)*_\d{6,}(?:_\d+)*_", "", table))
 
 
+STAR_DIM = re.compile(r"^(dim|dimension|d|lkp|lookup|ref)_", re.I)
+STAR_ANY = re.compile(r"^(dim|dimension|d|fact|fct|f|lkp|lookup|ref|bridge|brg|agg|xref)_", re.I)
+# numbers that describe rather than measure: calendar parts, flags, codes, ranks, sequence numbers, postal codes
+DESCRIPTIVE_NUMBER = re.compile(r"(?:^|_)(year|yr|month|mon|quarter|qtr|week|wk|day|dow|hour|hr|minute_of|num|number|no|nbr|seq|sequence|rank|level|lvl|flag|ind|indicator|zip|postal|period|version|fiscal_\w+)$|^(is|has|was|can|flag)_", re.I)
+# numbers that measure, even on a dimension table (a product's list price, a store's floor area)
+MEASURE_NUMBER = re.compile(r"(amount|amt|price|cost|revenue|sales|spend|fee|qty|quantity|units|weight|volume|area|capacity|budget|target|balance|total|count|cnt|duration|mins|minutes|hours|hrs|seconds|secs|pct|percent|rate|ratio|score|margin)", re.I)
+# measures that read as an average, not a total
+AVERAGED = re.compile(r"(pct|percent|percentage|rate|ratio|avg|average|mean|score|index|margin|utili[sz]ation|efficiency|yield)", re.I)
+
+
+def subject(table: str) -> str:
+    """a table's business name without its star-schema role: FACT_PRODUCTION_RUNS → Production Runs"""
+    return _short_table(STAR_ANY.sub("", table)) or _short_table(table)
+
+
 def spec_from_tables(cat: dict[str, Any], prof: dict[str, Any] | None = None, name: str = "Generated model",
                      entities: list[dict] | None = None) -> dict[str, Any]:
     """keys (…_ID, …_KEY, …_NUMBER, …_CODE) become attributes shared by every table that carries them, in each table's
@@ -383,17 +400,27 @@ def spec_from_tables(cat: dict[str, Any], prof: dict[str, Any] | None = None, na
         stem = re.sub(KEY_COLUMN, "", occ[0][1]).strip("_") or _short_table(occ[0][0])
         home = next((tc for tc in occ if unique_on(tc) and stem.casefold().rstrip("s") in tc[0].casefold()), None) \
             or next((tc for tc in occ if unique_on(tc)), occ[0])
-        attributes.append({"name": unique_name(_friendly(stem), home[0]), "description": "", "lookup_table": home[0],
+        label = _friendly(stem)
+        if label.casefold() in used and len(occ) == 1 and re.search(r"(?:^|_)key$", occ[0][1], re.I):
+            label = f"{label} Key"                 # a surrogate key beside the table's own key: Machine Key, not Machine (Dim Machine)
+        attributes.append({"name": unique_name(label, home[0]), "description": "", "lookup_table": home[0],
                            "forms": [{"name": "ID", "category": "ID", "table": t, "column": c} for t, c in occ]})
         keyed |= {(t, c) for t, c in occ}
+    homes = {e["home"] for e in pre}
     for t in tables:
+        # a dimension: named as one, or the home of a key other tables carry (its numbers describe it unless they measure)
+        dimension = bool(STAR_DIM.match(t["table"])) or (t["table"] in homes and not STAR_ANY.match(t["table"]))
         for c in t["columns"]:
             if (t["table"], c["name"]) in keyed:
                 continue
             fam = _family(c.get("dataType"))
-            if fam == "number":
+            if fam == "number" and (DESCRIPTIVE_NUMBER.search(c["name"]) or dimension and not MEASURE_NUMBER.search(c["name"])):
+                attributes.append({"name": unique_name(_friendly(c["name"]), t["table"]), "description": "", "lookup_table": t["table"],
+                                   "time": False, "forms": [{"name": "ID", "category": "ID", "table": t["table"], "column": c["name"]}]})
+            elif fam == "number":
+                # the builder chooses the format from the name and type (counts whole, money as currency)
                 metrics.append({"name": unique_name(_friendly(c["name"]), t["table"]), "description": "", "table": t["table"],
-                                "column": c["name"], "function": "sum", "format": "fixed2"})
+                                "column": c["name"], "function": "avg" if AVERAGED.search(c["name"]) else "sum"})
             elif fam in ("text", "time"):
                 attributes.append({"name": unique_name(_friendly(c["name"]), t["table"]), "description": "", "lookup_table": t["table"],
                                    "time": fam == "time", "forms": [{"name": "ID", "category": "ID", "table": t["table"], "column": c["name"]}]})

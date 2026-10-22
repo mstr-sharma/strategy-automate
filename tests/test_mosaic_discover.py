@@ -82,9 +82,9 @@ class RecommendTests(unittest.TestCase):
         g, a, b = graph()
         g["measured"] = {f"SF/S/{a}CUSTOMERS|PG/p/shopa_refunds": 1.0, f"SF/S/{a}CUSTOMERS|SF/S/{b}CUSTOMERS": 0.0}
         recs = md.recommend(md.infer(g), {"cross_store": "prefer"})
-        orders = next(r for r in recs if r["fact"] == a + "ORDERS")
+        orders = next(r for r in recs if r["fact"] == a + "ORDERS" and r["kind"] == "star")
         self.assertEqual(set(orders["tables"]), {a + "ORDERS", a + "CUSTOMERS", a + "CALENDAR"})    # no other facts pulled in
-        refunds = next(r for r in recs if r["fact"] == "shopa_refunds")
+        refunds = next(r for r in recs if r["fact"] == "shopa_refunds" and r["kind"] == "star")
         self.assertEqual(refunds["stores"], ["PostgreSQL", "Snowflake"])
         customer = next(x for x in refunds["spec"]["attributes"] if any(f["column"] == "customer_id" for f in x["forms"]))
         self.assertEqual({f["column"] for f in customer["forms"]}, {"CUSTOMER_ID", "customer_id"})   # one attribute across stores
@@ -113,3 +113,54 @@ class PlannerLoopTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StarSchemaByRoleNames(unittest.TestCase):
+    """A real scan's metadata (anonymized): a manufacturing star named by role (DIM_DATE, DIM_MACHINE, DIM_PLANT, three
+    FACT_ tables), no declared keys, the facts' PLANT_ID matching DIM_PLANT.SOURCE_PLANT_ID. The drafted designs must
+    build: conformed keys homed on their dimensions, dimension numbers as attributes, plant details kept."""
+
+    @classmethod
+    def setUpClass(cls):
+        import json
+        cls.graph = json.load(open(os.path.join(HERE, "fixtures", "discover_star_schema.json")))
+        cls.inf = md.infer(cls.graph)
+        cls.recs = md.recommend(cls.inf)
+
+    def entity(self, name):
+        return next(e for e in self.inf["entities"] if e["name"] == name)
+
+    def test_role_named_tables_are_one_family(self):
+        fams = {md._family_key(t["table"], t["schema"], t["datasource_id"]) for t in self.graph["tables"].values()}
+        self.assertEqual(len(fams), 1)
+
+    def test_conformed_keys_are_homed_on_their_dimensions(self):
+        for name, home in (("Date", "DIM_DATE"), ("Machine", "DIM_MACHINE"), ("Plant", "DIM_PLANT")):
+            self.assertTrue(self.entity(name)["home"].endswith("/" + home), name)
+        plant = {k.split("/")[-1]: c for k, c in self.entity("Plant")["members"].items()}
+        self.assertEqual(plant["DIM_PLANT"], "SOURCE_PLANT_ID")
+        self.assertEqual(plant["FACT_PRODUCTION_RUNS"], "PLANT_ID")
+        self.assertIn("Plant Key", [e["name"] for e in self.inf["entities"]])     # the surrogate says what it is
+
+    def test_a_combined_model_and_one_per_fact_all_pass_the_check(self):
+        names = [r["name"] for r in self.recs]
+        self.assertEqual(names[0], "Downtime Events, Production Runs and Recycling Intake")
+        self.assertIn("Production Runs by Date and Machine", names)
+        self.assertTrue(all(r["checked"] for r in self.recs), [r["problems"] for r in self.recs])
+
+    def test_dimension_numbers_describe_and_rates_average(self):
+        spec = self.recs[0]["spec"]
+        metrics = {m["name"]: m for m in spec["metrics"]}
+        attrs = {a["name"] for a in spec["attributes"]}
+        for col in ("Calendar Month", "Calendar Year", "Is Weekend"):
+            self.assertIn(col, attrs); self.assertNotIn(col, metrics)
+        self.assertEqual(metrics["Contamination Pct"]["function"], "avg")
+        self.assertEqual(metrics["Units Produced"]["function"], "sum")
+        self.assertTrue(all("format" not in m for m in spec["metrics"]))      # the builder formats from name and type
+        self.assertTrue({"Plant Name", "Machine Name", "Machine Type"} <= attrs)
+
+    def test_each_table_gets_its_conformed_key(self):
+        plan = mp.from_spec(self.recs[0]["spec"], {"tables": list(self.graph["tables"].values())}, {})
+        keys = plan["keys"]
+        self.assertEqual(keys["DIM_PLANT"], "Plant"); self.assertEqual(keys["DIM_MACHINE"], "Machine"); self.assertEqual(keys["DIM_DATE"], "Date")
+        self.assertFalse(mp.errors(mp.check(plan)))

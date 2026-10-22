@@ -86,7 +86,10 @@ def _sql(m):
         name = next((p.get("name", "") for p in rows if str(p.get("id", "")).upper() == m.project.upper()), "")
     if not name:
         raise RuntimeError("the project name for the SQL surface could not be read")
-    host, user, pw, schema = svm._trino_host_from_base(m.base), os.environ["MSTR_USER"], os.environ["MSTR_PASSWORD"], name.lower()
+    # the signed-in person, however they signed in (environment or a credentials file)
+    user = getattr(m, "user", None) or os.environ.get("MSTR_USER", "")
+    pw = getattr(m, "pw", None) or os.environ.get("MSTR_PASSWORD", "")
+    host, schema = svm._trino_host_from_base(m.base), name.lower()
     return lambda statement: svm._trino_query(host, user, pw, schema, statement)
 
 
