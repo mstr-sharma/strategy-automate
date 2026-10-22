@@ -368,3 +368,65 @@ class TechnicalKeyTests(unittest.TestCase):
         inf = md.infer({"tables": {md.tkey(t): t for t in ts}, "fks": []})
         self.assertFalse([l for l in inf["links"] if "ETL_BATCH_ID" in l["columns"]])
         self.assertTrue([l for l in inf["links"] if "COMPANY_ID" in l["columns"]])
+
+
+class StructuralEvidenceTests(unittest.TestCase):
+    """joins judged from metadata the databases keep: types, statistics, who owns a key, history tables, flat tables"""
+
+    def g(self, *ts, **extra):
+        return {"tables": {md.tkey(t): t for t in ts}, "fks": [], **extra}
+
+    def link(self, inf, a, b):
+        return next((l for l in inf["links"] if {l["from"].split("/")[-1], l["to"].split("/")[-1]} == {a, b}), None)
+
+    def test_a_number_never_joins_a_date_and_mismatched_text_keys_do_not_join(self):
+        ts = [table("PG", "PostgreSQL", "s", "DIM_STORE", [("STORE_CODE", {"type": "utf8_char", "precision": 5}), ("NAME", T)], ["STORE_CODE"]),
+              table("PG", "PostgreSQL", "s", "FACT_SALES", [("SALE_ID", N), ("STORE_CODE", {"type": "utf8_char", "precision": 36}), ("AMOUNT", {"type": "double"})], ["SALE_ID"])]
+        self.assertIsNone(self.link(md.infer(self.g(*ts)), "DIM_STORE", "FACT_SALES"))
+        ts[1]["columns"][1]["dataType"] = {"type": "utf8_char", "precision": 5}
+        self.assertIsNotNone(self.link(md.infer(self.g(*ts)), "DIM_STORE", "FACT_SALES"))
+
+    def test_statistics_prove_a_key_or_end_a_link(self):
+        ts = [table("PG", "PostgreSQL", "s", "ACCOUNTS", [("ACCOUNT_ID", N), ("REGION", T)], [], 100),
+              table("PG", "PostgreSQL", "s", "PAYMENTS", [("PAYMENT_ID", N), ("ACCOUNT_ID", N), ("AMOUNT", {"type": "double"})], ["PAYMENT_ID"], 1000)]
+        st = lambda lo, hi, rows, d: {"rows": rows, "distinct": d, "nulls": 0, "values": [], "low": lo, "high": hi}  # noqa: E731
+        agree = {"PG/s/ACCOUNTS": {"ACCOUNT_ID": st("1", "100", 100, 100)}, "PG/s/PAYMENTS": {"ACCOUNT_ID": st("3", "98", 1000, 90)}}
+        l = self.link(md.infer(self.g(*ts, stats=agree)), "ACCOUNTS", "PAYMENTS")
+        self.assertIn("statistics", l["evidence"])
+        apart = {"PG/s/ACCOUNTS": {"ACCOUNT_ID": st("1", "100", 100, 100)}, "PG/s/PAYMENTS": {"ACCOUNT_ID": st("5000", "9000", 1000, 90)}}
+        self.assertIsNone(self.link(md.infer(self.g(*ts, stats=apart)), "ACCOUNTS", "PAYMENTS"))
+
+    def test_two_tables_sharing_a_key_neither_owns_do_not_join(self):
+        ts = [table("SF", "Snowflake", "S", "FACT_ORDERS", [("ORDER_ID", N), ("ACCOUNT_ID", N), ("AMOUNT", {"type": "double"})], ["ORDER_ID"]),
+              table("SF", "Snowflake", "S", "FACT_TICKETS", [("TICKET_ID", N), ("ACCOUNT_ID", N), ("MINUTES", {"type": "double"})], ["TICKET_ID"])]
+        l = self.link(md.infer(self.g(*ts)), "FACT_ORDERS", "FACT_TICKETS")
+        self.assertTrue(l is None or l["confidence"] < 0.5)
+
+    def test_a_history_dimension_is_joined_on_its_surrogate_key_only(self):
+        dim = table("SF", "Snowflake", "S", "DIM_CUSTOMER", [("CUSTOMER_SK", N), ("CUSTOMER_ID", N), ("NAME", T), ("VALID_FROM", D), ("VALID_TO", D), ("IS_CURRENT", N)], ["CUSTOMER_SK"])
+        fact = table("SF", "Snowflake", "S", "FACT_ORDERS", [("ORDER_ID", N), ("CUSTOMER_ID", N), ("AMOUNT", {"type": "double"})], ["ORDER_ID"])
+        l = self.link(md.infer(self.g(dim, fact)), "DIM_CUSTOMER", "FACT_ORDERS")
+        self.assertTrue(l is None or l["confidence"] < 0.5)
+        fact["columns"].append({"name": "CUSTOMER_SK", "dataType": N})
+        self.assertGreaterEqual(self.link(md.infer(self.g(dim, fact)), "DIM_CUSTOMER", "FACT_ORDERS")["confidence"], 0.5)
+
+    def test_part_of_a_composite_key_is_not_a_unique_key(self):
+        lines = table("PG", "PostgreSQL", "s", "ORDER_LINES", [("ORDER_ID", N), ("LINE_NO", N), ("QTY", N)], ["ORDER_ID", "LINE_NO"])
+        orders = table("PG", "PostgreSQL", "s", "ORDERS", [("ORDER_ID", N), ("ORDER_DATE", D), ("CHANNEL", T)], ["ORDER_ID"])
+        inf = md.infer(self.g(lines, orders))
+        order = next(e for e in inf["entities"] if e["name"] == "Order")
+        self.assertTrue(order["home"].endswith("/ORDERS"))
+
+    def test_a_wide_flat_table_is_a_model_on_its_own(self):
+        flat = table("SF", "Snowflake", "S", "SALES_EXTRACT", [("REGION", T), ("STORE", T), ("PRODUCT", T), ("ORDER_DATE", D), ("CHANNEL", T), ("SEGMENT", T),
+                                                               ("SALES_AMOUNT", {"type": "double"}), ("QUANTITY", N)], [], 5000)
+        recs = md.recommend(md.infer(self.g(flat)), {})
+        self.assertEqual([r["kind"] for r in recs], ["flat"])
+        self.assertTrue(any("wide table" in x for x in recs[0]["reasons"]))
+
+    def test_each_recommendation_says_how_its_joins_are_known(self):
+        g, a, _ = graph()
+        recs = md.recommend(md.infer(g), {})
+        rec = next(r for r in recs if any(t.endswith("ORDERS") for t in r["tables"]))
+        self.assertEqual(sum(rec["joins"].values()), rec["joins"]["declared"] + rec["joins"]["data"] + rec["joins"]["statistics"] + rec["joins"]["name"])
+        self.assertGreaterEqual(rec["joins"]["declared"], 1)

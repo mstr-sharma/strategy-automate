@@ -23,8 +23,9 @@ from typing import Any
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mosaic_plan as mp  # noqa: E402
 
-EVIDENCE = {"declared": 0.95, "primary_key_name": 0.75, "same_name": 0.55, "suffix_name": 0.5, "measured": 0.85, "history": 0.9}
+EVIDENCE = {"declared": 0.95, "primary_key_name": 0.75, "same_name": 0.55, "suffix_name": 0.5, "measured": 0.85, "history": 0.9, "statistics": 0.75}
 UNRELATED_NAME = 0.35        # the same key name in two unrelated table families, until the data says they match
+GENERIC_NAME = 0.45          # a key name two tables share where neither owns it (below the default 0.5 bar)
 DEFAULT_OPTIONS = {
     "min_tables": 2, "max_tables": 8, "cross_store": "allow",          # allow | prefer | avoid
     "signals": {"declared": True, "same_name": True, "family": True},
@@ -39,31 +40,28 @@ def tkey(t: dict) -> str:
 
 # ── scan (live) ──────────────────────────────────────────────────────────────────────────────────────────────────────
 def _stats_sql(dbms: str, schema: str) -> str | None:
-    d = dbms.lower()
-    if "snowflake" in d:
-        return f"SELECT TABLE_NAME AS t, ROW_COUNT AS n FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='{schema}' AND TABLE_TYPE='BASE TABLE'"
-    if "postgres" in d:
-        return ("SELECT c.relname AS t, GREATEST(c.reltuples,0)::bigint AS n FROM pg_class c JOIN pg_namespace s ON s.oid=c.relnamespace "
-                f"WHERE s.nspname='{schema}' AND c.relkind='r'")
-    return None
+    """the row counts the database keeps for a schema's tables (its catalog, no table counted): see mosaic_dialects"""
+    import mosaic_dialects as dialects
+    return dialects.row_counts_sql(dbms, schema)
 
 
 def _declared_keys(m, live, info: dict, schema: str, tables: set[str]) -> tuple[dict, list]:
     """{table: [pk columns]}, [fk {child, child_cols, parent, parent_cols}] for tables in scope"""
+    import mosaic_dialects as dialects
     d, pks, fks = info["dbms"].lower(), {}, []
+    sqls = dialects.keys_sqls(info["dbms"], schema)
     try:
-        if "postgres" in d:
-            for r in live.run_sql(m, info["id"], "SELECT tc.table_name AS t, kcu.column_name AS c, tc.constraint_type AS k, ccu.table_name AS pt, ccu.column_name AS pc, "
-                                  "tc.constraint_name AS n FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu "
-                                  "ON kcu.constraint_name=tc.constraint_name AND kcu.table_schema=tc.table_schema LEFT JOIN information_schema.constraint_column_usage ccu "
-                                  f"ON ccu.constraint_name=tc.constraint_name AND ccu.table_schema=tc.table_schema WHERE tc.table_schema='{schema}' "
-                                  "AND tc.constraint_type IN ('PRIMARY KEY','FOREIGN KEY')"):
+        if sqls:
+            # every kind of database that lists its keys in catalog views (PostgreSQL, Redshift, SQL Server and Fabric,
+            # MySQL family, Databricks Unity Catalog, BigQuery, Oracle, Db2, SAP HANA, Exasol)
+            for r in (r for sql in sqls for r in live.run_sql(m, info["id"], sql)):
                 if r["t"] not in tables:
                     continue
-                if r["k"] == "PRIMARY KEY":
-                    pks.setdefault(r["t"], []).append(r["c"])
-                elif r.get("pt") in tables:
-                    fks.append({"child": r["t"], "child_cols": [r["c"]], "parent": r["pt"], "parent_cols": [r["pc"]], "name": r["n"]})
+                if str(r["k"]).upper().startswith("PRIMARY"):
+                    if r["c"] not in pks.setdefault(r["t"], []):
+                        pks[r["t"]].append(r["c"])
+                elif r.get("pt") in tables and r.get("pc"):
+                    fks.append({"child": r["t"], "child_cols": [r["c"]], "parent": r["pt"], "parent_cols": [r["pc"]], "name": r.get("n") or ""})
         elif "snowflake" in d:
             have = {r["t"] for r in live.run_sql(m, info["id"], "SELECT DISTINCT TABLE_NAME AS t FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS "
                                                  f"WHERE TABLE_SCHEMA='{schema}' AND CONSTRAINT_TYPE IN ('PRIMARY KEY','FOREIGN KEY')")}
@@ -255,6 +253,91 @@ def _with_references(rec: dict, referenced: dict, dictionary: dict) -> None:
                 taken.discard(m["name"]); m["name"] = str(v["name"])[:120]; taken.add(m["name"])
 
 
+def _pg_array(text: str | None) -> list[str]:
+    """PostgreSQL's array text ({a,"b c",d}) as strings"""
+    if not text or not text.startswith("{"):
+        return []
+    import csv
+    import io
+    return next(csv.reader(io.StringIO(text[1:-1]), quotechar='"', escapechar="\\"), [])
+
+
+def catalog_stats(m, graph: dict, log=lambda s: None) -> dict:
+    """the column statistics each database keeps for its query planner (PostgreSQL pg_stats, Oracle, Db2, MySQL),
+    read from its catalog, never from a table: graph['stats'][table key][column] = {rows, distinct, nulls, values,
+    low, high}. They say whether a key is unique and, for PostgreSQL, whether two columns hold the same kind of values."""
+    import mosaic_dialects as dialects
+    import mosaic_live as live
+    stats = graph.setdefault("stats", {})
+    by_schema: dict[tuple[str, str], list[str]] = {}
+    for k, t in graph["tables"].items():
+        by_schema.setdefault((t["datasource_id"], t["schema"]), []).append(k)
+    for (ds, schema), keys in by_schema.items():
+        t0 = graph["tables"][keys[0]]
+        sql = dialects.column_stats_sql(t0.get("dbms", ""), schema)
+        if not sql:
+            continue
+        try:
+            rows = live.run_sql(m, ds, sql)
+        except RuntimeError:
+            continue                                    # statistics are one signal among several
+        names = {graph["tables"][k]["table"]: k for k in keys}
+        n = 0
+        for r in rows:
+            k = names.get(r.get("t"))
+            if not k:
+                continue
+            total = float(r.get("rows_n") or 0)
+            d = float(r.get("ndv") or 0)
+            distinct = -d * total if d < 0 else d       # PostgreSQL: a negative n_distinct is a fraction of the rows
+            nulls = float(r.get("nulls") or 0)
+            nulls = nulls * total if nulls <= 1 and "mcv" in r else nulls
+            hist = _pg_array(r.get("hist"))
+            stats.setdefault(k, {})[r["c"]] = {"rows": total, "distinct": distinct, "nulls": nulls, "values": _pg_array(r.get("mcv"))[:100],
+                                               "low": hist[0] if hist else None, "high": hist[-1] if hist else None}
+            n += 1
+        if n:
+            log(f"  · {t0['datasource']}/{schema}: statistics for {n} columns")
+    return graph
+
+
+HISTORY_COLUMN = re.compile(r"(?i)^(valid|effective|eff|row|record|version|scd)_?(from|to|start|end|begin|until|thru)(_?(date|dt|ts|time|timestamp))?$|^(is_current|current_flag|curr_flag|is_latest|active_flag|dw_current)$")
+
+
+def _history(t: dict) -> bool:
+    """a dimension that keeps history (type 2): validity columns, or a current-row flag; its business key repeats"""
+    names = [c["name"] for c in t.get("columns", [])]
+    return sum(1 for n in names if HISTORY_COLUMN.search(n)) >= 2 or any(re.match(r"(?i)^(is_current|current_flag)$", n) for n in names)
+
+
+def _stats_unique(st: dict | None) -> bool:
+    return bool(st) and st["rows"] > 0 and st["distinct"] >= 0.99 * st["rows"] and st["nulls"] < 0.01 * st["rows"]
+
+
+def _stats_overlap(a: dict | None, b: dict | None) -> float | None:
+    """how much two columns' statistics agree: the share of one's common values found in the other's, else whether
+    their value ranges overlap at all (1 or 0); None when the statistics cannot say"""
+    if not a or not b:
+        return None
+    if a["values"] and b["values"]:
+        small, big = (a, b) if len(a["values"]) <= len(b["values"]) else (b, a)
+        inside = set(big["values"])
+        if big["low"] is not None and big["high"] is not None:
+            def within(v):
+                try:
+                    return float(big["low"]) <= float(v) <= float(big["high"])
+                except ValueError:
+                    return str(big["low"]) <= str(v) <= str(big["high"])
+            return sum(1 for v in small["values"] if v in inside or within(v)) / len(small["values"])
+        return sum(1 for v in small["values"] if v in inside) / len(small["values"])
+    if None not in (a["low"], a["high"], b["low"], b["high"]):
+        try:
+            return 1.0 if float(a["low"]) <= float(b["high"]) and float(b["low"]) <= float(a["high"]) else 0.0
+        except ValueError:
+            return 1.0 if str(a["low"]) <= str(b["high"]) and str(b["low"]) <= str(a["high"]) else 0.0
+    return None
+
+
 def view_copies(tables: dict) -> set:
     """views and copies of another scanned table: FACT_X_V, FACT_X2, FACT_X_COPY or FACT_X_NEW beside FACT_X with
     (nearly) the same columns repeat it, so the base table is used and they are left out"""
@@ -321,12 +404,12 @@ def infer(graph: dict, options: dict | None = None, curation: dict | None = None
     for t in tables.values():
         # a schema with dimension or lookup tables (DIM_, LU_) and up to 60 tables is one star: its facts join its
         # lookups whatever they are called (TXN_BOOKING with LU_RESIDENCY)
-        if (t.get("datasource_id"), t.get("schema")) in star_schema and per_schema[(t.get("datasource_id"), t.get("schema"))] <= 60 \
+        if (t.get("datasource_id"), t.get("schema")) in star_schema and per_schema[(t.get("datasource_id"), t.get("schema"))] <= opts.get("star_schema", 60) \
                 and not re.match(r"^SD_[A-Z]+_[A-Z0-9]+_\d{8}_\d{4}_", t["table"], re.I):
             t["family"] = f"{t.get('datasource_id')}/{t.get('schema')}#star"
             continue
         # a small schema (up to 20 tables, no synthetic datasets) is one dataset
-        if per_schema[(t.get("datasource_id"), t.get("schema"))] <= 20 and not re.match(r"^SD_[A-Z]+_[A-Z0-9]+_\d{8}_\d{4}_", t["table"], re.I):
+        if per_schema[(t.get("datasource_id"), t.get("schema"))] <= opts.get("small_schema", 20) and not re.match(r"^SD_[A-Z]+_[A-Z0-9]+_\d{8}_\d{4}_", t["table"], re.I):
             t["family"] = f"{t.get('datasource_id')}/{t.get('schema')}#schema"
             continue
         tok = (t.get("datasource_id"), t.get("schema"), t["table"].split("_")[0].casefold())
@@ -414,10 +497,12 @@ def infer(graph: dict, options: dict | None = None, curation: dict | None = None
             return sum(1 for c in tables[k]["columns"] if mp._family(c.get("dataType")) == "number" and mp.MEASURE_NUMBER.search(c["name"])
                        and not mp.KEY_COLUMN.search(c["name"]))
         prof = graph.get("profile") or {}
-        def unique(k):           # measured: the key is unique (and present) on this table
+        def unique(k):           # measured, or the database's own statistics say so: the key is unique (and present) here
             p = prof.get(k) or {}
-            return bool(p.get("measured")) and p.get("rows", 0) > 0 and (p.get("distinct") or {}).get(e["members"][k]) == p.get("rows") \
-                and not (p.get("nulls") or {}).get(e["members"][k])
+            if bool(p.get("measured")) and p.get("rows", 0) > 0 and (p.get("distinct") or {}).get(e["members"][k]) == p.get("rows") \
+                    and not (p.get("nulls") or {}).get(e["members"][k]):
+                return True
+            return _stats_unique((graph.get("stats") or {}).get(k, {}).get(e["members"][k]))
         return max(e["members"], key=lambda k: ([x.casefold() for x in tables[k].get("pk", [])] == [e["members"][k].casefold()], unique(k),
                                                 bool(stem) and stem in tables[k]["table"].casefold(), not FACT_ROLE.match(tables[k]["table"]) and measures(k) == 0,
                                                 -measures(k), -(tables[k].get("rows") or 0)))
@@ -428,7 +513,41 @@ def infer(graph: dict, options: dict | None = None, curation: dict | None = None
         base = max([opts["weights"].get(x, EVIDENCE.get(x, 0.5)) for x in ev if x != "family"] or [0.5])
         c = min(1.0, base + (0.05 if "family" in ev else 0))
         if "declared" not in ev and not same_family:
-            c = min(c, UNRELATED_NAME)                      # a shared name across unrelated families needs the data to agree
+            c = min(c, opts.get("unrelated_name", UNRELATED_NAME))   # a shared name across unrelated families needs the data to agree
+        # the two columns' types must be able to hold the same values: a number never joins a date; a number and text
+        # might (a cast), and two text keys of very different lengths (a 36-character id and a 5-character code) do not
+        hc, kc = (next((x for x in tables[home]["columns"] if x["name"] == cols[0]), None), next((x for x in tables[k]["columns"] if x["name"] == cols[-1]), None))
+        if hc and kc and opts.get("type_check", True):
+            fa, fb = mp._family(hc.get("dataType")), mp._family(kc.get("dataType"))
+            if {fa, fb} == {"number", "time"} or {fa, fb} == {"text", "time"} and "declared" not in ev:
+                return None
+            if fa != fb and "declared" not in ev:
+                c -= 0.15
+            la, lb = ((x.get("dataType") or {}).get("precision") or 0 for x in (hc, kc))
+            if fa == fb == "text" and la and lb and max(la, lb) >= opts.get("length_ratio", 4) * min(la, lb) and max(la, lb) - min(la, lb) > 8 and "declared" not in ev:
+                return None
+        # a history (type 2) dimension repeats its business key once per version: joining on it multiplies rows unless
+        # the key is its surrogate key, or the database declares or its statistics show it unique
+        if opts.get("history", True) and _history(tables[home]) and not re.search(r"(?i)(_sk|_skey|surrogate|_dwh_id)$", cols[0]) and "declared" not in ev \
+                and not _stats_unique(((graph.get("stats") or {}).get(home) or {}).get(cols[0])):
+            c = min(c, opts.get("generic_name", GENERIC_NAME))
+        # the database's statistics, where it keeps them: values that agree are evidence, disjoint values end the link
+        st = graph.get("stats") or {}
+        agree = _stats_overlap((st.get(home) or {}).get(cols[0]), (st.get(k) or {}).get(cols[-1])) if opts.get("statistics", True) else None
+        if agree is not None and "declared" not in ev:
+            if agree < opts.get("stats_apart", 0.1):
+                return None
+            if agree >= opts.get("stats_agree", 0.6):
+                c, ev = max(c, opts["weights"].get("statistics", EVIDENCE["statistics"])), ev | {"statistics"}
+        # a key two tables share by name only, where neither holds it as its own (no declared or measured key, no
+        # dimension or lookup, not named for it) is a weak sign: two facts both carrying ACCOUNT_ID do not join each other
+        if ev <= {"same_name", "family"} and same_family:
+            stem = re.sub(mp.KEY_COLUMN, "", cols[0]).strip("_").casefold().rstrip("s")
+            owned = (bool(stem) and stem in tables[home]["table"].casefold()) or bool(mp.STAR_DIM.match(tables[home]["table"])) \
+                or [x.casefold() for x in tables[home].get("pk", [])] == [cols[0].casefold()] \
+                or _stats_unique((st.get(home) or {}).get(cols[0])) or bool(((graph.get("profile") or {}).get(home) or {}).get("measured"))
+            if not owned:
+                c = min(c, opts.get("generic_name", GENERIC_NAME))
         measured = (graph.get("measured") or {}).get(f"{home}|{k}")
         if measured is not None:
             if measured < 0.2:
@@ -550,10 +669,21 @@ def recommend(inferred: dict, options: dict | None = None) -> list[dict]:
                 seen_comp.add(key)
                 used_all = list({(l["from"], l["to"]): l for c in comp for l in c["used"]}.values())
                 galaxies.append({"group": set().union(*(c["group"] for c in comp)), "facts": [f for c in comp for f in c["facts"]], "used": used_all, "kind": "combined"})
-    for st in [*stars.values(), *galaxies]:
+    # a wide flat table (its own measures and descriptions, nothing it joins) is a model on its own
+    in_group = set().union(*(st["group"] for st in stars.values() if len(st["group"]) >= opts["min_tables"]), set())
+    flats = []
+    for k, t in tables.items():
+        if k in in_group:
+            continue
+        cols = t.get("columns", [])
+        measures = sum(1 for c in cols if mp._family(c.get("dataType")) == "number" and mp.MEASURE_NUMBER.search(c["name"]) and not mp.KEY_COLUMN.search(c["name"]))
+        described = sum(1 for c in cols if mp._family(c.get("dataType")) in ("text", "time"))
+        if opts.get("flat", True) and len(cols) >= opts.get("flat_min_columns", 8) and measures >= 1 and described >= 3:
+            flats.append({"group": {k}, "facts": [k], "used": [], "kind": "flat"})
+    for st in [*stars.values(), *galaxies, *flats]:
         f, group, used = st["facts"][0], st["group"], st["used"]
         sig = frozenset(group)
-        if len(group) < opts["min_tables"] or sig in seen:
+        if (len(group) < opts["min_tables"] and st.get("kind") != "flat") or sig in seen:
             continue
         seen.add(sig)
         stores = sorted({tables[k]["dbms"] for k in group})
@@ -572,9 +702,12 @@ def recommend(inferred: dict, options: dict | None = None) -> list[dict]:
         name = (", ".join(subjects[:-1]) + " and " + subjects[-1] if len(subjects) > 1 else
                 f"{subjects[0]} by {' and '.join(by)}" if subjects and by else subjects[0] if subjects else mp.subject(tables[f]["table"]))
         lead = ", ".join(subjects)
-        reasons = [f"{lead} {'has' if len(st['facts']) == 1 else 'have'} numbers to measure, described by {len(group) - len(st['facts'])} related table{'s' if len(group) - len(st['facts']) != 1 else ''}"]
+        n_dims = len(group) - len(st['facts'])
+        reasons = [f"{lead} {'has' if len(st['facts']) == 1 else 'have'} numbers to measure"
+                   + (f", described by {n_dims} related table{'s' if n_dims != 1 else ''}" if n_dims else "")]
         words = {"declared": "declared key", "primary_key_name": "primary key name", "same_name": "same column name", "suffix_name": "matching key name",
-                 "family": "same dataset", "measured": "values match", "confirmed": "confirmed by you", "history": "joined in queries"}
+                 "family": "same dataset", "measured": "values match", "confirmed": "confirmed by you", "history": "joined in queries",
+                 "statistics": "database statistics agree"}
         reasons += [f"{l['entity']} links {mp.subject(tables[l['from']]['table'])} and {mp.subject(tables[l['to']]['table'])} ({', '.join(words.get(x, x.replace('_', ' ')) for x in l['evidence'] if x != 'family')})" for l in used[:4]]
         if len(stores) > 1:
             reasons.append(f"joins {' and '.join(stores)} without moving data")
@@ -619,7 +752,21 @@ def recommend(inferred: dict, options: dict | None = None) -> list[dict]:
         except mp.PlanError as e:
             findings = [{"level": "error", "code": "plan", "text": str(e)}]
         problems = [x["text"] for x in findings if x["level"] == "error"]
-        out.append({"checked": not problems, "problems": problems[:3], "kind": st.get("kind", "star"),
+        # how each join is known: declared by the database (or confirmed by a person), checked against the data or the
+        # database's statistics, or only by a shared name (to judge before building)
+        joins = {"declared": 0, "data": 0, "statistics": 0, "name": 0}
+        for l in used:
+            ev_ = set(l["evidence"])
+            joins["declared" if ev_ & {"declared", "confirmed"} else "data" if ev_ & {"measured", "history"} else "statistics" if "statistics" in ev_ else "name"] += 1
+        hist = [mp.subject(tables[k]["table"]) for k in group if _history(tables[k])]
+        if hist:
+            reasons.append(f"{', '.join(hist[:2])} {'keeps' if len(hist) == 1 else 'keep'} history (a row per version): join on the surrogate key or filter to current rows")
+        if st.get("kind") == "flat":
+            reasons.append("one wide table with its own measures and descriptions: a model on its own")
+        if joins["name"]:
+            reasons.append(f"{joins['name']} of its {len(used)} join{'s' if len(used) != 1 else ''} rest{'s' if joins['name'] == 1 else ''} on a shared column name only: "
+                           "check them before building (an administrator can turn on data checks)")
+        out.append({"checked": not problems, "problems": problems[:3], "kind": st.get("kind", "star"), "joins": joins,
                     "name": name, "fact": tables[f]["table"], "fact_tables": [tables[x]["table"] for x in st["facts"]], "tables": [t["table"] for t in cat["tables"]], "table_keys": [tkey(t) for t in cat["tables"]],
                     "stores": stores, "facts": n_facts, "score": score, "confidence": round(conf, 2), "modeled": round(modeled, 2), "reasons": reasons, "spec": spec})
     if opts.get("referenced") or opts.get("dictionary"):
@@ -649,6 +796,8 @@ def main() -> int:
     f.add_argument("--budget", type=float, default=120.0)
     f.add_argument("--max-tables", type=int, default=24)
     f.add_argument("--anchor", action="append", default=[], help="DATASOURCE:SCHEMA:TABLE the model starts from")
+    f.add_argument("--datasets", type=int, default=5, help="datasets to pick at most")
+    f.add_argument("--per-source", type=float, default=45.0, help="seconds one source may take")
     f.add_argument("--out", required=True)
     a = ap.parse_args()
     opts = json.loads(a.options) if getattr(a, "options", None) else {}
@@ -662,7 +811,8 @@ def main() -> int:
             scopes.append({"datasource": ds, **({"schema": rest[0]} if rest and rest[0] else {}), **({"tables": rest[1].split(",")} if len(rest) > 1 and rest[1] else {})})
         found = mosaic_find.find(m, a.query, scopes or None, references=json.load(open(a.references)) if a.references else None,
                                  usage=json.load(open(a.usage)) if a.usage else None, budget=a.budget, max_tables=a.max_tables,
-                                 anchors=[dict(zip(("datasource", "schema", "table"), x.split(":", 2))) for x in a.anchor], log=lambda x: print(x, flush=True))
+                                 anchors=[dict(zip(("datasource", "schema", "table"), x.split(":", 2))) for x in a.anchor], datasets=a.datasets,
+                                 per_source=a.per_source, log=lambda x: print(x, flush=True))
         json.dump(found, open(a.out, "w"), default=str)
         print(f"found {len(found['picked'])} tables of {found['candidates']} matching, in {len(found['read'])} schemas read" + (f"; {len(found['left'])} left" if found["left"] else ""))
         return 0
@@ -674,6 +824,7 @@ def main() -> int:
             ds, schema, *rest = src.split(":")
             scopes.append({"datasource": ds, "schema": schema, "patterns": rest[0].split(",") if rest else ["*"]})
         g = scan(m, scopes, opts, log=lambda x: print(x, flush=True))
+        catalog_stats(m, g, log=lambda x: print(x, flush=True))        # the databases' own statistics: metadata, always
         if not opts.get("skip_data_check"):
             measure_keys(m, g, opts, log=lambda x: print(x, flush=True))
             confirm(m, g, opts, budget=int(opts.get("data_check_budget", 40)), log=lambda x: print(x, flush=True))

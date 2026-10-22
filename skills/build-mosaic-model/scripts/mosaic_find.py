@@ -90,92 +90,89 @@ def _lit(s: str) -> str:
     return "'" + str(s).replace("'", "''") + "'"
 
 
-PAGE = 1000                                             # Strategy returns at most 1,000 rows per source query
-SEP = "|"
+import mosaic_dialects as dialects
+
+PAGE = dialects.PAGE                                    # Strategy returns at most 1,000 rows per source query
+SEP = dialects.SEP
 
 
 def _flavor(dbms: str) -> str | None:
-    d = (dbms or "").lower()
-    if "snowflake" in d:
-        return "snowflake"
-    if "postgres" in d or "redshift" in d:
-        return "postgres"
-    if "sql server" in d or "sqlserver" in d or "azure sql" in d or "synapse" in d:
-        return "sqlserver"
-    if "mysql" in d or "mariadb" in d:
-        return "mysql"
-    return None
+    return dialects.flavor(dbms)
 
 
 def _catalog_sql(dbms: str, schema: str | None) -> str | None:
-    """one row per table (its schema, name, row count, comment, and its columns and their comments joined), so a
-    schema or a whole database fits in a few pages; catalog views only, no table is read"""
-    f = _flavor(dbms)
-    where = f" AND c.TABLE_SCHEMA={_lit(schema)}" if schema else ""
-    skip = "('INFORMATION_SCHEMA','information_schema','pg_catalog','sys','mysql','performance_schema')"
-    if f == "snowflake":
-        return ("SELECT c.TABLE_SCHEMA AS s, c.TABLE_NAME AS t, MAX(tb.ROW_COUNT) AS n, MAX(tb.COMMENT) AS tc, "
-                f"LISTAGG(c.COLUMN_NAME, '{SEP}') WITHIN GROUP (ORDER BY c.ORDINAL_POSITION) AS cols, "
-                f"LEFT(LISTAGG(COALESCE(c.COMMENT, ''), '{SEP}') WITHIN GROUP (ORDER BY c.ORDINAL_POSITION), 4000) AS cc "
-                "FROM INFORMATION_SCHEMA.COLUMNS c JOIN INFORMATION_SCHEMA.TABLES tb ON tb.TABLE_SCHEMA=c.TABLE_SCHEMA AND tb.TABLE_NAME=c.TABLE_NAME "
-                f"WHERE c.TABLE_SCHEMA NOT IN {skip}{where} GROUP BY 1, 2 ORDER BY 1, 2")
-    if f == "postgres":
-        where = f" AND c.table_schema={_lit(schema)}" if schema else ""
-        return ("SELECT c.table_schema AS s, c.table_name AS t, MAX(GREATEST(cl.reltuples, 0))::bigint AS n, MAX(obj_description(cl.oid)) AS tc, "
-                f"string_agg(c.column_name, '{SEP}' ORDER BY c.ordinal_position) AS cols, "
-                f"LEFT(string_agg(COALESCE(col_description(cl.oid, c.ordinal_position::int), ''), '{SEP}' ORDER BY c.ordinal_position), 4000) AS cc "
-                "FROM information_schema.columns c JOIN pg_namespace ns ON ns.nspname=c.table_schema "
-                "JOIN pg_class cl ON cl.relnamespace=ns.oid AND cl.relname=c.table_name "
-                f"WHERE c.table_schema NOT IN {skip}{where} GROUP BY 1, 2 ORDER BY 1, 2")
-    if f == "sqlserver":
-        return (f"SELECT c.TABLE_SCHEMA AS s, c.TABLE_NAME AS t, NULL AS n, NULL AS tc, STRING_AGG(CAST(c.COLUMN_NAME AS NVARCHAR(MAX)), '{SEP}') AS cols, NULL AS cc "
-                f"FROM INFORMATION_SCHEMA.COLUMNS c WHERE c.TABLE_SCHEMA NOT IN {skip}{where} GROUP BY c.TABLE_SCHEMA, c.TABLE_NAME ORDER BY 1, 2")
-    if f == "mysql":
-        return ("SELECT c.TABLE_SCHEMA AS s, c.TABLE_NAME AS t, MAX(tb.TABLE_ROWS) AS n, MAX(tb.TABLE_COMMENT) AS tc, "
-                f"GROUP_CONCAT(c.COLUMN_NAME ORDER BY c.ORDINAL_POSITION SEPARATOR '{SEP}') AS cols, "
-                f"LEFT(GROUP_CONCAT(COALESCE(c.COLUMN_COMMENT, '') ORDER BY c.ORDINAL_POSITION SEPARATOR '{SEP}'), 4000) AS cc "
-                "FROM INFORMATION_SCHEMA.COLUMNS c JOIN INFORMATION_SCHEMA.TABLES tb ON tb.TABLE_SCHEMA=c.TABLE_SCHEMA AND tb.TABLE_NAME=c.TABLE_NAME "
-                f"WHERE c.TABLE_SCHEMA NOT IN {skip}{where} GROUP BY 1, 2 ORDER BY 1, 2")
-    return None
+    """the first catalog statement for a source (kept for callers that want one)"""
+    q = dialects.catalog_queries(dbms, schema)
+    return q[0][1] if q else None
 
 
 def _paged(dbms: str, sql: str, page: int) -> str:
-    offset = page * PAGE
-    if _flavor(dbms) == "sqlserver":
-        return f"{sql} OFFSET {offset} ROWS FETCH NEXT {PAGE} ROWS ONLY"
-    return f"{sql} LIMIT {PAGE} OFFSET {offset}"
+    return dialects.paged(dbms, sql, page, PAGE)
 
 
 def catalog_tables(m, live, info: dict[str, Any], schema: str | None, deadline: float | None = None) -> dict[str, list[dict[str, Any]]] | None:
-    """{schema: [{table, rows, comment, columns: [{name, comment}]}]} from the source's catalog views, page by page;
-    None when the source has none we can read"""
-    sql = _catalog_sql(info["dbms"], schema)
-    if not sql:
-        return None
-    out: dict[str, list[dict[str, Any]]] = {}
-    page = 0
-    while True:
-        try:
-            rows = live.run_sql(m, info["id"], _paged(info["dbms"], sql, page))
-        except RuntimeError:
-            return out or None
-        for r in rows:
-            names = str(r.get("cols") or "").split(SEP)
-            notes = str(r.get("cc") or "").split(SEP) + [""] * len(names)
-            out.setdefault(r["s"], []).append({"table": r["t"], "rows": _int(r.get("n")), "comment": r.get("tc") or "",
-                                               "columns": [{"name": n, "comment": notes[i]} for i, n in enumerate(names) if n]})
-        if len(rows) < PAGE or page >= 199 or (deadline and time.monotonic() > deadline):
-            return out
-        page += 1
+    """{schema: [{table, rows, comment, columns: [{name, comment}]}]} from the source's catalog views, page by page,
+    trying each statement its kind of database offers in turn; None when none answers (no catalog we can read)"""
+    for kind, sql in dialects.catalog_queries(info["dbms"], schema):
+        out: dict[str, dict[str, dict[str, Any]]] = {}
+        page, ok = 0, True
+        while True:
+            try:
+                rows = live.run_sql(m, info["id"], _paged(info["dbms"], sql, page))
+            except RuntimeError:
+                ok = page > 0                           # a later page failing keeps what was read; a first one tries the next statement
+                break
+            for r in rows:
+                t = out.setdefault(r["s"], {}).setdefault(r["t"], {"table": r["t"], "rows": _int(r.get("n")), "comment": r.get("tc") or "", "columns": []})
+                if kind == "tables":
+                    names = str(r.get("cols") or "").split(SEP)
+                    notes = str(r.get("cc") or "").split(SEP) + [""] * len(names)
+                    t["columns"] += [{"name": n, "comment": notes[i]} for i, n in enumerate(names) if n]
+                    if _int(r.get("k")) and len(t["columns"]) < _int(r.get("k")):
+                        ok = False                      # the database cut the joined list short: read one row per column instead
+                else:
+                    t["columns"].append({"name": r["c"], "comment": r.get("cc") or ""})
+            if not ok or len(rows) < PAGE or page >= 199 or (deadline and time.monotonic() > deadline):
+                break
+            page += 1
+        if ok and out:
+            return {s_: list(ts.values()) for s_, ts in out.items()}
+    return None
 
 
-def schema_tables(m, live, matrix, info: dict[str, Any], schema: str) -> tuple[list[dict[str, Any]], str]:
-    """one schema's tables with their columns and comments ("catalog views"), or only their names from Strategy's
-    catalog when the source has no catalog views we can read ("names")"""
-    got = catalog_tables(m, live, info, schema)
+def schema_tables(m, live, matrix, info: dict[str, Any], schema: str, deadline: float | None = None) -> tuple[list[dict[str, Any]], str]:
+    """one schema's tables with their columns and comments ("catalog views"); for sources with no catalog we can read
+    (NoSQL stores, SaaS and file connectors) Strategy's own catalog: the table names, and the columns of up to 40
+    tables ("catalog API")"""
+    got = catalog_tables(m, live, info, schema, deadline)
     if got:
-        return got.get(schema, []), "catalog views"
-    return [{"table": n, "rows": None, "comment": "", "columns": []} for n in matrix.list_tables(m, info["id"], schema)], "names"
+        # BigQuery names a dataset without its project ("Sales" for "project.Sales")
+        return got.get(schema) or next((v for k, v in got.items() if schema.endswith("." + k)), []), "catalog views"
+    import build_mosaic as bm
+    names = matrix.list_tables(m, info["id"], schema)
+    tables = []
+    for i, n in enumerate(names):
+        cols = []
+        if i < 40 and (deadline is None or time.monotonic() < deadline):
+            try:
+                md = bm.fetch_table_metadata(m, info["id"], schema, n)
+                cols = [{"name": c.get("name") or c.get("columnName"), "comment": c.get("description") or ""} for c in md.get("columns", [])]
+            except Exception:  # noqa: BLE001 - a table whose columns cannot be listed is judged by its name
+                cols = []
+        tables.append({"table": n, "rows": None, "comment": "", "columns": [c for c in cols if c["name"]]})
+    return tables, "catalog API"
+
+
+def _bounded(fn, seconds: float):
+    """fn() with a time limit: a source that hangs (unreachable, retrying) is given up on, never waited for"""
+    import concurrent.futures as cf
+    ex = cf.ThreadPoolExecutor(max_workers=1)
+    try:
+        return ex.submit(fn).result(timeout=seconds)
+    except cf.TimeoutError:
+        raise RuntimeError("no answer in time") from None
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
 
 
 def _int(v) -> int | None:
@@ -343,7 +340,7 @@ def pick_datasets(found: list[dict[str, Any]], want: list[str], usage: dict[str,
 
 def find(m, query: str, scopes: list[dict[str, Any]] | None = None, *, references: list[dict[str, Any]] | None = None,
          usage: dict[str, int] | None = None, budget: float = 120.0, max_tables: int = 24, anchors: list[dict[str, str]] | None = None,
-         log=lambda s: None) -> dict[str, Any]:
+         datasets: int = 5, per_source: float | None = None, log=lambda s: None) -> dict[str, Any]:
     """{picked: [{datasource_id, datasource, dbms, schema, table, score, why, role}], read: [...], left: [...], terms}.
 
     anchors: tables the model starts from ({datasource, schema, table}); they are always picked (role "anchor"), the
@@ -352,6 +349,8 @@ def find(m, query: str, scopes: list[dict[str, Any]] | None = None, *, reference
     import mosaic_live as live
     import mosaic_matrix as matrix
     deadline = time.monotonic() + budget
+    per_source = per_source or max(10.0, min(60.0, budget / 3))
+    unreadable: list[str] = []
     refs = references or []
     want = terms(query + " " + " ".join(r.get("text", "")[:2000] for r in refs if r.get("kind") in ("document", "data", "image")))
     if not want and anchors:
@@ -379,8 +378,9 @@ def find(m, query: str, scopes: list[dict[str, Any]] | None = None, *, reference
             log(f"  · {sc['datasource']}: not readable, left out")
             continue
         schemas = [sc["schema"]] if sc.get("schema") else []
+        source_deadline = min(deadline, time.monotonic() + per_source)    # one slow or broken source never holds the rest
         if not schemas and time.monotonic() < deadline:
-            whole = catalog_tables(m, live, info, None, deadline)      # every schema at once, when the source allows it
+            whole = catalog_tables(m, live, info, None, source_deadline)      # every schema at once, when the source allows it
             if whole is not None:
                 log(f"  · {info['name']}: {len(whole)} schemas, {sum(len(x) for x in whole.values())} tables read from its catalog")
                 for schema, tables in whole.items():
@@ -390,9 +390,10 @@ def find(m, query: str, scopes: list[dict[str, Any]] | None = None, *, reference
                 continue
         if not schemas:
             try:
-                schemas = matrix.list_schemas(m, info["id"])
-            except Exception:  # noqa: BLE001
-                log(f"  · {info['name']}: its schemas could not be listed, left out")
+                schemas = _bounded(lambda: matrix.list_schemas(m, info["id"]), max(1.0, source_deadline - time.monotonic()))
+            except Exception as e:  # noqa: BLE001 - a source that does not answer is said and skipped
+                log(f"  · {info['name']}: not readable ({str(e)[:80] or 'no answer in time'}), left out")
+                unreadable.append(info["name"])
                 continue
         for schema in schemas:
             # schemas whose names fit, or whose tables existing models use, are read first
@@ -419,7 +420,8 @@ def find(m, query: str, scopes: list[dict[str, Any]] | None = None, *, reference
             log(f"  · time budget reached: {len(left)} schema{'s' if len(left) != 1 else ''} not read")
             break
         try:
-            tables, how = (pre[(info["id"], schema)], "catalog views") if (info["id"], schema) in pre else schema_tables(m, live, matrix, info, schema)
+            tables, how = (pre[(info["id"], schema)], "catalog views") if (info["id"], schema) in pre else \
+                _bounded(lambda: schema_tables(m, live, matrix, info, schema, time.monotonic() + per_source), per_source + 5)
         except Exception as e:  # noqa: BLE001 - one schema that cannot be read never ends the search
             log(f"  {info['name']}/{schema}: not readable ({str(e)[:80]})")
             continue
@@ -446,5 +448,6 @@ def find(m, query: str, scopes: list[dict[str, Any]] | None = None, *, reference
         out = anchored + partners(anchored, found, max_tables - len(anchored))
         return {"terms": want, "picked": [{k: v for k, v in p.items() if not k.startswith("_")} for p in out], "read": read, "left": left,
                 "candidates": len(found)}
-    picked, top = pick_datasets(found, want, use, referenced, max_tables)
-    return {"terms": want, "picked": [{k: v for k, v in p.items() if not k.startswith("_")} for p in picked], "read": read, "left": left, "candidates": len(top)}
+    picked, top = pick_datasets(found, want, use, referenced, max_tables, datasets)
+    return {"terms": want, "picked": [{k: v for k, v in p.items() if not k.startswith("_")} for p in picked], "read": read, "left": left,
+            "unreadable": unreadable, "candidates": len(top)}
