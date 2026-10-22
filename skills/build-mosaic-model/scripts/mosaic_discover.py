@@ -343,24 +343,25 @@ def _stats_overlap(a: dict | None, b: dict | None) -> float | None:
 
 def view_copies(tables: dict) -> set:
     """views and copies of another scanned table: FACT_X_V, FACT_X2, FACT_X_COPY or FACT_X_NEW beside FACT_X with
-    (nearly) the same columns repeat it, so the base table is used and they are left out"""
+    (nearly) the same columns repeat it, so the base table is used and they are left out. A copy's name starts with its
+    base's, so each name's own prefixes are looked up (linear in the tables, not every pair)."""
     norm = lambda n: re.sub(r"[^a-z0-9]", "", n.casefold())  # noqa: E731
+    by_name = {(t["datasource_id"], t.get("schema"), t["table"].casefold()): k for k, t in tables.items()}
+    cols_of: dict[str, set] = {}
+    cols = lambda k: cols_of.setdefault(k, {norm(c["name"]) for c in tables[k]["columns"]})  # noqa: E731
     out = set()
     for k, t in tables.items():
-        cols = {norm(c["name"]) for c in t["columns"]}
-        for kk, other in tables.items():
-            if kk == k or other["datasource_id"] != t["datasource_id"] or other.get("schema") != t.get("schema"):
-                continue
-            base = other["table"].casefold()
-            name = t["table"].casefold()
+        name = t["table"].casefold()
+        for cut in range(1, len(name)):
             # the copy's name is the base's plus a suffix: digits, or _v/_vw/_view, or _<word>
-            if not (name != base and name.startswith(base) and re.fullmatch(r"_?(\d+|v|vw|view|[a-z]+)", name[len(base):])):
+            kk = by_name.get((t["datasource_id"], t.get("schema"), name[:cut]))
+            if kk is None or kk == k or not re.fullmatch(r"_?(\d+|v|vw|view|[a-z]+)", name[cut:]):
                 continue
-            ocols = {norm(c["name"]) for c in other["columns"]}
-            suffix = name[len(base):].lstrip("_")
+            suffix = name[cut:].lstrip("_")
             need = 0.8 if re.fullmatch(r"\d+|v|vw|view", suffix) else 0.9
-            if len(cols & ocols) >= need * max(len(cols), 1):
+            if len(cols(k) & cols(kk)) >= need * max(len(cols(k)), 1):
                 out.add(k)
+                break
     return out
 
 
@@ -418,7 +419,8 @@ def infer(graph: dict, options: dict | None = None, curation: dict | None = None
         tok = (t.get("datasource_id"), t.get("schema"), t["table"].split("_")[0].casefold())
         if "_" in t["table"] and first.get(tok, 0) >= 3 and not t["family"].endswith("#star") and not re.match(r"^SD_[A-Z]+_[A-Z0-9]+_\d{8}_\d{4}_", t["table"], re.I):
             t["family"] = f"{tok[0]}/{tok[1]}#{tok[2]}"
-    tables = {k: t for k, t in tables.items() if k not in view_copies(tables)}
+    copies = view_copies(tables)                        # once: inside the comprehension it ran per table (n³ on large scans)
+    tables = {k: t for k, t in tables.items() if k not in copies}
     entities: dict[str, dict] = {}
     declared: set[tuple[str, str]] = set()
 
@@ -629,9 +631,14 @@ def recommend(inferred: dict, options: dict | None = None) -> list[dict]:
     for l in links:
         adj.setdefault(l["from"], []).append(l)
         adj.setdefault(l["to"], []).append(l)
-    keyed = {k: {c for e in inferred["entities"] for kk, c in e["members"].items() if kk == k} for k in tables}
+    keyed: dict[str, set] = {k: set() for k in tables}                 # each table's key columns, one pass over entities
+    for e in inferred["entities"]:
+        for kk, c in e["members"].items():
+            if kk in keyed:
+                keyed[kk].add(c)
     homes = {e["home"] for e in inferred["entities"] if len(e["members"]) >= 2}
-    facts = [k for k, t in tables.items() if _is_fact(t, keyed[k], k in homes) and any(l["to"] == k for l in links)]
+    pointed_to = {l["to"] for l in links}
+    facts = [k for k, t in tables.items() if _is_fact(t, keyed[k], k in homes) and k in pointed_to]
     seen, out = set(), []
     stars: dict[frozenset, dict] = {}
     for f in facts:
@@ -657,15 +664,17 @@ def recommend(inferred: dict, options: dict | None = None) -> list[dict]:
     # a galaxy: facts that share a conformed dimension (the same Date, Plant or Machine) also make one model together,
     # offered beside each fact's own star while it stays within the table limit
     galaxies, pool = [], [st for st in stars.values() if len(st["group"]) >= opts["min_tables"]]
-    shared = lambda a, b: (a["group"] - set(a["facts"])) & (b["group"] - set(b["facts"]))  # noqa: E731
+    dims_of = {id(st): st["group"] - set(st["facts"]) for st in pool}
     seen_comp: set[frozenset] = set()
     for i, st in enumerate(pool):
+        # sharing a dimension with any star in the group = sharing one with the union of their dimensions
         comp, grew = [st], True
+        in_comp, comp_dims, comp_group = {id(st)}, set(dims_of[id(st)]), set(st["group"])
         while grew:
             grew = False
             for other in pool:
-                if other not in comp and any(shared(other, c) for c in comp) and len(set().union(*(c["group"] for c in comp)) | other["group"]) <= opts["max_tables"]:
-                    comp.append(other); grew = True
+                if id(other) not in in_comp and not dims_of[id(other)].isdisjoint(comp_dims) and len(comp_group | other["group"]) <= opts["max_tables"]:
+                    comp.append(other); in_comp.add(id(other)); comp_dims |= dims_of[id(other)]; comp_group |= other["group"]; grew = True
         if len(comp) > 1:
             key = frozenset(id(c) for c in comp)
             if key not in seen_comp:
