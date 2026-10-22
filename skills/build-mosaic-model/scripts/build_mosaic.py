@@ -2460,7 +2460,10 @@ def cmd_build(m: MSTR, args):
     for pk_col in sorted(entity_pks):          # sorted: the same build every run
         actual_col = col_tables_upper.get(pk_col)
         if actual_col is None: continue
-        occs = col_tables[actual_col]
+        # Every table carrying the key in any case (Snowflake SHIPMENT_ID, Postgres shipment_id), each
+        # expression naming its own table's column: the relationships below match case-insensitively,
+        # and a relationship through a table the attribute is not on is refused (HTTP 400).
+        occs = [dict(o, col=c) for c in sorted(col_tables) if c.upper() == pk_col.upper() for o in col_tables[c]]
         home = col_home[actual_col]
         # Pick a short-friendly name — e.g. "PRODUCT_ID" -> "Product"
         base_entity_name = friendly_col(pk_col).replace(" Id","").replace(" ID","").strip() or friendly_col(pk_col)
@@ -2469,7 +2472,7 @@ def cmd_build(m: MSTR, args):
         name = ov.get("name") or base_entity_name
         desc = ov.get("description") or f"Unique {friendly_col(pk_col)} identifier; key of the {friendly_table(home['table'])} entity."
         expressions = [
-            {"expression": {"tokens":[{"type":"column_reference","value": actual_col}]},
+            {"expression": {"tokens":[{"type":"column_reference","value": o["col"]}]},
              "tables": [{"objectId": o["table_id"], "subType":"logical_table", "name": o["table"]}]}
             for o in occs
         ]
