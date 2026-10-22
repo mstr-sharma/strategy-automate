@@ -123,7 +123,7 @@ def _table_keys(plan: dict, prof: dict) -> dict[str, dict]:
             if uniq is False:
                 continue
             score = (4 if a["lookup"] == t else 0) + (2 if len(ids) > 1 else 0) + (1 if len(a["forms"]) > 1 else 0) + (1 if KEYISH.search(ids[t]) else 0)
-            scored.append((score, uniq, a["name"]))
+            scored.append((score, uniq is True, a["name"]))      # measured unique beats not measured; never compares None
         if not scored:
             out[t] = {"attribute": None, "note": f"{t} has no single-column key among its attributes; its attributes relate to the rest of the model only through the attributes it shares."}
             continue
@@ -320,3 +320,62 @@ def _reach(plan: dict) -> dict[str, set[str]]:
 
 def errors(findings: list[dict]) -> list[dict]:
     return [f for f in findings if f["level"] == "error"]
+
+
+# ── a specification drafted from the tables alone (the test runner's generated cases, scripts without a design) ─────
+KEY_COLUMN = re.compile(r"(?:^|_)(?:id|key|number|num|no|code)$", re.I)
+
+
+def _friendly(name: str) -> str:
+    keep = {"ID", "SKU", "PO", "URL", "API", "IP", "UID", "GUID", "USA", "UK", "EU", "YTD", "MTD"}
+    return " ".join(p.upper() if p.upper() in keep else p.capitalize() for p in re.split(r"[_\s-]+", name) if p)
+
+
+def _short_table(table: str) -> str:
+    return _friendly(re.sub(r"^[A-Za-z]+(?:_[A-Za-z]+)*_\d{6,}(?:_\d+)*_", "", table))
+
+
+def spec_from_tables(cat: dict[str, Any], prof: dict[str, Any] | None = None, name: str = "Generated model") -> dict[str, Any]:
+    """keys (…_ID, …_KEY, …_NUMBER, …_CODE) become attributes shared by every table that carries them, in each table's
+    own spelling, defined by the table where they are unique; other text and dates become attributes of their table;
+    numbers become summed metrics. A bare `id` is never shared: it is a different thing on every table."""
+    prof = prof or {}
+    tables = cat["tables"]
+    used: set[str] = set()
+
+    def unique_name(base: str, table: str) -> str:
+        n = base if base.casefold() not in used else f"{base} ({_short_table(table)})"
+        used.add(n.casefold())
+        return n
+    keys: dict[str, list[tuple[str, str]]] = {}
+    for t in tables:
+        for c in t["columns"]:
+            if KEY_COLUMN.search(c["name"]) and _family(c.get("dataType")) in ("number", "text"):
+                k = c["name"].casefold() if c["name"].casefold() != "id" else f"{t['table'].casefold()}.id"
+                keys.setdefault(k, []).append((t["table"], c["name"]))
+    attributes, metrics = [], []
+    keyed = set()
+    for k, occ in sorted(keys.items()):
+        def unique_on(tc):
+            p = prof.get(tc[0]) or {}
+            return p.get("measured") and (p.get("distinct") or {}).get(tc[1]) == p.get("rows")
+        stem = re.sub(KEY_COLUMN, "", occ[0][1]).strip("_") or _short_table(occ[0][0])
+        home = next((tc for tc in occ if unique_on(tc) and stem.casefold().rstrip("s") in tc[0].casefold()), None) \
+            or next((tc for tc in occ if unique_on(tc)), occ[0])
+        attributes.append({"name": unique_name(_friendly(stem), home[0]), "description": "", "lookup_table": home[0],
+                           "forms": [{"name": "ID", "category": "ID", "table": t, "column": c} for t, c in occ]})
+        keyed |= {(t, c) for t, c in occ}
+    for t in tables:
+        for c in t["columns"]:
+            if (t["table"], c["name"]) in keyed:
+                continue
+            fam = _family(c.get("dataType"))
+            if fam == "number":
+                metrics.append({"name": unique_name(_friendly(c["name"]), t["table"]), "description": "", "table": t["table"],
+                                "column": c["name"], "function": "sum", "format": "fixed2"})
+            elif fam in ("text", "time"):
+                attributes.append({"name": unique_name(_friendly(c["name"]), t["table"]), "description": "", "lookup_table": t["table"],
+                                   "time": fam == "time", "forms": [{"name": "ID", "category": "ID", "table": t["table"], "column": c["name"]}]})
+    return {"name": name, "description": "", "serve_mode": "in_memory",
+            "sources": [{"instance_id": t["datasource_id"], "instance": t["datasource"], "schema": t["schema"], "table": t["table"]} for t in tables],
+            "attributes": attributes, "metrics": metrics, "derived": [], "conditional": [], "relationships": []}

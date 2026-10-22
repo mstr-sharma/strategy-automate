@@ -138,3 +138,31 @@ class CheckTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SpecFromTablesTests(unittest.TestCase):
+    def test_tables_alone_plan_like_a_hand_made_design(self):
+        spec = mp.spec_from_tables(FIX["catalog"], FIX["profile"], "Freight")
+        p = mp.from_spec(spec, FIX["catalog"], FIX["profile"])
+        self.assertEqual(codes(p), set(), mp.check(p))
+        self.assertEqual(p["keys"], {SHIP: "Shipment", "SD_RETAIL_FREIGHT_PRODUCTS": "Product", CUST: "Customer", CARR: "Carrier",
+                                     PERF: "Shipment", INV: "Invoice"})
+        shipment = next(a for a in spec["attributes"] if a["name"] == "Shipment")
+        self.assertEqual(len(shipment["forms"]), 3)                     # SHIPMENT_ID and both shipment_id, one attribute
+        self.assertTrue(all(m["function"] == "sum" for m in spec["metrics"]))
+
+    def test_a_bare_id_is_never_shared_and_names_never_collide(self):
+        cat = {"tables": [{"datasource_id": "D", "datasource": "S", "dbms": "PostgreSQL", "schema": "s", "table": t,
+                           "columns": [{"name": "id", "dataType": {"type": "integer"}}, {"name": "name", "dataType": {"type": "utf8_char"}},
+                                       {"name": "amount", "dataType": {"type": "double"}}]} for t in ("orders", "refunds")]}
+        spec = mp.spec_from_tables(cat, {}, "Two")
+        ids = [a for a in spec["attributes"] if any(f["column"] == "id" for f in a["forms"])]
+        self.assertEqual(len(ids), 2)                                   # one per table
+        names = [a["name"] for a in spec["attributes"]] + [m["name"] for m in spec["metrics"]]
+        self.assertEqual(len(names), len({n.casefold() for n in names}))
+
+    def test_an_unmeasured_key_candidate_never_breaks_key_ranking(self):
+        prof = copy.deepcopy(FIX["profile"])
+        prof[INV]["distinct"].pop("invoice_number")                    # one candidate measured, one not
+        p = mp.from_spec(copy.deepcopy(FIX["spec"]), FIX["catalog"], prof)
+        self.assertIn(INV, p["keys"])
