@@ -148,7 +148,16 @@ def _relationships(plan: dict, keys: dict[str, dict], prof: dict) -> list[dict]:
             # in a small table (4 carriers, 4 service levels) is still one-to-many
             one = _unique(prof, t, ids[t]) is True and any(o.get("attribute") == a["name"] for o in keys.values())
             rels.append({"parent": a["name"], "child": key, "table": t, "type": "one_to_one" if one else "one_to_many", "source": "key"})
-    return rels
+    # Strategy keeps one relationship per pair of attributes, on one table: two fact tables keyed the same way (telemetry
+    # and usage snapshots, both by usage) would give the pair twice, and the second is refused (HTTP 400). Keep the one
+    # on the child's lookup table, else the first.
+    lookup = {a["name"]: a["lookup"] for a in plan["attributes"]}
+    best: dict[tuple[str, str], dict] = {}
+    for r in rels:
+        pair = (r["parent"], r["child"])
+        if pair not in best or (r["table"] == lookup.get(r["child"]) and best[pair]["table"] != lookup.get(r["child"])):
+            best[pair] = r
+    return list(best.values())
 
 
 def _explicit(plan: dict, explicit: list[dict], c: Catalog) -> None:
@@ -220,6 +229,8 @@ def check(plan: dict[str, Any]) -> list[dict[str, str]]:
         key = frozenset((r["parent"], r["child"]))
         if key in pairs and pairs[key] != (r["parent"], r["child"]):
             add("error", "relationship_both_ways", f"{r['parent']} and {r['child']} are related in both directions.")
+        elif key in pairs:
+            add("error", "relationship_twice", f"{r['parent']} → {r['child']} is set on more than one table; Strategy keeps one.")
         pairs[key] = (r["parent"], r["child"])
     cycle = _cycle(plan["relationships"])
     if cycle:

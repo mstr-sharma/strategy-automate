@@ -78,6 +78,16 @@ class PlanFromSpecTests(unittest.TestCase):
 
 
 class CheckTests(unittest.TestCase):
+    def test_a_pair_on_two_tables_is_planned_once_on_the_childs_lookup_and_twice_is_an_error(self):
+        # Strategy keeps one relationship per pair (live: the second table's copy answered HTTP 400)
+        spec = copy.deepcopy(FIX["spec"])
+        ship_date = next(a for a in spec["attributes"] if a["name"] == "Ship Date")
+        ship_date["forms"].append({"name": "ID", "category": "ID", "table": PERF, "column": "delivered_date"})   # both tables keyed by shipment
+        p = mp.from_spec(spec, FIX["catalog"], FIX["profile"])
+        self.assertEqual([r["table"] for r in p["relationships"] if (r["parent"], r["child"]) == ("Ship Date", "Shipment")], [SHIP])
+        p["relationships"].append({**rel(p, "Customer", "Shipment"), "table": PERF})
+        self.assertIn("relationship_twice", codes(p))
+
     def test_a_relationship_through_a_table_its_parent_is_not_on_is_an_error(self):
         p = plan()
         p["relationships"].append({"parent": "Customer", "child": "Invoice", "table": INV, "type": "one_to_many"})
