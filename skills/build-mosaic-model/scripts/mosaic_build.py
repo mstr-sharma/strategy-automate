@@ -64,7 +64,13 @@ def cmd_plan(args) -> int:
     spec = json.load(open(args.spec))
     m = live.sign_in_from_env()
     plan, findings, _ = plan_for(m, spec)
-    print(json.dumps({"plan": plan, "findings": findings}, default=str))
+    result = json.dumps({"plan": plan, "findings": findings}, default=str)
+    if args.out:                                    # a plan is larger than a progress line: callers read it from a file
+        with open(args.out, "w") as fh:
+            fh.write(result)
+        say(f"plan written: {args.out}")
+    else:
+        print(result)
     return 2 if mp.errors(findings) else 0
 
 
@@ -186,6 +192,7 @@ def main() -> int:
     b.add_argument("--name")
     p = sub.add_parser("plan")
     p.add_argument("--spec", required=True)
+    p.add_argument("--out", help="write the plan and findings here instead of stdout")
     args = ap.parse_args()
     return cmd_build(args) if args.cmd == "build" else cmd_plan(args)
 
