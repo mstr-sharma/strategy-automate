@@ -528,7 +528,7 @@ def recommend(inferred: dict, options: dict | None = None) -> list[dict]:
             findings = [{"level": "error", "code": "plan", "text": str(e)}]
         problems = [x["text"] for x in findings if x["level"] == "error"]
         out.append({"checked": not problems, "problems": problems[:3], "kind": st.get("kind", "star"),
-                    "name": name, "fact": tables[f]["table"], "tables": [t["table"] for t in cat["tables"]], "table_keys": [tkey(t) for t in cat["tables"]],
+                    "name": name, "fact": tables[f]["table"], "fact_tables": [tables[x]["table"] for x in st["facts"]], "tables": [t["table"] for t in cat["tables"]], "table_keys": [tkey(t) for t in cat["tables"]],
                     "stores": stores, "facts": n_facts, "score": score, "confidence": round(conf, 2), "modeled": round(modeled, 2), "reasons": reasons, "spec": spec})
     return sorted(out, key=lambda r: (not r["checked"], -r["score"]))      # ready to build first
 
