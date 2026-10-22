@@ -115,12 +115,22 @@ def _table_keys(plan: dict, prof: dict) -> dict[str, dict]:
     this table, it is shared with other tables, it has name forms); between two such, the one more tables share (the
     conformed key, not a surrogate only the dimensions use). Ties beyond that are refused, not guessed."""
     out: dict[str, dict] = {}
+    measured_on = {m["table"] for m in plan["metrics"]}
     for t in (x["table"] for x in plan["tables"]):
         scored = []
         for a in plan["attributes"]:
             ids = _id_columns(a)
             if t not in ids:
                 continue
+            # a table of measures keyed by a shared dimension's key is a one-to-one extension of that dimension only when it
+            # covers every member (a delivery record for every shipment). One that covers some (a certified sale for 4,000
+            # of 10,000 vehicles) would make its own attributes (the sale date) describe the dimension, and other facts'
+            # numbers broken down by them would lose the rest: measured, it is not that table's key
+            if t in measured_on and a["lookup"] != t and len(ids) > 1:
+                pt, pl = prof.get(t) or {}, prof.get(a["lookup"]) or {}
+                covered = (pt.get("distinct") or {}).get(ids[t])
+                if pt.get("measured") and pl.get("measured") and covered is not None and pl.get("rows") and covered < pl["rows"]:
+                    continue
             uniq = _unique(prof, t, ids[t])
             if uniq is False:
                 continue

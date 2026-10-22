@@ -233,3 +233,25 @@ class WarehousePatterns(unittest.TestCase):
                          "DS/S/PROVIDER_NAMES": {"measured": True, "rows": 41000, "distinct": {"PROVIDER_ID": 41000}, "nulls": {}}}}
         provider = next(e for e in md.infer(g)["entities"] if e["name"] == "Provider")
         self.assertEqual(provider["home"], "DS/S/PROVIDER_NAMES")
+
+
+class PartialExtensionFacts(unittest.TestCase):
+    """Found in a live proof: a fact unique on a shared dimension's key but covering only some of it (4,000 certified
+    sales over 10,000 vehicles) must not be keyed by it, or other facts break down by its attributes and lose rows."""
+
+    def test_a_fact_covering_part_of_a_dimension_is_not_keyed_by_it(self):
+        V, C, W = (table("DS", "Snowflake", "S", n, cols) for n, cols in (
+            ("DIM_VEHICLE", [("VEHICLE_ID", N), ("MODEL", T)]),
+            ("FCT_CPO_SALES", [("VEHICLE_ID", N), ("CPO_SALE_DATE", D), ("CPO_GROSS_PROFIT", N)]),
+            ("FCT_WARRANTY_CLAIM", [("CLAIM_ID", N), ("VEHICLE_ID", N), ("DAYS_TO_PAY", N)])))
+        spec = mp.spec_from_tables({"tables": [V, C, W]}, {}, "x", entities=[{"name": "Vehicle", "home": "DIM_VEHICLE",
+            "members": [("DIM_VEHICLE", "VEHICLE_ID"), ("FCT_CPO_SALES", "VEHICLE_ID"), ("FCT_WARRANTY_CLAIM", "VEHICLE_ID")]}])
+        prof = {"DIM_VEHICLE": {"measured": True, "rows": 10000, "distinct": {"VEHICLE_ID": 10000}, "nulls": {}},
+                "FCT_CPO_SALES": {"measured": True, "rows": 4000, "distinct": {"VEHICLE_ID": 4000, "CPO_SALE_DATE": 705}, "nulls": {}},
+                "FCT_WARRANTY_CLAIM": {"measured": True, "rows": 20000, "distinct": {"CLAIM_ID": 20000, "VEHICLE_ID": 9000}, "nulls": {}}}
+        plan = mp.from_spec(spec, {"tables": [V, C, W]}, prof)
+        self.assertNotIn("FCT_CPO_SALES", plan["keys"])
+        self.assertFalse(any(r["table"] == "FCT_CPO_SALES" for r in plan["relationships"]))
+        # covering every vehicle, it is a one-to-one extension and keeps the key
+        prof["FCT_CPO_SALES"]["distinct"]["VEHICLE_ID"] = prof["FCT_CPO_SALES"]["rows"] = 10000
+        self.assertEqual(mp.from_spec(spec, {"tables": [V, C, W]}, prof)["keys"].get("FCT_CPO_SALES"), "Vehicle")
