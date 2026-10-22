@@ -158,13 +158,25 @@ def cmd_build(args) -> int:
     say("→ Proving: asking the model real questions and comparing the answers with the sources…")
     sql = _sql(m)
     deadline = time.time() + SQL_SURFACE_WAIT
+    republished = False
     while True:
         try:
             sql(f'SHOW COLUMNS FROM "{plan["name"]}"')
             break
         except (SystemExit, Exception) as e:  # noqa: BLE001 - the SQL surface lists a new model after a short delay
+            if time.time() > deadline and plan["serve_mode"] == "in_memory" and not republished:
+                # seen live: the SQL endpoint can miss one publish of a sound model; publishing again makes it list it
+                republished = True
+                say(f"  ↳ the SQL endpoint has not listed the model after {SQL_SURFACE_WAIT}s; publishing it again once…")
+                try:
+                    ma.publish(m, mid, sum(p.get("rows", 0) for p in prof.values()))
+                    say("  ✓ published again")
+                except ma.ApplyError as pe:
+                    say(f"  ↳ publishing again did not finish: {str(pe)[:160]}")
+                deadline = time.time() + SQL_SURFACE_WAIT
+                continue
             if time.time() > deadline:
-                say(f"PROOF FAILED: the model is not on the SQL surface after {SQL_SURFACE_WAIT}s ({str(e)[:160]})")
+                say(f"PROOF FAILED: the model is not on the SQL surface after {SQL_SURFACE_WAIT}s{' and a second publish' if republished else ''} ({str(e)[:160]})")
                 summary["failures"]["post_build"] = 1
                 print(json.dumps(summary))
                 return 1
