@@ -89,6 +89,11 @@ def from_spec(spec: dict[str, Any], cat: dict[str, Any], prof: dict[str, Any] | 
     plan["notes"] += [k["note"] for k in keys.values() if k.get("note")]
     plan["relationships"] = _relationships(plan, keys, prof)
     _explicit(plan, spec.get("relationships", []), c)
+    # relationships the person switched off ("Parent → Child"); the check then says what that costs
+    off = {re.sub(r"\s+", " ", x).strip().casefold() for x in spec.get("excluded_relationships") or []}
+    if off:
+        plan["excluded"] = [r for r in plan["relationships"] if f"{r['parent']} → {r['child']}".casefold() in off]
+        plan["relationships"] = [r for r in plan["relationships"] if f"{r['parent']} → {r['child']}".casefold() not in off]
     return plan
 
 

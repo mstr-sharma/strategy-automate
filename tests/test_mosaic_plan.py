@@ -70,6 +70,14 @@ class PlanFromSpecTests(unittest.TestCase):
         self.assertEqual(p["keys"][SHIP], "Shipment")
         self.assertTrue(any("could not be measured" in n for n in p["notes"]))
 
+    def test_a_switched_off_relationship_is_left_out_and_the_check_says_what_it_costs(self):
+        spec = copy.deepcopy(FIX["spec"])
+        spec["excluded_relationships"] = ["Region → Customer"]
+        p = plan(spec)
+        self.assertIsNone(rel(p, "Region", "Customer"))
+        self.assertEqual([(r["parent"], r["child"]) for r in p["excluded"]], [("Region", "Customer")])
+        self.assertIn("attribute_reaches_no_metric", codes(p))          # Region then answers nothing
+
     def test_a_column_the_catalog_does_not_have_is_refused(self):
         spec = copy.deepcopy(FIX["spec"])
         spec["metrics"][0]["column"] = "NOT_THERE"

@@ -100,7 +100,7 @@ def apply(m: bm.MSTR, plan: dict, dest_folder_id: str, log=print) -> dict[str, A
                                                                                    "description": plan.get("description", "")[:250]},
                                                              "dataServeMode": plan["serve_mode"]}), "create model", None)
         model_id = body["information"]["objectId"]
-        log(f"  model {model_id}")
+        log(f"  model_id={model_id}")
         tid: dict[str, str] = {}
         for t in plan["tables"]:
             tid[t["table"]] = _ok(m.post(f"/api/model/dataModels/{model_id}/tables", json=_table_body(t)), f"table {t['table']}", model_id)["information"]["objectId"]
@@ -222,7 +222,7 @@ def sql_columns(model_rows: list[dict]) -> dict[str, str]:
     return {str(r.get("Column") or r.get("column") or "").lower(): str(r.get("Column") or r.get("column")) for r in model_rows}
 
 
-def prove(m: bm.MSTR, plan: dict, *, sql, source_sql=live.run_sql, attempts: int = 1) -> dict[str, Any]:
+def prove(m: bm.MSTR, plan: dict, *, sql, source_sql=live.run_sql, attempts: int = 1, breakdowns_per_table: int | None = None) -> dict[str, Any]:
     """sql(statement) -> rows: the model's SQL surface (Trino). Returns {ok, probes: [{name, ok, detail}]}. A dropped
     connection is retried; anything else a query raises is that probe's failure, never the end of the proof."""
     raw_sql = sql
@@ -250,6 +250,7 @@ def prove(m: bm.MSTR, plan: dict, *, sql, source_sql=live.run_sql, attempts: int
         return hits[0] if hits else next((c for k, c in cols.items() if k.startswith(base + " (")), None)
 
     reach = mp._reach(plan)
+    broken_down: dict[str, int] = {}                    # fact table -> metrics already broken down by every attribute
     for mt in [x for x in plan["metrics"] if x["function"] in ("sum", "count")]:
         mcol = cols.get(mt["name"].lower())
         if not mcol:
@@ -272,6 +273,9 @@ def prove(m: bm.MSTR, plan: dict, *, sql, source_sql=live.run_sql, attempts: int
         if total_src is not None:
             same = total_model is not None and abs(total_model - total_src) <= TOLERANCE * max(1.0, abs(total_src))
             probes.append({"name": f"{mt['name']} total", "ok": same, "detail": f"model {total_model} · source {total_src}"})
+        if breakdowns_per_table is not None and broken_down.get(mt["table"], 0) >= breakdowns_per_table:
+            continue                                    # its total is proven; the breakdowns were proven on another metric
+        broken_down[mt["table"]] = broken_down.get(mt["table"], 0) + 1
         for a in plan["attributes"]:
             if mt["table"] not in reach[a["name"]]:
                 continue
