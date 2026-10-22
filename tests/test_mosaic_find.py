@@ -103,3 +103,29 @@ class FindTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AnchorTests(unittest.TestCase):
+    def test_anchors_are_kept_and_their_key_partners_found_in_any_schema(self):
+        found, _ = run("", scopes=[{"datasource": "SF"}], anchors=[{"datasource": "SF", "schema": "MFG", "table": "FACT_DOWNTIME_EVENTS"}])
+        roles = {p["table"]: p["role"] for p in found["picked"]}
+        self.assertEqual(roles["FACT_DOWNTIME_EVENTS"], "anchor")
+        self.assertEqual(roles.get("DIM_MACHINE"), "join")                  # shares MACHINE_CODE
+        self.assertEqual(roles.get("DIM_PLANT"), "join")                    # shares PLANT_ID
+        self.assertNotIn("ORDERS", roles)                                   # shares no key
+        self.assertTrue(found["terms"])                                     # words from the anchor when nothing was described
+
+
+class PartnerTests(unittest.TestCase):
+    def test_rare_keys_in_the_same_schema_beat_a_generic_key_elsewhere(self):
+        """seen live: EVENT_ID pulled event tables from unrelated schemas ahead of the machine and plant dimensions"""
+        row = lambda schema, table, cols: {"datasource_id": "SF", "schema": schema, "table": table, "columns": cols, "why": [], "score": 0}  # noqa: E731
+        anchor = row("MFG", "FACT_DOWNTIME_EVENTS", ["EVENT_ID", "MACHINE_CODE", "PLANT_ID", "REASON_CODE"])
+        found = [anchor, row("MFG", "DIM_MACHINE", ["MACHINE_CODE", "PLANT_ID"]), row("MFG", "DIM_PLANT", ["PLANT_KEY", "SOURCE_PLANT_ID"]),
+                 row("CARDS", "DIM_DECLINE_REASON", ["REASON_CODE"]), row("DBT", "MY_MODEL", ["ID", "CODE"])] + \
+                [row(f"OTHER{i}", f"FACT_THING_EVENTS_{i}", ["EVENT_ID", "THING_ID"]) for i in range(30)]
+        picked = mf.partners([anchor], found, 4)
+        self.assertEqual([p["table"] for p in picked[:2]], ["DIM_MACHINE", "DIM_PLANT"])
+        self.assertFalse([p for p in picked if p["table"].startswith("FACT_THING")])
+        self.assertNotIn("DIM_DECLINE_REASON", [p["table"] for p in picked])        # one shared name in another schema
+        self.assertNotIn("MY_MODEL", [p["table"] for p in picked])                  # a bare ID is not a form of EVENT_ID

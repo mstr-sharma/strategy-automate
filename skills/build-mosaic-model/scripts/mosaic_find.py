@@ -228,16 +228,65 @@ def _keyish(col: str) -> bool:
     return bool(mp.KEYISH.search(col)) or col.casefold().endswith(("_id", "_key", "_code", "_sk"))
 
 
+def partners(anchored: list[dict[str, Any]], found: list[dict[str, Any]], room: int) -> list[dict[str, Any]]:
+    """the tables an anchor joins to, best first: a shared key counts more the rarer it is in what was read (MACHINE_CODE in
+    three tables beats EVENT_ID in forty), a table in the anchor's own schema counts most, a dimension or lookup table a
+    little more, and the anchor's own identifier (EVENT_ID of an events table) little, since few tables reference it"""
+    if room <= 0 or not anchored:
+        return []
+    holders: dict[str, int] = {}
+    for r in found:
+        for c in {c.casefold() for c in r["columns"] if _keyish(c)}:
+            holders[c] = holders.get(c, 0) + 1
+    total = max(2, len(found))
+    own = {k for a in anchored for k in {c.casefold() for c in a["columns"] if _keyish(c)}
+           if words(k.rsplit("_", 1)[0]) & words(a["table"])}           # EVENT_ID of FACT_DOWNTIME_EVENTS
+    keys = {c.casefold() for a in anchored for c in a["columns"] if _keyish(c)}
+    places = {(a["datasource_id"], a["schema"]) for a in anchored}
+    names = {(a["datasource_id"], a["schema"], a["table"]) for a in anchored}
+    def common(cols: set[str]) -> list[str]:
+        """keys both tables carry, a qualified name counting too (SOURCE_PLANT_ID carries PLANT_ID)"""
+        # the shorter name must itself be qualified: PLANT_ID inside SOURCE_PLANT_ID, never a bare ID inside EVENT_ID
+        return sorted({k for k in keys for c in cols if c == k or ("_" in k and c.endswith("_" + k)) or ("_" in c and k.endswith("_" + c))})
+    ranked = []
+    for r in found:
+        if (r["datasource_id"], r["schema"], r["table"]) in names:
+            continue
+        shared = common({c.casefold() for c in r["columns"] if _keyish(c)})
+        if not shared:
+            continue
+        same = (r["datasource_id"], r["schema"]) in places
+        if not same and len(shared) < 2:
+            continue                                  # one shared name across schemas is too weak a sign without data checks
+        rarity = sum(math.log(total / holders.get(k, 1)) * (0.3 if k in own else 1.0) for k in shared)
+        dim = bool(re.match(r"(?i)^(dim|d|lu|lkp|lookup|ref)_", r["table"]))
+        score = rarity + (4.0 if same else 0.0) + (1.0 if dim else 0.0)
+        if score >= 2.5:
+            ranked.append((score, r, shared, same))
+    ranked.sort(key=lambda x: -x[0])
+    return [dict(r, role="join", score=round(score, 2),
+                 why=[f"shares {', '.join(shared[:2])} with {', '.join(a['table'] for a in anchored[:2])}" + ("" if same else f" (in {r['schema']})")] + r["why"])
+            for score, r, shared, same in ranked[:room]]
+
+
 def find(m, query: str, scopes: list[dict[str, Any]] | None = None, *, references: list[dict[str, Any]] | None = None,
-         usage: dict[str, int] | None = None, budget: float = 120.0, max_tables: int = 12, log=lambda s: None) -> dict[str, Any]:
-    """{picked: [{datasource_id, datasource, dbms, schema, table, score, why, role}], read: [...], left: [...], terms}"""
+         usage: dict[str, int] | None = None, budget: float = 120.0, max_tables: int = 12, anchors: list[dict[str, str]] | None = None,
+         log=lambda s: None) -> dict[str, Any]:
+    """{picked: [{datasource_id, datasource, dbms, schema, table, score, why, role}], read: [...], left: [...], terms}.
+
+    anchors: tables the model starts from ({datasource, schema, table}); they are always picked (role "anchor"), the
+    search words come from their names and keys when there is no description, and the tables that share a key column
+    with them in any schema read are their join partners."""
     import mosaic_live as live
     import mosaic_matrix as matrix
     deadline = time.monotonic() + budget
     refs = references or []
     want = terms(query + " " + " ".join(r.get("text", "")[:2000] for r in refs if r.get("kind") in ("document", "data", "image")))
+    if not want and anchors:
+        want = terms(" ".join(a["table"].replace("_", " ") for a in anchors))
     referenced = {str(e).split(".")[-1].strip('"`[] ').casefold() for r in refs for e in (r.get("entities") or [])}
     use = {k.casefold(): v for k, v in (usage or {}).items()}
+    anchors = anchors or []
     # where to look: the named scopes, else every source this person can reach
     if scopes:
         targets = scopes
@@ -247,7 +296,11 @@ def find(m, query: str, scopes: list[dict[str, Any]] | None = None, *, reference
     cache: dict[str, dict] = {}
     work: list[tuple[float, dict[str, Any], str, list[str]]] = []
     pre: dict[tuple[str, str], list[dict[str, Any]]] = {}    # schemas already read with their whole source
+    skipped_sources: list[str] = []
     for sc in targets:
+        if time.monotonic() > deadline:               # listing every source is part of the budget too
+            skipped_sources.append(str(sc.get("datasource")))
+            continue
         try:
             info = live.datasource(m, sc["datasource"], cache)
         except Exception:  # noqa: BLE001 - a source that cannot be read is left out and said
@@ -273,6 +326,17 @@ def find(m, query: str, scopes: list[dict[str, Any]] | None = None, *, reference
             # schemas whose names fit, or whose tables existing models use, are read first
             hint = len(words(schema) & {x for w in want for x in {w} | SYN.get(w, set())}) * 2 + len(words(info["name"]) & set(want))
             work.append((hint, info, schema, sc.get("tables") or []))
+    # the anchors' own schemas are read first, whatever their names
+    anchor_ids: set[tuple[str, str]] = set()
+    for a in anchors:
+        try:
+            ai = live.datasource(m, a["datasource"], cache)
+        except Exception:  # noqa: BLE001
+            continue
+        anchor_ids.add((ai["id"], a["schema"]))
+        if not any(w[1]["id"] == ai["id"] and w[2] == a["schema"] for w in work):
+            work.append((1e6, ai, a["schema"], []))
+    work = [(1e6 if (w[1]["id"], w[2]) in anchor_ids else w[0], *w[1:]) for w in work]
     work.sort(key=lambda x: -x[0])
     log(f"→ Searching the catalog of {len(work)} schema{'s' if len(work) != 1 else ''} for: {', '.join(want[:12]) or 'everything'}…")
     found: list[dict[str, Any]] = []
@@ -299,7 +363,16 @@ def find(m, query: str, scopes: list[dict[str, Any]] | None = None, *, reference
                 best = row
         read.append(f"{info['name']}/{schema}")
         log(f"  {info['name']}/{schema}: {len(tables)} tables" + (f"; best {best['table']} ({best['score']})" if best else "; nothing matches"))
+    if skipped_sources:
+        log(f"  · time budget reached before {len(skipped_sources)} source{'s' if len(skipped_sources) != 1 else ''} could be listed")
+        left += [f"{x} (not listed)" for x in skipped_sources]
     found.sort(key=lambda r: -r["score"])
+    is_anchor = lambda r: any(r["datasource_id"] == live.datasource(m, a["datasource"], cache)["id"] and r["schema"] == a["schema"]  # noqa: E731
+                              and r["table"].casefold() == a["table"].casefold() for a in anchors)
+    anchored = [dict(r, role="anchor", why=["you started from it"]) for r in found if anchors and is_anchor(r)]
+    if anchors:
+        return {"terms": want, "picked": anchored + partners(anchored, found, max_tables - len(anchored)), "read": read, "left": left,
+                "candidates": len(found)}
     top = [r for r in found if r["score"] > 0]
     floor = max(2.0, (top[0]["score"] * 0.35) if top else 0)
     picked = [dict(r, role="match") for r in top if r["score"] >= floor][: max(1, max_tables // 2 + 1)] if top else []

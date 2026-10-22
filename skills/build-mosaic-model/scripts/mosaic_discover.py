@@ -643,6 +643,7 @@ def main() -> int:
     f.add_argument("--usage", help="JSON file: {table name: number of models using it}")
     f.add_argument("--budget", type=float, default=120.0)
     f.add_argument("--max-tables", type=int, default=12)
+    f.add_argument("--anchor", action="append", default=[], help="DATASOURCE:SCHEMA:TABLE the model starts from")
     f.add_argument("--out", required=True)
     a = ap.parse_args()
     opts = json.loads(a.options) if getattr(a, "options", None) else {}
@@ -655,7 +656,8 @@ def main() -> int:
             ds, *rest = src.split(":")
             scopes.append({"datasource": ds, **({"schema": rest[0]} if rest and rest[0] else {}), **({"tables": rest[1].split(",")} if len(rest) > 1 and rest[1] else {})})
         found = mosaic_find.find(m, a.query, scopes or None, references=json.load(open(a.references)) if a.references else None,
-                                 usage=json.load(open(a.usage)) if a.usage else None, budget=a.budget, max_tables=a.max_tables, log=lambda x: print(x, flush=True))
+                                 usage=json.load(open(a.usage)) if a.usage else None, budget=a.budget, max_tables=a.max_tables,
+                                 anchors=[dict(zip(("datasource", "schema", "table"), x.split(":", 2))) for x in a.anchor], log=lambda x: print(x, flush=True))
         json.dump(found, open(a.out, "w"), default=str)
         print(f"found {len(found['picked'])} tables of {found['candidates']} matching, in {len(found['read'])} schemas read" + (f"; {len(found['left'])} left" if found["left"] else ""))
         return 0
