@@ -320,9 +320,16 @@ def prove(m: bm.MSTR, plan: dict, *, sql, source_sql=live.run_sql, attempts: int
     return {"ok": all(p["ok"] is not False for p in probes) and any(p["ok"] for p in probes), "probes": probes}
 
 
-def delete_model(m: bm.MSTR, model_id: str) -> bool:
-    r = m.s.delete(f"{m.base}/api/objects/{model_id}", params={"type": 3})
-    return r.ok
+def delete_model(m: bm.MSTR, model_id: str, attempts: int = 3) -> bool:
+    """True only once Strategy no longer has the model: a delete can be refused while the model is busy (just published,
+    being read), so it is retried and confirmed by reading the object back"""
+    import time as _t
+    for i in range(attempts):
+        m.s.delete(f"{m.base}/api/objects/{model_id}", params={"type": 3})
+        if m.s.get(f"{m.base}/api/objects/{model_id}", params={"type": 3}).status_code == 404:
+            return True
+        _t.sleep(10 * (i + 1))
+    return False
 
 
 # ── an existing model, read back into a specification and its relationships (the audit's starting point) ────────────
