@@ -164,3 +164,66 @@ class StarSchemaByRoleNames(unittest.TestCase):
         keys = plan["keys"]
         self.assertEqual(keys["DIM_PLANT"], "Plant"); self.assertEqual(keys["DIM_MACHINE"], "Machine"); self.assertEqual(keys["DIM_DATE"], "Date")
         self.assertFalse(mp.errors(mp.check(plan)))
+
+
+class WarehousePatterns(unittest.TestCase):
+    """Patterns met scanning real warehouses, each reduced to a few invented tables."""
+
+    def recs(self, tables, **opts):
+        g = {"tables": {f"DS/S/{t['table']}": t for t in tables}, "fks": [], "scopes": []}
+        return md.recommend(md.infer(g), opts)
+
+    def test_surrogate_keys_named_sk_join_and_views_of_tables_are_left_out(self):
+        fact = table("DS", "Snowflake", "S", "FACT_SHIPMENTS", [("SHIPMENT_SK", N), ("CARRIER_SK", N), ("REVENUE_USD", N)], rows=5000)
+        view = table("DS", "Snowflake", "S", "FACT_SHIPMENTS_V", [("SHIPMENT_SK", N), ("CARRIER_SK", N), ("REVENUE_USD", N)], rows=None)
+        dim = table("DS", "Snowflake", "S", "DIM_CARRIER", [("CARRIER_SK", N), ("CARRIER_NAME", T), ("FLEET_SIZE", N)], rows=90)
+        recs = self.recs([fact, view, dim])
+        self.assertTrue(recs and all("FACT_SHIPMENTS_V" not in r["tables"] for r in recs))
+        carrier = next(a for a in recs[0]["spec"]["attributes"] if a["name"] == "Carrier")
+        self.assertEqual({f["table"] for f in carrier["forms"]}, {"FACT_SHIPMENTS", "DIM_CARRIER"})
+        self.assertIn("Fleet Size", [a["name"] for a in recs[0]["spec"]["attributes"]])     # a dimension's number describes it
+
+    def test_alternate_keys_of_one_dimension_are_one_attribute(self):
+        dim = table("DS", "Snowflake", "S", "DIM_STORE", [("STORE_KEY", N), ("STORE_NUMBER", N), ("CITY", T)], rows=500)
+        fact = table("DS", "Snowflake", "S", "FACT_SALES", [("STORE_KEY", N), ("STORE_NUMBER", N), ("NET_SALES", N)], rows=90000)
+        spec = self.recs([dim, fact])[0]["spec"]
+        stores = [a for a in spec["attributes"] if a["name"].startswith("Store")]
+        self.assertEqual(len(stores), 1)
+        forms = {(f["name"], f["column"]) for f in stores[0]["forms"]}
+        self.assertIn(("ID", "STORE_NUMBER"), forms); self.assertIn(("Key", "STORE_KEY"), forms)
+        plan = mp.from_spec(spec, {"tables": [dim, fact]}, {})
+        self.assertEqual(plan["keys"]["DIM_STORE"], stores[0]["name"])
+
+    def test_a_star_joins_on_shared_columns_without_key_suffixes(self):
+        dim = table("DS", "Snowflake", "S", "DIM_LOAN", [("LOAN", T), ("GRADE", T)], rows=100)
+        dates = table("DS", "Snowflake", "S", "DIM_DATE", [("SNAPSHOT_DATE", D), ("YEAR", N), ("MONTH_NUM", N)], rows=36)
+        fact = table("DS", "Snowflake", "S", "FACT_LOAN_HISTORY", [("LOAN", T), ("SNAPSHOT_DATE", D), ("CURRENT_BALANCE", N)], rows=5000)
+        recs = self.recs([dim, dates, fact])
+        self.assertTrue(recs)
+        self.assertEqual(set(recs[0]["tables"]), {"DIM_LOAN", "DIM_DATE", "FACT_LOAN_HISTORY"})
+        self.assertTrue(recs[0]["checked"], recs[0]["problems"])
+
+    def test_dimensions_mappings_and_lookups_are_not_facts(self):
+        dim = table("DS", "Snowflake", "S", "DIM_LANE", [("LANE_ID", N), ("DISTANCE_MILES", N)], rows=400)
+        mapping = table("DS", "Snowflake", "S", "DATE_VIEW_MAPPING", [("LANE_ID", N), ("DAY_NUMBER", N)], rows=400)
+        fact = table("DS", "Snowflake", "S", "FACT_LOADS", [("LANE_ID", N), ("REVENUE", N)], rows=9000)
+        self.assertEqual([r["fact"] for r in self.recs([dim, mapping, fact])], ["FACT_LOADS"])
+
+    def test_a_key_without_its_own_table_lives_on_a_dimension_not_a_fact(self):
+        cust = table("DS", "Snowflake", "S", "FSI_CUSTOMER", [("CUSTOMER_ID", N), ("DUNS_NUMBER", N), ("SEGMENT", T)], rows=900)
+        acct = table("DS", "Snowflake", "S", "FSI_ACCOUNTS", [("ACCOUNT_ID", N), ("CUSTOMER_ID", N), ("DUNS_NUMBER", N), ("BALANCE_USD", N)], rows=1400)
+        loans = table("DS", "Snowflake", "S", "FSI_LOANS", [("LOAN_ID", N), ("CUSTOMER_ID", N), ("DUNS_NUMBER", N), ("AMOUNT_USD", N)], rows=700)
+        g = {"tables": {f"DS/S/{t['table']}": t for t in (cust, acct, loans)}, "fks": [], "scopes": []}
+        duns = next(e for e in md.infer(g)["entities"] if e["name"] == "Duns")
+        self.assertEqual(duns["home"], "DS/S/FSI_CUSTOMER")
+        self.assertTrue(all(r["checked"] for r in md.recommend(md.infer(g))))
+
+    def test_a_measured_unique_key_decides_the_home(self):
+        a = table("DS", "Snowflake", "S", "PROVIDER_STATUS", [("PROVIDER_ID", N), ("STATUS", T)], rows=48000)
+        b = table("DS", "Snowflake", "S", "PROVIDER_NAMES", [("PROVIDER_ID", N), ("CITY", T)], rows=41000)
+        f = table("DS", "Snowflake", "S", "REFERRALS", [("PROVIDER_ID", N), ("REFERRAL_COUNT", N)], rows=6000)
+        g = {"tables": {f"DS/S/{t['table']}": t for t in (a, b, f)}, "fks": [], "scopes": [],
+             "profile": {"DS/S/PROVIDER_STATUS": {"measured": True, "rows": 48000, "distinct": {"PROVIDER_ID": 41000}, "nulls": {}},
+                         "DS/S/PROVIDER_NAMES": {"measured": True, "rows": 41000, "distinct": {"PROVIDER_ID": 41000}, "nulls": {}}}}
+        provider = next(e for e in md.infer(g)["entities"] if e["name"] == "Provider")
+        self.assertEqual(provider["home"], "DS/S/PROVIDER_NAMES")

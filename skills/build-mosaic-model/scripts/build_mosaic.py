@@ -3601,7 +3601,14 @@ def _executes(m: MSTR, model_id: str) -> bool | None:
         return None
     if r.ok:
         return True
-    return False if "-2147072488" in r.text or "not published" in r.text.lower() else None
+    text = r.text.lower()
+    if "-2147072488" in r.text or "not published" in text:
+        return False
+    # the whole-model query of a model with several fact tables can exceed the engine's row limits: the engine ran it
+    # against loaded data, so the model is published
+    if "intermediate rows" in text or "exceeds the maximum" in text or "result set" in text and "limit" in text:
+        return True
+    return None
 
 
 def _classic_cube_publish(m: MSTR, cube_id: str) -> None:

@@ -17,7 +17,7 @@ FUNCS = {"sum", "avg", "count", "count_distinct", "min", "max", "first", "last",
 NUMERIC = {"integer", "int32", "int64", "big_decimal", "decimal", "double", "float", "real", "numeric", "fixed_length_number", "number"}
 TEXT = {"utf8_char", "char", "varchar", "fixed_length_string", "string", "nvarchar", "nchar", "text", "variable_length_string"}
 TIME = {"date", "time", "timestamp", "datetime"}
-KEYISH = re.compile(r"(?:^|_)(?:id|key|number|num|no|code)$", re.I)
+KEYISH = re.compile(r"(?:^|_)(?:id|key|sk|number|num|no|code)$", re.I)
 
 
 class PlanError(ValueError):
@@ -70,19 +70,20 @@ def from_spec(spec: dict[str, Any], cat: dict[str, Any], prof: dict[str, Any] | 
             if f.get("category", "DESC") == "ID":
                 id_exprs.append({"table": tname, "column": col})
             else:
-                descs.append({"name": f["name"], "table": tname, "column": col})
+                descs.append({"name": f["name"], "table": tname, "column": col, "category": f.get("category") or "DESC"})
         if not id_exprs:
             raise PlanError(f"attribute {a['name']} has no ID form")
         lookup = c.table(a["lookup_table"]) if a.get("lookup_table") else id_exprs[0]["table"]
         forms = [{"name": next((f["name"] for f in a["forms"] if f.get("category") == "ID"), "ID"), "category": "ID", "expressions": id_exprs}]
-        forms += [{"name": d["name"], "category": "DESC", "expressions": [{"table": d["table"], "column": d["column"]}]} for d in descs]
+        # a name form (DESC) is what reports show; any other (an alternate key) keeps its own category
+        forms += [{"name": d["name"], "category": d["category"], "expressions": [{"table": d["table"], "column": d["column"]}]} for d in descs]
         plan["attributes"].append({"name": a["name"], "description": a.get("description", ""), "lookup": lookup, "forms": forms, "time": bool(a.get("time"))})
 
     for mt in spec["metrics"]:
         tname = c.table(mt["table"])
         plan["metrics"].append({"name": mt["name"], "description": mt.get("description", ""), "table": tname,
                                 "column": c.column(tname, mt["column"])["name"], "function": (mt.get("function") or "sum").lower(),
-                                "format": mt.get("format", "fixed2")})
+                                "format": mt.get("format")})      # none: the builder formats from the name and the type
 
     keys = _table_keys(plan, prof)
     plan["keys"] = {t: k["attribute"] for t, k in keys.items() if k.get("attribute")}
@@ -123,20 +124,26 @@ def _table_keys(plan: dict, prof: dict) -> dict[str, dict]:
             uniq = _unique(prof, t, ids[t])
             if uniq is False:
                 continue
+            own = re.sub(KEY_COLUMN, "", ids[t]).strip("_").casefold()
+            subj = re.sub(r"[^a-z0-9]", "", STAR_ANY.sub("", t).casefold())
+            # ITEM_SALES_KEY on FACT_ITEM_SALES, or MDS_PRODUCT_CODE on DIM_PRODUCT (the table's subject in the key's name)
+            named_for_table = bool(own) and (own.replace("_", "") in re.sub(r"[^a-z0-9]", "", t.casefold()) or (len(subj) > 2 and subj in own.replace("_", "")))
             score = (4 if a["lookup"] == t else 0) + (2 if len(ids) > 1 else 0) + (1 if len(a["forms"]) > 1 else 0) + (1 if KEYISH.search(ids[t]) else 0)
-            scored.append((score, len(ids), uniq is True, a["name"]))      # measured unique beats not measured; never compares None
+            # designation, then breadth (the conformed key), then a key named for its own table; measured unique beats
+            # not measured; never compares None
+            scored.append((score, len(ids), named_for_table, uniq is True, a["name"]))
         if not scored:
             out[t] = {"attribute": None, "note": f"{t} has no single-column key among its attributes; its attributes relate to the rest of the model only through the attributes it shares."}
             continue
         scored.sort(reverse=True)
         best = scored[0]
-        if len(scored) > 1 and scored[1][:2] == best[:2]:
-            tied = [x[3] for x in scored if x[:2] == best[:2]]
+        if len(scored) > 1 and scored[1][:3] == best[:3]:
+            tied = [x[4] for x in scored if x[:3] == best[:3]]
             out[t] = {"attribute": None, "ambiguous": tied,
                       "note": f"{t}: {' and '.join(tied)} could each be its key; name the table's key in the specification."}
             continue
-        out[t] = {"attribute": best[3], "measured": best[2] is True,
-                  "note": None if best[2] else f"{t}: the key {best[3]} is taken from the specification; its uniqueness could not be measured on this source."}
+        out[t] = {"attribute": best[4], "measured": best[3] is True,
+                  "note": None if best[3] else f"{t}: the key {best[4]} is taken from the specification; its uniqueness could not be measured on this source."}
     return out
 
 
@@ -332,7 +339,7 @@ def errors(findings: list[dict]) -> list[dict]:
 
 
 # ── a specification drafted from the tables alone (the test runner's generated cases, scripts without a design) ─────
-KEY_COLUMN = re.compile(r"(?:^|_)(?:id|key|number|num|no|code)$", re.I)
+KEY_COLUMN = re.compile(r"(?:^|_)(?:id|key|sk|number|num|no|code)$", re.I)     # …_SK: a surrogate key
 
 
 def _friendly(name: str) -> str:
@@ -347,7 +354,7 @@ def _short_table(table: str) -> str:
 STAR_DIM = re.compile(r"^(dim|dimension|d|lkp|lookup|ref)_", re.I)
 STAR_ANY = re.compile(r"^(dim|dimension|d|fact|fct|f|lkp|lookup|ref|bridge|brg|agg|xref)_", re.I)
 # numbers that describe rather than measure: calendar parts, flags, codes, ranks, sequence numbers, postal codes
-DESCRIPTIVE_NUMBER = re.compile(r"(?:^|_)(year|yr|month|mon|quarter|qtr|week|wk|day|dow|hour|hr|minute_of|num|number|no|nbr|seq|sequence|rank|level|lvl|flag|ind|indicator|zip|postal|period|version|fiscal_\w+)$|^(is|has|was|can|flag)_", re.I)
+DESCRIPTIVE_NUMBER = re.compile(r"(?:^|_)(date_index|date_idx|year|yr|month|mon|quarter|qtr|week|wk|day|dow|hour|hr|minute_of|num|number|no|nbr|seq|sequence|rank|level|lvl|flag|ind|indicator|zip|postal|period|version|fiscal_\w+)$|^(is|has|was|can|flag)_", re.I)
 # numbers that measure, even on a dimension table (a product's list price, a store's floor area)
 MEASURE_NUMBER = re.compile(r"(amount|amt|price|cost|revenue|sales|spend|fee|qty|quantity|units|weight|volume|area|capacity|budget|target|balance|total|count|cnt|duration|mins|minutes|hours|hrs|seconds|secs|pct|percent|rate|ratio|score|margin)", re.I)
 # measures that read as an average, not a total
@@ -374,23 +381,45 @@ def spec_from_tables(cat: dict[str, Any], prof: dict[str, Any] | None = None, na
         members = [(t, c) for t, c in e["members"] if any(x["table"] == t and any(col["name"] == c for col in x["columns"]) for x in tables)]
         if len(members) >= 2:
             pre.append({"name": e["name"], "members": members, "home": e.get("home") if any(t == e.get("home") for t, _ in members) else members[0][0]})
+    # alternate keys: two keys of one thing (STORE_KEY and STORE_NUMBER, ITEM_KEY and ITEM_CODE) homed on the same table
+    # and carried by the same tables are one attribute. The readable one (a code, then a number, then an id) is its ID
+    # on every table; the other becomes a form on its home, so neither competes to be the table's key.
+    rank = lambda col: next((i for i, sfx in enumerate(("code", "number", "num", "no", "nbr", "id", "key")) if re.search(rf"(?:^|_){sfx}$", col, re.I)), 9)  # noqa: E731
+    stem_of = lambda col: re.sub(KEY_COLUMN, "", col).strip("_").casefold()  # noqa: E731
+    groups: dict[tuple, list[dict]] = {}
+    for e in pre:
+        home_col = next((c for t, c in e["members"] if t == e["home"]), e["members"][0][1])
+        groups.setdefault((e["home"], stem_of(home_col), frozenset(t for t, _ in e["members"])), []).append({**e, "home_col": home_col})
+    pre = []
+    for (home, stem, _), same in groups.items():
+        same.sort(key=lambda e: rank(e["home_col"]))
+        main = same[0]
+        if len(same) > 1 and stem:
+            main = {**main, "name": re.sub(r" Key$", "", main["name"]),
+                    "alternates": [(home, e["home_col"]) for e in same[1:]], "covered": [m for e in same[1:] for m in e["members"]]}
+        pre.append(main)
 
     def unique_name(base: str, table: str) -> str:
         n = base if base.casefold() not in used else f"{base} ({_short_table(table)})"
         used.add(n.casefold())
         return n
     keys: dict[str, list[tuple[str, str]]] = {}
+    calendar_part = re.compile(r"(?:^|_)(year|month|quarter|week|day|period|fiscal_\w+)(?:_(?:number|num|no|nbr|id|code))?$", re.I)
     for t in tables:
         for c in t["columns"]:
-            if KEY_COLUMN.search(c["name"]) and _family(c.get("dataType")) in ("number", "text"):
+            if KEY_COLUMN.search(c["name"]) and not calendar_part.search(c["name"]) and _family(c.get("dataType")) in ("number", "text"):
                 k = c["name"].casefold() if c["name"].casefold() != "id" else f"{t['table'].casefold()}.id"
                 keys.setdefault(k, []).append((t["table"], c["name"]))
     attributes, metrics = [], []
     keyed = set()
     for e in pre:
+        alt = [{"name": _friendly(re.search(r"[^_]+$", c).group(0)) if "_" in c else _friendly(c), "category": "", "table": t, "column": c}
+               for t, c in e.get("alternates", [])]
+        for f in alt:
+            f["category"] = f["name"] = {"ID": "Internal ID", "Id": "Internal ID", "Key": "Key", "No": "Number", "Num": "Number", "Nbr": "Number"}.get(f["name"], f["name"])
         attributes.append({"name": unique_name(e["name"], e["home"]), "description": "", "lookup_table": e["home"],
-                           "forms": [{"name": "ID", "category": "ID", "table": t, "column": c} for t, c in e["members"]]})
-        keyed |= set(e["members"])
+                           "forms": [{"name": "ID", "category": "ID", "table": t, "column": c} for t, c in e["members"]] + alt})
+        keyed |= set(e["members"]) | set(e.get("covered", []))
     keys = {k: [tc for tc in occ if tc not in keyed] for k, occ in keys.items()}
     keys = {k: occ for k, occ in keys.items() if occ}
     for k, occ in sorted(keys.items()):

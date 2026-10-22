@@ -114,6 +114,30 @@ def scan(m, scopes: list[dict], options: dict | None = None, log=lambda s: None)
     return graph
 
 
+def measure_keys(m, graph: dict, options: dict | None = None, budget: int = 80, log=lambda s: None) -> dict:
+    """which candidate keys are unique where: one query per table counting rows and the distinct values of the columns
+    its entities use (graph['profile'][table key] = {measured, rows, distinct, nulls}, the builder's own profile shape).
+    Discovery homes an entity on a table where its key is unique, and the pre-build check judges keys as the build will."""
+    import mosaic_live as live
+    inferred = infer(graph, options)
+    want: dict[str, set[str]] = {}
+    for e in inferred["entities"]:
+        for k, c in e["members"].items():
+            want.setdefault(k, set()).add(c)
+    prof = graph.setdefault("profile", {})
+    for k in [k for k in want if k not in prof][:budget]:
+        t = graph["tables"][k]
+        try:
+            got = live.profile(m, {"tables": [t]}, {t["table"]: sorted(want[k])[:12]})
+            prof[k] = got.get(t["table"]) or {"measured": False}
+            if prof[k].get("measured"):
+                uniq = [c for c, d in prof[k]["distinct"].items() if d == prof[k]["rows"]]
+                log(f"  {t['table']}: {prof[k]['rows']:,} rows{'; unique: ' + ', '.join(uniq) if uniq else ''}")
+        except Exception as e:  # noqa: BLE001 - a table that cannot be measured is judged from its metadata
+            prof[k] = {"measured": False, "reason": str(e)[:200]}
+    return graph
+
+
 def confirm(m, graph: dict, options: dict | None = None, budget: int = 40, log=lambda s: None) -> dict:
     """the data check for links only a shared name suggests across unrelated families: up to 100 distinct key values from
     one side, and how many of them the other side has (two small queries per link, any stores). Stored as
@@ -121,8 +145,8 @@ def confirm(m, graph: dict, options: dict | None = None, budget: int = 40, log=l
     import mosaic_live as live
     inferred = infer(graph, options)
     measured = graph.setdefault("measured", {})
-    todo = [l for l in inferred["links"] if "declared" not in l["evidence"] and "family" not in l["evidence"] and "measured" not in l["evidence"]
-            and f"{l['from']}|{l['to']}" not in measured]
+    todo = [l for l in inferred["links"] if "declared" not in l["evidence"] and "measured" not in l["evidence"] and f"{l['from']}|{l['to']}" not in measured]
+    todo.sort(key=lambda l: "family" in l["evidence"])      # links across unrelated tables first, then within a dataset
     for l in todo[:budget]:
         home, other = graph["tables"][l["from"]], graph["tables"][l["to"]]
         hc, oc = l["columns"]
@@ -139,6 +163,22 @@ def confirm(m, graph: dict, options: dict | None = None, budget: int = 40, log=l
         except (RuntimeError, ValueError, KeyError, IndexError) as e:
             log(f"  {l['entity']}: {other['table']} → {home['table']}: not measurable ({str(e)[:100]})")
     return graph
+
+
+def view_copies(tables: dict) -> set:
+    """views over another scanned table (FACT_X_V beside FACT_X with the same columns): they repeat it, so the base
+    table is used and the view is left out"""
+    out = set()
+    for k, t in tables.items():
+        m_ = re.match(r"^(.+?)_?(?:v|vw|view)$", t["table"], re.I)
+        if not m_:
+            continue
+        cols = {c["name"].casefold() for c in t["columns"]}
+        for kk, other in tables.items():
+            if kk != k and other["table"].casefold() == m_.group(1).casefold().rstrip("_") and other["datasource_id"] == t["datasource_id"]:
+                if len(cols & {c["name"].casefold() for c in other["columns"]}) >= 0.8 * max(len(cols), 1):
+                    out.add(k)
+    return out
 
 
 STAR_ROLE = re.compile(r"^(dim|dimension|d|fact|fct|f|lkp|lookup|ref|bridge|brg|agg|xref)_", re.I)
@@ -169,6 +209,24 @@ def infer(graph: dict, options: dict | None = None, curation: dict | None = None
     tables = {k: t for k, t in graph["tables"].items() if k not in set(cur.get("excluded_tables", []))}
     # families are worked out again from the names, so a graph scanned before a rule changed reads the same as a new one
     tables = {k: {**t, "family": _family_key(t["table"], t.get("schema", ""), t.get("datasource_id", ""))} for k, t in tables.items()}
+    # a system prefix three or more tables of a schema share (FSI_CUSTOMER, FSI_DEPOSIT_ACCOUNTS, FSI_FACILITIES) makes
+    # them one family; a synthetic dataset's prefix and star-schema role names keep their own rule
+    first: dict[tuple, int] = {}
+    for t in tables.values():
+        if "_" in t["table"]:
+            first[(t.get("datasource_id"), t.get("schema"), t["table"].split("_")[0].casefold())] = first.get((t.get("datasource_id"), t.get("schema"), t["table"].split("_")[0].casefold()), 0) + 1
+    per_schema: dict[tuple, int] = {}
+    for t in tables.values():
+        per_schema[(t.get("datasource_id"), t.get("schema"))] = per_schema.get((t.get("datasource_id"), t.get("schema")), 0) + 1
+    for t in tables.values():
+        # a small schema (up to 20 tables, no synthetic datasets) is one dataset
+        if per_schema[(t.get("datasource_id"), t.get("schema"))] <= 20 and not re.match(r"^SD_[A-Z]+_[A-Z0-9]+_\d{8}_\d{4}_", t["table"], re.I):
+            t["family"] = f"{t.get('datasource_id')}/{t.get('schema')}#schema"
+            continue
+        tok = (t.get("datasource_id"), t.get("schema"), t["table"].split("_")[0].casefold())
+        if "_" in t["table"] and first.get(tok, 0) >= 3 and not t["family"].endswith("#star") and not re.match(r"^SD_[A-Z]+_[A-Z0-9]+_\d{8}_\d{4}_", t["table"], re.I):
+            t["family"] = f"{tok[0]}/{tok[1]}#{tok[2]}"
+    tables = {k: t for k, t in tables.items() if k not in view_copies(tables)}
     entities: dict[str, dict] = {}
     declared: set[tuple[str, str]] = set()
 
@@ -189,9 +247,24 @@ def infer(graph: dict, options: dict | None = None, curation: dict | None = None
             declared.add((fk["parent"], fk["child"]))
     if sig.get("same_name", True):
         clusters: dict[tuple[str, str], list[tuple[str, str]]] = {}
+        # beyond …_ID/_KEY/_CODE names, a join key in a star: a column a dimension shares by name with another table
+        # (SNAPSHOT_DATE in DIM_DATE and a fact), or one named for a table's subject (LOAN for DIM_LOAN)
+        subjects = {(t["family"], mp.subject(t["table"]).replace(" ", "_").casefold()) for t in tables.values()}
+        on_dim: dict[tuple[str, str], int] = {}
+        anywhere: dict[tuple[str, str], int] = {}
+        for t in tables.values():
+            for c in t["columns"]:
+                kk = (c["name"].casefold(), t["family"])
+                anywhere[kk] = anywhere.get(kk, 0) + 1
+                if mp.STAR_DIM.match(t["table"]):
+                    on_dim[kk] = on_dim.get(kk, 0) + 1
+        def joins(c, fam):
+            n = c["name"].casefold()
+            return (mp.KEY_COLUMN.search(c["name"]) or (fam, n) in subjects or (on_dim.get((n, fam)) and anywhere.get((n, fam), 0) >= 2)) \
+                and n != "id" and mp._family(c.get("dataType")) in ("number", "text", "time")
         for k, t in tables.items():
             for c in t["columns"]:
-                if mp.KEY_COLUMN.search(c["name"]) and c["name"].casefold() != "id":
+                if joins(c, t["family"]):
                     clusters.setdefault((c["name"].casefold(), t["family"]), []).append((k, c["name"]))
         for (name, fam), occ in clusters.items():
             existing = next((e for e in entities.values() if any(e["members"].get(k, "").casefold() == name for k, _ in occ)), None)
@@ -231,8 +304,17 @@ def infer(graph: dict, options: dict | None = None, curation: dict | None = None
         if e["home"]:
             return e["home"]
         stem = re.sub(mp.KEY_COLUMN, "", next(iter(e["members"].values()))).strip("_").casefold().rstrip("s")
-        return max(e["members"], key=lambda k: ([x.casefold() for x in tables[k].get("pk", [])] == [e["members"][k].casefold()],
-                                                bool(stem) and stem in tables[k]["table"].casefold(), -(tables[k].get("rows") or 0)))
+        def measures(k):       # a table of measures is a fact: an entity without a table of its own lives on a dimension
+            return sum(1 for c in tables[k]["columns"] if mp._family(c.get("dataType")) == "number" and mp.MEASURE_NUMBER.search(c["name"])
+                       and not mp.KEY_COLUMN.search(c["name"]))
+        prof = graph.get("profile") or {}
+        def unique(k):           # measured: the key is unique (and present) on this table
+            p = prof.get(k) or {}
+            return bool(p.get("measured")) and p.get("rows", 0) > 0 and (p.get("distinct") or {}).get(e["members"][k]) == p.get("rows") \
+                and not (p.get("nulls") or {}).get(e["members"][k])
+        return max(e["members"], key=lambda k: ([x.casefold() for x in tables[k].get("pk", [])] == [e["members"][k].casefold()], unique(k),
+                                                bool(stem) and stem in tables[k]["table"].casefold(), not FACT_ROLE.match(tables[k]["table"]) and measures(k) == 0,
+                                                -measures(k), -(tables[k].get("rows") or 0)))
 
     def link(home: str, k: str, e_name: str, keys: list[str], cols: list[str], ev: set[str]) -> dict | None:
         same_family = tables[k]["family"] == tables[home]["family"]
@@ -284,13 +366,27 @@ def infer(graph: dict, options: dict | None = None, curation: dict | None = None
         if len(e["members"]) >= 2 or any(e["key"] in l["entity_keys"] for l in links):
             out_entities.append({"key": e["key"], "name": e["name"], "home": e["home"], "members": e["members"],
                                  "evidence": sorted(set().union(*e["why"].values()))})
-    return {"tables": tables, "entities": out_entities, "links": links}
+    return {"tables": tables, "entities": out_entities, "links": links, "profile": graph.get("profile") or {}}
 
 
 # ── recommend (pure) ─────────────────────────────────────────────────────────────────────────────────────────────────
-def _is_fact(t: dict, keyed: set[str]) -> bool:
-    nums = [c for c in t["columns"] if mp._family(c.get("dataType")) == "number" and c["name"] not in keyed and not mp.KEY_COLUMN.search(c["name"])]
-    return bool(nums)
+FACT_ROLE = re.compile(r"^(fact|fct|f)_", re.I)
+NOT_FACT = re.compile(r"(?:^|_)(map|mapping|xref|bridge|brg|lookup|lkp|ref|names?|crosswalk)(?:_|$)", re.I)
+
+
+def _is_fact(t: dict, keyed: set[str], home: bool = False) -> bool:
+    """a table of numbers to measure: named as a fact, or carrying measures. Dimensions, mappings and lookups are not;
+    a table other tables point to (an entity's home) is a fact only when it carries measures, not just descriptive
+    numbers (a date view, a provider list, a lane with its distance)"""
+    name = t["table"]
+    if mp.STAR_DIM.match(name) or NOT_FACT.search(name):
+        return False
+    nums = [c["name"] for c in t["columns"] if mp._family(c.get("dataType")) == "number" and c["name"] not in keyed
+            and not mp.KEY_COLUMN.search(c["name"]) and not mp.DESCRIPTIVE_NUMBER.search(c["name"])]
+    if FACT_ROLE.match(name):
+        return bool(nums)
+    measures = [n for n in nums if mp.MEASURE_NUMBER.search(n)]
+    return bool(measures) if home else bool(nums)
 
 
 def recommend(inferred: dict, options: dict | None = None) -> list[dict]:
@@ -298,12 +394,16 @@ def recommend(inferred: dict, options: dict | None = None) -> list[dict]:
     them), within the table limits; ranked; each with its reasons and a drafted specification"""
     opts = {**DEFAULT_OPTIONS, **(options or {})}
     tables, links = inferred["tables"], [l for l in inferred["links"] if l["confidence"] >= opts["min_confidence"]]
+    views = view_copies(tables)
+    tables = {k: t for k, t in tables.items() if k not in views}
+    links = [l for l in links if l["from"] not in views and l["to"] not in views]
     adj: dict[str, list[dict]] = {}
     for l in links:
         adj.setdefault(l["from"], []).append(l)
         adj.setdefault(l["to"], []).append(l)
     keyed = {k: {c for e in inferred["entities"] for kk, c in e["members"].items() if kk == k} for k in tables}
-    facts = [k for k, t in tables.items() if _is_fact(t, keyed[k]) and any(l["to"] == k for l in links)]
+    homes = {e["home"] for e in inferred["entities"] if len(e["members"]) >= 2}
+    facts = [k for k, t in tables.items() if _is_fact(t, keyed[k], k in homes) and any(l["to"] == k for l in links)]
     seen, out = set(), []
     stars: dict[frozenset, dict] = {}
     for f in facts:
@@ -354,7 +454,7 @@ def recommend(inferred: dict, options: dict | None = None) -> list[dict]:
         modeled_names = {str(x).casefold() for x in opts["modeled_tables"]}
         modeled = sum(1 for k in group if k in opts["modeled_tables"] or tables[k]["table"].casefold() in modeled_names) / len(group)
         conf = sum(l["confidence"] for l in used) / max(1, len(used))
-        n_facts = sum(1 for k in group if _is_fact(tables[k], keyed[k]))
+        n_facts = sum(1 for k in group if _is_fact(tables[k], keyed[k], k in homes))
         # confidence, then a well-formed size (3–6 tables), cross-store when preferred, a bonus for several facts sharing
         # dimensions, and a penalty for what is already modeled
         size = min(1.0, len(group) / 3) * (1.0 if len(group) <= 6 else 0.9)
@@ -392,15 +492,16 @@ def recommend(inferred: dict, options: dict | None = None) -> list[dict]:
                                    entities=[{"name": r["name"], "members": r["members"], "home": r["home"]} for r in merged.values() if len(r["members"]) >= 2])
         # every draft is checked as the builder would check it; one the check refuses is offered for a decision, not a build
         sub = {"tables": [tables[k] for k in group]}
+        measured_prof = {tables[k]["table"]: (inferred.get("profile") or {})[k] for k in group if k in (inferred.get("profile") or {})}
         try:
-            findings = mp.check(mp.from_spec(spec, sub, {}))
+            findings = mp.check(mp.from_spec(spec, sub, measured_prof))
             orphans = [x for x in findings if x["level"] == "error" and x["code"] == "attribute_reaches_no_metric"]
             if orphans and opts.get("prune_unreachable", True) and len(orphans) == sum(1 for x in findings if x["level"] == "error"):
                 # attributes that reach no numbers in this model are left out (and named), rather than holding the model back
                 gone = {x["text"].split(" reaches ")[0] for x in orphans}
                 spec["attributes"] = [a for a in spec["attributes"] if a["name"] not in gone]
                 reasons.append(f"left out {', '.join(sorted(gone))}: {'they reach' if len(gone) > 1 else 'it reaches'} no numbers in this model")
-                findings = mp.check(mp.from_spec(spec, sub, {}))
+                findings = mp.check(mp.from_spec(spec, sub, measured_prof))
         except mp.PlanError as e:
             findings = [{"level": "error", "code": "plan", "text": str(e)}]
         problems = [x["text"] for x in findings if x["level"] == "error"]
@@ -433,6 +534,8 @@ def main() -> int:
             scopes.append({"datasource": ds, "schema": schema, "patterns": rest[0].split(",") if rest else ["*"]})
         g = scan(m, scopes, opts, log=lambda x: print(x, flush=True))
         if not opts.get("skip_data_check"):
+            print("→ Measuring which keys are unique where…", flush=True)
+            measure_keys(m, g, opts, log=lambda x: print(x, flush=True))
             print("→ Checking links only a shared name suggests, against the data…", flush=True)
             confirm(m, g, opts, budget=int(opts.get("data_check_budget", 40)), log=lambda x: print(x, flush=True))
         json.dump(g, open(a.out, "w"), default=str)

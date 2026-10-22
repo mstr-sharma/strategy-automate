@@ -532,6 +532,23 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(state["probes"], 3)
         self.assertEqual(len(calls(m, "DELETE")), 1)     # finished: instance deleted
 
+    def test_a_model_too_large_to_answer_whole_is_published(self):
+        # observed live: a model with three fact tables, loaded, refuses the whole-model probe for its row limit
+        state = {"probes": 0}
+
+        def probe(call):
+            state["probes"] += 1
+            if state["probes"] < 2:
+                return Resp(500, {"iServerCode": -2147072488, "message": "Intelligent Cube is not published"})
+            return Resp(500, {"iServerCode": -2147180907, "message": "(The number of intermediate rows 50001324 exceeds the maximum number of intermediate rows 50000000"})
+        routes = publish_routes(Resp(200, {"status": 1, "tables": []}))
+        routes[("POST", r"/api/v2/cubes/M/instances")] = probe
+        m = make_m(routes)
+        with mock.patch.object(bm.time, "time", side_effect=[i * 20.0 for i in range(1000)]), \
+             mock.patch.object(bm.time, "sleep"), quiet():
+            bm._mosaic_publish_verified(m, "M", poll_seconds=600, poll_interval=0.01)
+        self.assertEqual(state["probes"], 2)
+
     def test_a_model_that_already_answers_still_waits_for_its_tables(self):
         routes = publish_routes(Resp(200, {"status": 1, "tables": [{"status": "completed"}]}))
         routes[("POST", r"/api/v2/cubes/M/instances")] = Resp(200, {"result": {}})
