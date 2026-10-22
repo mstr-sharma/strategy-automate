@@ -308,3 +308,34 @@ class ReferenceTests(unittest.TestCase):
         ref = md.apply_references(g, self.refs(a))
         self.assertFalse([f for f in ref["fks"] if f.get("name")])
         self.assertNotIn(f"SF/S/{a}CUSTOMERS", ref["referenced"])
+
+
+class TimestampTests(unittest.TestCase):
+    def test_a_fact_timestamp_is_a_time_attribute(self):
+        """Strategy's catalog types timestamps as time_stamp; they were left out, so a downtime model's only date was the
+        machine's commissioned date (seen live 2026-10-22)"""
+        ts = [table("SF", "Snowflake", "M", "DIM_MACHINE", [("MACHINE_CODE", T), ("COMMISSIONED_DATE", D), ("MACHINE_TYPE", T)], ["MACHINE_CODE"], 70),
+              table("SF", "Snowflake", "M", "FACT_DOWNTIME_EVENTS", [("EVENT_ID", N), ("MACHINE_CODE", T), ("EVENT_START", {"type": "time_stamp"}),
+                                                                     ("DURATION_MINS", {"type": "int64"})], ["EVENT_ID"], 15000)]
+        g = {"tables": {md.tkey(t): t for t in ts}, "fks": []}
+        rec = md.recommend(md.infer(g), {})[0]
+        start = next(a for a in rec["spec"]["attributes"] if any(f["column"] == "EVENT_START" for f in a["forms"]))
+        self.assertTrue(start.get("time", True))
+        self.assertEqual(start["name"], "Event Start")
+
+
+class AggregationNameTests(unittest.TestCase):
+    def test_averages_are_read_from_whole_words(self):
+        """"ratio" inside DURATION_MINS made downtime minutes an average (seen live 2026-10-22)"""
+        for name, avg in [("DURATION_MINS", False), ("DURATION", False), ("RATEPLAN_ID", False), ("CONVERSION_RATE", True),
+                          ("AVG_PRICE", True), ("MARGIN_PCT", True), ("yield", True)]:
+            self.assertIs(bool(mp.AVERAGED.search(name)), avg, name)
+
+    def test_downtime_minutes_add_up(self):
+        ts = [table("SF", "Snowflake", "M", "DIM_MACHINE", [("MACHINE_CODE", T), ("MACHINE_TYPE", T)], ["MACHINE_CODE"], 70),
+              table("SF", "Snowflake", "M", "FACT_DOWNTIME_EVENTS", [("EVENT_ID", N), ("MACHINE_CODE", T), ("DURATION_MINS", {"type": "int64"}),
+                                                                     ("ConversionRate", {"type": "double"})], ["EVENT_ID"], 100)]
+        g = {"tables": {md.tkey(t): t for t in ts}, "fks": []}
+        spec = md.recommend(md.infer(g), {})[0]["spec"]
+        fn = {m["column"]: m["function"] for m in spec["metrics"]}
+        self.assertEqual(fn, {"DURATION_MINS": "sum", "ConversionRate": "avg"})

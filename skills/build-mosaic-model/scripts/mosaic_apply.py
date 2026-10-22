@@ -252,7 +252,10 @@ def prove(m: bm.MSTR, plan: dict, *, sql, source_sql=live.run_sql, attempts: int
 
     reach = mp._reach(plan)
     broken_down: dict[str, int] = {}                    # fact table -> metrics already broken down by every attribute
-    for mt in [x for x in plan["metrics"] if x["function"] in ("sum", "count")]:
+    # sums and counts must add up across every breakdown; averages, minimums and maximums are compared with the source as
+    # a total and, where the attribute sits on the metric's own table, group by group
+    for mt in [x for x in plan["metrics"] if x["function"] in ("sum", "count", "avg", "min", "max")]:
+        additive = mt["function"] in ("sum", "count")
         mcol = cols.get(mt["name"].lower())
         if not mcol:
             probes.append({"name": f"{mt['name']} is on the SQL surface", "ok": False, "detail": "no column"})
@@ -265,14 +268,16 @@ def prove(m: bm.MSTR, plan: dict, *, sql, source_sql=live.run_sql, attempts: int
             probes.append({"name": f"{mt['name']} total", "ok": False, "detail": str(e)[:300]})
             continue
         try:
-            src_fn = "SUM" if mt["function"] == "sum" else "COUNT"
-            src = source_sql(m, t["datasource_id"], f"SELECT {src_fn}({live.quote(t['dbms'], mt['column'])}) AS v FROM {live.table_ref(t)}")
+            src_fn = {"sum": "SUM", "count": "COUNT", "avg": "AVG", "min": "MIN", "max": "MAX"}[mt["function"]]
+            # "* 1.0" keeps an average of whole numbers from being rounded by stores that average integers as integers
+            src_arg = live.quote(t["dbms"], mt["column"]) + (" * 1.0" if src_fn == "AVG" else "")
+            src = source_sql(m, t["datasource_id"], f"SELECT {src_fn}({src_arg}) AS v FROM {live.table_ref(t)}")
             total_src = _num(src[0]["v"])
         except RuntimeError as e:
             total_src = None
             probes.append({"name": f"{mt['name']} total (source)", "ok": None, "detail": f"source not measurable: {e}"})
         if total_src is not None:
-            same = total_model is not None and abs(total_model - total_src) <= TOLERANCE * max(1.0, abs(total_src))
+            same = total_model is not None and abs(total_model - total_src) <= (TOLERANCE if additive else 1e-6) * max(1.0, abs(total_src))
             probes.append({"name": f"{mt['name']} total", "ok": same, "detail": f"model {total_model} · source {total_src}"})
         if breakdowns_per_table is not None and broken_down.get(mt["table"], 0) >= breakdowns_per_table:
             continue                                    # its total is proven; the breakdowns were proven on another metric
@@ -295,17 +300,19 @@ def prove(m: bm.MSTR, plan: dict, *, sql, source_sql=live.run_sql, attempts: int
             if total_model is None:
                 probes.append({"name": name, "ok": False, "detail": "no total to compare"})
                 continue
-            adds_up = abs(s - total_model) <= TOLERANCE * max(1.0, abs(total_model))
-            cross = len(vals) > 1 and all(abs(v - total_model) <= TOLERANCE * max(1.0, abs(total_model)) for v in vals)
             on_table = mt["table"] in {e["table"] for e in a["forms"][0]["expressions"]}
-            detail = f"{len(rows)} groups, sum {s} vs total {total_model}"
-            ok = adds_up and not cross
+            if not additive and not on_table:
+                continue                                # nothing to add up, and no source grouping to compare with
+            adds_up = abs(s - total_model) <= TOLERANCE * max(1.0, abs(total_model))
+            cross = additive and len(vals) > 1 and all(abs(v - total_model) <= TOLERANCE * max(1.0, abs(total_model)) for v in vals)
+            detail = f"{len(rows)} groups, sum {s} vs total {total_model}" if additive else f"{len(rows)} groups"
+            ok = (adds_up or not additive) and not cross
             if ok and on_table:
                 col = next(e["column"] for e in a["forms"][0]["expressions"] if e["table"] == mt["table"])
                 try:
                     # a one-row fingerprint of the source's grouping (how many groups, and the sum of each group's total
                     # squared): the source SQL call returns at most 1,000 rows, so the groups themselves are not fetched
-                    qc, qv = live.quote(t["dbms"], col), live.quote(t["dbms"], mt["column"])
+                    qc, qv = live.quote(t["dbms"], col), live.quote(t["dbms"], mt["column"]) + (" * 1.0" if src_fn == "AVG" else "")
                     fp = source_sql(m, t["datasource_id"], f"SELECT COUNT(*) AS g, SUM(s * s) AS sq FROM (SELECT {qc} AS k, {src_fn}({qv}) AS s "
                                                          f"FROM {live.table_ref(t)} GROUP BY {qc}) x")[0]
                     want_g, want_sq = int(float(fp["g"])), _num(fp["sq"]) or 0.0

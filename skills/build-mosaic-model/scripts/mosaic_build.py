@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 
@@ -164,7 +165,17 @@ def cmd_build(args) -> int:
             sql(f'SHOW COLUMNS FROM "{plan["name"]}"')
             break
         except (SystemExit, Exception) as e:  # noqa: BLE001 - the SQL surface lists a new model after a short delay
-            if time.time() > deadline and plan["serve_mode"] == "in_memory" and not republished:
+            # seen live: a name reused right after its model was deleted still points at the deleted model's id; publishing
+            # again does not help, and waiting is the only cure
+            stale = re.search(r"cube object by its ID: ([0-9A-F]{32})", str(e))
+            stale = stale.group(1) if stale and stale.group(1) != mid else None
+            if stale and time.time() > deadline:
+                say(f"PROOF FAILED: Strategy's SQL endpoint still links the name '{plan['name']}' to a model deleted earlier ({stale}), so the "
+                    f"new model is built and published but cannot be queried by that name yet. Rename the model, or check readiness again later.")
+                summary["failures"]["post_build"] = 1
+                print(json.dumps(summary))
+                return 1
+            if time.time() > deadline and plan["serve_mode"] == "in_memory" and not republished and not stale:
                 # seen live: the SQL endpoint can miss one publish of a sound model; publishing again makes it list it
                 republished = True
                 say(f"  ↳ the SQL endpoint has not listed the model after {SQL_SURFACE_WAIT}s; publishing it again once…")
@@ -192,6 +203,12 @@ def cmd_build(args) -> int:
         say(f"[build] finished with failures: {summary['failures']}")
         print(json.dumps(summary))
         return 1
+    if not passed:
+        # nothing could be compared with the sources: built and published, but not proven
+        summary.update(ok=True, proven=False)
+        say("  ! proof: no check could compare this model with its sources, so it is not marked proven")
+        print(json.dumps(summary))
+        return 0
     summary.update(ok=True, proven=True)
     say(f"  ✓ proof: {passed} checks passed — every total matches its source and every breakdown adds up")
     print(json.dumps(summary))

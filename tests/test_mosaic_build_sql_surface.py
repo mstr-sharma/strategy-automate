@@ -33,13 +33,13 @@ class Clock:
 
 
 class SqlSurfaceWaitTests(unittest.TestCase):
-    def run_build(self, listed_after_publishes, serve_mode="in_memory"):
+    def run_build(self, listed_after_publishes, serve_mode="in_memory", probes=None, error="Table 'zz' does not exist"):
         publishes = []
         clock = Clock()
 
         def sql(statement):
             if statement.startswith("SHOW COLUMNS") and len(publishes) < listed_after_publishes:
-                raise RuntimeError("Table 'zz' does not exist")
+                raise RuntimeError(error)
             return []
 
         plan = {"name": "ZZ", "serve_mode": serve_mode}
@@ -48,7 +48,7 @@ class SqlSurfaceWaitTests(unittest.TestCase):
             apply=lambda *a, **k: {"model_id": "M1"},
             readback=lambda *a, **k: [],
             publish=lambda m, mid, rows: publishes.append(mid),
-            prove=lambda *a, **k: {"probes": [{"name": "total", "ok": True, "detail": ""}]},
+            prove=lambda *a, **k: {"probes": [{"name": "total", "ok": True, "detail": ""}] if probes is None else probes},
             bm=types.SimpleNamespace(resolve_dest_folder=lambda m, f: "F"))
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
             json.dump({"name": "ZZ", "sources": []}, fh)
@@ -83,6 +83,20 @@ class SqlSurfaceWaitTests(unittest.TestCase):
         self.assertEqual(publishes, ["M1", "M1"])
         self.assertTrue(any("and a second publish" in ln for ln in lines))
         self.assertEqual(summary["failures"]["post_build"], 1)
+
+    def test_a_proof_that_checked_nothing_is_not_called_proven(self):
+        code, publishes, lines, summary = self.run_build(1, probes=[{"name": "x total (source)", "ok": None, "detail": "not measurable"}])
+        self.assertEqual(code, 0)
+        self.assertTrue(summary["ok"])
+        self.assertFalse(summary["proven"])
+        self.assertTrue(any("not marked proven" in ln for ln in lines))
+
+    def test_a_name_still_linked_to_a_deleted_model_is_said_and_not_republished(self):
+        old = "5D961C2CB4EA40109D61178F9F7874B3"
+        code, publishes, lines, summary = self.run_build(99, error=f"Strategy Metadata Error: Failed to get the cube object by its ID: {old}.")
+        self.assertEqual(code, 1)
+        self.assertEqual(publishes, ["M1"])                                   # publishing again would not help
+        self.assertTrue(any(old in ln and "Rename the model" in ln for ln in lines))
 
     def test_a_live_model_is_not_published(self):
         code, publishes, lines, summary = self.run_build(99, serve_mode="connect_live")

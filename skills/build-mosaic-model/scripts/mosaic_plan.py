@@ -16,7 +16,7 @@ from typing import Any
 FUNCS = {"sum", "avg", "count", "count_distinct", "min", "max", "first", "last", "median"}
 NUMERIC = {"integer", "int32", "int64", "big_decimal", "decimal", "double", "float", "real", "numeric", "fixed_length_number", "number"}
 TEXT = {"utf8_char", "char", "varchar", "fixed_length_string", "string", "nvarchar", "nchar", "text", "variable_length_string"}
-TIME = {"date", "time", "timestamp", "datetime"}
+TIME = {"date", "time", "timestamp", "time_stamp", "datetime", "date_time", "timestamp_tz", "timestamp_ltz", "timestamp_ntz"}   # Strategy's catalog says time_stamp
 KEYISH = re.compile(r"(?:^|_)(?:id|key|sk|number|num|no|code)$", re.I)
 
 
@@ -375,7 +375,8 @@ DESCRIPTIVE_NUMBER = re.compile(r"(?:^|_)(date_index|date_idx|year|yr|month|mon|
 # numbers that measure, even on a dimension table (a product's list price, a store's floor area)
 MEASURE_NUMBER = re.compile(r"(amount|amt|price|cost|revenue|sales|spend|fee|qty|quantity|units|weight|volume|area|capacity|budget|target|balance|total|count|cnt|duration|mins|minutes|hours|hrs|seconds|secs|pct|percent|rate|ratio|score|margin)", re.I)
 # measures that read as an average, not a total
-AVERAGED = re.compile(r"(pct|percent|percentage|rate|ratio|avg|average|mean|score|index|margin|utili[sz]ation|efficiency|yield)", re.I)
+# whole words only: "ratio" inside DURATION_MINS made every duration an average (seen live 2026-10-22)
+AVERAGED = re.compile(r"(?:^|[_\s])(pct|percent|percentage|rate|ratio|avg|average|mean|score|index|margin|utili[sz]ation|efficiency|yield)(?=$|[_\s])", re.I)
 
 
 def subject(table: str) -> str:
@@ -506,7 +507,7 @@ def spec_from_tables(cat: dict[str, Any], prof: dict[str, Any] | None = None, na
             elif fam == "number":
                 # the builder chooses the format from the name and type (counts whole, money as currency)
                 metrics.append({"name": unique_name(_friendly(c["name"]), t["table"]), "description": "", "table": t["table"],
-                                "column": c["name"], "function": "avg" if AVERAGED.search(c["name"]) else "sum"})
+                                "column": c["name"], "function": "avg" if AVERAGED.search(re.sub(r"([a-z])([A-Z])", r"\1_\2", c["name"])) else "sum"})
             elif fam in ("text", "time"):
                 attributes.append({"name": unique_name(_friendly(c["name"]), t["table"]), "description": "", "lookup_table": t["table"],
                                    "time": fam == "time", "forms": [{"name": "ID", "category": "ID", "table": t["table"], "column": c["name"]}]})
