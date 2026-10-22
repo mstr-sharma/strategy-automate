@@ -134,5 +134,33 @@ class CutListTests(unittest.TestCase):
         self.assertEqual((how, [t["table"] for t in tables]), ("catalog views", ["Transactions"]))
 
 
+
+class CommandLineTests(unittest.TestCase):
+    """bad input or missing credentials end in one line a person can act on, never a traceback"""
+    def run_cli(self, script, *args, env_drop=("MSTR_BASE", "MSTR_USER", "MSTR_PASSWORD", "MSTR_CREDENTIALS_FILE")):
+        import subprocess
+        import tempfile
+        env = {k: v for k, v in os.environ.items() if k not in env_drop}
+        here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "skills", "build-mosaic-model", "scripts")
+        with tempfile.TemporaryDirectory() as d:
+            bad, empty = os.path.join(d, "bad.json"), os.path.join(d, "empty.json")
+            open(bad, "w").write("{bad"); open(empty, "w").write("{}")
+            args = [a.replace("BAD", bad).replace("EMPTY", empty) for a in args]
+            r = subprocess.run([sys.executable, os.path.join(here, script), *args], capture_output=True, text=True, env=env, timeout=60)
+        out = r.stdout + r.stderr
+        self.assertNotIn("Traceback", out)
+        self.assertNotEqual(r.returncode, 0)
+        return out
+
+    def test_missing_credentials(self):
+        self.assertIn("sign-in: set MSTR_BASE", self.run_cli("mosaic_discover.py", "scan", "--source", "X:Y", "--out", os.devnull))
+
+    def test_a_spec_that_is_not_json(self):
+        self.assertIn("spec: ", self.run_cli("mosaic_build.py", "plan", "--spec", "BAD"))
+
+    def test_a_graph_that_is_not_a_scan(self):
+        self.assertIn("is not a scan graph", self.run_cli("mosaic_discover.py", "recommend", "--graph", "EMPTY", "--out", os.devnull))
+
+
 if __name__ == "__main__":
     unittest.main()

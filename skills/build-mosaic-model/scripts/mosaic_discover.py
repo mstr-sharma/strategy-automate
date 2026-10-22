@@ -812,8 +812,8 @@ def main() -> int:
         for src in a.source:
             ds, *rest = src.split(":")
             scopes.append({"datasource": ds, **({"schema": rest[0]} if rest and rest[0] else {}), **({"tables": rest[1].split(",")} if len(rest) > 1 and rest[1] else {})})
-        found = mosaic_find.find(m, a.query, scopes or None, references=json.load(open(a.references)) if a.references else None,
-                                 usage=json.load(open(a.usage)) if a.usage else None, budget=a.budget, max_tables=a.max_tables,
+        found = mosaic_find.find(m, a.query, scopes or None, references=live.load_json(a.references, "references") if a.references else None,
+                                 usage=live.load_json(a.usage, "usage") if a.usage else None, budget=a.budget, max_tables=a.max_tables,
                                  anchors=[dict(zip(("datasource", "schema", "table"), x.split(":", 2))) for x in a.anchor], datasets=a.datasets,
                                  per_source=a.per_source, log=lambda x: print(x, flush=True))
         json.dump(found, open(a.out, "w"), default=str)
@@ -834,9 +834,12 @@ def main() -> int:
         json.dump(g, open(a.out, "w"), default=str)
         print(f"graph written: {len(g['tables'])} tables, {len(g['fks'])} declared foreign keys → {a.out}")
         return 0
-    graph = json.load(open(a.graph))
+    import mosaic_live as live
+    graph = live.load_json(a.graph, "graph")
+    if not isinstance(graph, dict) or not isinstance(graph.get("tables"), dict):
+        raise SystemExit(f"graph: {a.graph} is not a scan graph (write one with: mosaic_discover.py scan … --out)")
     if a.references:
-        graph = apply_references(graph, json.load(open(a.references)))
+        graph = apply_references(graph, live.load_json(a.references, "references"))
         opts = {**opts, "referenced": graph["referenced"], "dictionary": graph["dictionary"]}
     inf = infer(graph, opts, json.loads(a.curation) if a.curation else None)
     recs = recommend(inf, opts)

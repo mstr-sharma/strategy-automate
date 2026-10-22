@@ -47,10 +47,25 @@ def sign_in(*, base: str, user: str, password: str, project_id: str, identity: b
 def sign_in_from_env() -> bm.MSTR:
     """MSTR_BASE / MSTR_USER / MSTR_PASSWORD / MSTR_PROJECT_ID, or MSTR_CREDENTIALS_FILE + MSTR_CREDENTIALS_ENV"""
     project = os.environ.get("MSTR_PROJECT_ID", "")
+    missing = [] if os.environ.get("MSTR_CREDENTIALS_FILE") else [k for k in ("MSTR_BASE", "MSTR_USER", "MSTR_PASSWORD") if not os.environ.get(k)]
+    if missing:                                     # one line a person can act on, never a traceback
+        raise SystemExit("sign-in: set " + ", ".join(missing) + " (or MSTR_CREDENTIALS_FILE and MSTR_CREDENTIALS_ENV)")
     if os.environ.get("MSTR_CREDENTIALS_FILE"):
         blk = credentials_block(os.environ["MSTR_CREDENTIALS_FILE"], os.environ.get("MSTR_CREDENTIALS_ENV", "studio"))
         return sign_in(base=blk["url"], user=blk["login"], password=blk["password"], project_id=project)
     return sign_in(base=os.environ["MSTR_BASE"], user=os.environ["MSTR_USER"], password=os.environ["MSTR_PASSWORD"], project_id=project)
+
+
+def load_json(path: str, what: str):
+    """a JSON file the command was given, or one line saying what is wrong with it (exit, no traceback)"""
+    import json
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except OSError as e:
+        raise SystemExit(f"{what}: cannot read {path} ({e.strerror or e})") from None
+    except ValueError as e:
+        raise SystemExit(f"{what}: {path} is not valid JSON ({e})") from None
 
 
 # ── SQL through a datasource ─────────────────────────────────────────────────────────────────────────────────────────

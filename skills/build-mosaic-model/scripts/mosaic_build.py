@@ -62,7 +62,7 @@ def plan_for(m, spec: dict) -> tuple[dict, list[dict], dict]:
 
 
 def cmd_plan(args) -> int:
-    spec = json.load(open(args.spec))
+    spec = live.load_json(args.spec, "spec")
     m = live.sign_in_from_env()
     plan, findings, _ = plan_for(m, spec)
     result = json.dumps({"plan": plan, "findings": findings}, default=str)
@@ -95,7 +95,7 @@ def _sql(m):
 
 
 def cmd_build(args) -> int:
-    spec = json.load(open(args.spec))
+    spec = live.load_json(args.spec, "spec")
     if args.name:
         spec["name"] = args.name
     summary: dict = {"ok": False, "model_id": None, "published": False, "proven": False,
@@ -103,7 +103,7 @@ def cmd_build(args) -> int:
     try:
         m = live.sign_in_from_env()
     except SystemExit as e:
-        say(f"FATAL: sign-in: {e}")
+        say(f"FATAL: {e}" if str(e).startswith("sign-in") else f"FATAL: sign-in: {e}")
         print(json.dumps(summary))
         return 2
     plan, findings, prof = plan_for(m, spec)
@@ -254,7 +254,7 @@ def cmd_audit(args) -> int:
 def cmd_fix(args) -> int:
     """apply reviewed relationship changes ({add: [...], remove: [...]}) to an existing model, read them back, republish
     (in-memory) and prove the model against its sources"""
-    changes = json.load(open(args.changes))
+    changes = live.load_json(args.changes, "changes")
     m = live.sign_in_from_env()
     spec, rels, info, cat, prof = _audit_inputs(m, args.model_id)
     summary = {"ok": False, "model_id": args.model_id, "added": 0, "removed": 0, "published": False, "proof": None}
