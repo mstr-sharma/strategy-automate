@@ -540,7 +540,8 @@ class PublishTests(unittest.TestCase):
             state["probes"] += 1
             if state["probes"] < 2:
                 return Resp(500, {"iServerCode": -2147072488, "message": "Intelligent Cube is not published"})
-            return Resp(500, {"iServerCode": -2147180907, "message": "(The number of intermediate rows 50001324 exceeds the maximum number of intermediate rows 50000000"})
+            return Resp(500, {"iServerCode": -2147180907, "message": "(The number of intermediate rows 50001324 exceeds the maximum number of intermediate rows 50000000"}) \
+                if state["probes"] == 2 else Resp(500, {"message": "(A cartesian join is detected and execution is aborted"})
         routes = publish_routes(Resp(200, {"status": 1, "tables": []}))
         routes[("POST", r"/api/v2/cubes/M/instances")] = probe
         m = make_m(routes)

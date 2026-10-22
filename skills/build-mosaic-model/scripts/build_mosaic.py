@@ -3606,7 +3606,8 @@ def _executes(m: MSTR, model_id: str) -> bool | None:
         return False
     # the whole-model query of a model with several fact tables can exceed the engine's row limits: the engine ran it
     # against loaded data, so the model is published
-    if "intermediate rows" in text or "exceeds the maximum" in text or "result set" in text and "limit" in text:
+    # (or be refused as a cartesian join of two facts): either way the engine planned it against loaded data
+    if "intermediate rows" in text or "exceeds the maximum" in text or "result set" in text and "limit" in text or "cartesian join" in text:
         return True
     return None
 
