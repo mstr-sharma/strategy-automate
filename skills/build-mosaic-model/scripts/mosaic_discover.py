@@ -292,7 +292,8 @@ def recommend(inferred: dict, options: dict | None = None) -> list[dict]:
             continue
         seen.add(sig)
         stores = sorted({tables[k]["dbms"] for k in group})
-        modeled = len(group & set(opts["modeled_tables"])) / len(group)
+        modeled_names = {str(x).casefold() for x in opts["modeled_tables"]}
+        modeled = sum(1 for k in group if k in opts["modeled_tables"] or tables[k]["table"].casefold() in modeled_names) / len(group)
         conf = sum(l["confidence"] for l in used) / max(1, len(used))
         n_facts = sum(1 for k in group if _is_fact(tables[k], keyed[k]))
         # confidence, then a well-formed size (3–6 tables), cross-store when preferred, a bonus for several facts sharing
