@@ -351,8 +351,8 @@ def _short_table(table: str) -> str:
     return _friendly(re.sub(r"^[A-Za-z]+(?:_[A-Za-z]+)*_\d{6,}(?:_\d+)*_", "", table))
 
 
-STAR_DIM = re.compile(r"^(dim|dimension|d|lkp|lookup|ref)_", re.I)
-STAR_ANY = re.compile(r"^(dim|dimension|d|fact|fct|f|lkp|lookup|ref|bridge|brg|agg|xref)_", re.I)
+STAR_DIM = re.compile(r"^(dim|dimension|d|lkp|lookup|lu|ref)_", re.I)
+STAR_ANY = re.compile(r"^(dim|dimension|d|fact|fct|f|lkp|lookup|lu|ref|rel|bridge|brg|agg|xref)_", re.I)
 # numbers that describe rather than measure: calendar parts, flags, codes, ranks, sequence numbers, postal codes
 DESCRIPTIVE_NUMBER = re.compile(r"(?:^|_)(date_index|date_idx|year|yr|month|mon|quarter|qtr|week|wk|day|dow|hour|hr|minute_of|num|number|no|nbr|seq|sequence|rank|level|lvl|flag|ind|indicator|zip|postal|period|version|fiscal_\w+)$|^(is|has|was|can|flag)_", re.I)
 # numbers that measure, even on a dimension table (a product's list price, a store's floor area)

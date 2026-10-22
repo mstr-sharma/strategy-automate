@@ -166,22 +166,29 @@ def confirm(m, graph: dict, options: dict | None = None, budget: int = 40, log=l
 
 
 def view_copies(tables: dict) -> set:
-    """views over another scanned table (FACT_X_V beside FACT_X with the same columns): they repeat it, so the base
-    table is used and the view is left out"""
+    """views and copies of another scanned table: FACT_X_V, FACT_X2, FACT_X_COPY or FACT_X_NEW beside FACT_X with
+    (nearly) the same columns repeat it, so the base table is used and they are left out"""
+    norm = lambda n: re.sub(r"[^a-z0-9]", "", n.casefold())  # noqa: E731
     out = set()
     for k, t in tables.items():
-        m_ = re.match(r"^(.+?)_?(?:v|vw|view)$", t["table"], re.I)
-        if not m_:
-            continue
-        cols = {c["name"].casefold() for c in t["columns"]}
+        cols = {norm(c["name"]) for c in t["columns"]}
         for kk, other in tables.items():
-            if kk != k and other["table"].casefold() == m_.group(1).casefold().rstrip("_") and other["datasource_id"] == t["datasource_id"]:
-                if len(cols & {c["name"].casefold() for c in other["columns"]}) >= 0.8 * max(len(cols), 1):
-                    out.add(k)
+            if kk == k or other["datasource_id"] != t["datasource_id"] or other.get("schema") != t.get("schema"):
+                continue
+            base = other["table"].casefold()
+            name = t["table"].casefold()
+            # the copy's name is the base's plus a suffix: digits, or _v/_vw/_view, or _<word>
+            if not (name != base and name.startswith(base) and re.fullmatch(r"_?(\d+|v|vw|view|[a-z]+)", name[len(base):])):
+                continue
+            ocols = {norm(c["name"]) for c in other["columns"]}
+            suffix = name[len(base):].lstrip("_")
+            need = 0.8 if re.fullmatch(r"\d+|v|vw|view", suffix) else 0.9
+            if len(cols & ocols) >= need * max(len(cols), 1):
+                out.add(k)
     return out
 
 
-STAR_ROLE = re.compile(r"^(dim|dimension|d|fact|fct|f|lkp|lookup|ref|bridge|brg|agg|xref)_", re.I)
+STAR_ROLE = re.compile(r"^(dim|dimension|d|fact|fct|f|lkp|lookup|lu|ref|rel|bridge|brg|agg|xref)_", re.I)
 
 
 def _family_key(name: str, schema: str = "", datasource: str = "") -> str:
@@ -218,7 +225,14 @@ def infer(graph: dict, options: dict | None = None, curation: dict | None = None
     per_schema: dict[tuple, int] = {}
     for t in tables.values():
         per_schema[(t.get("datasource_id"), t.get("schema"))] = per_schema.get((t.get("datasource_id"), t.get("schema")), 0) + 1
+    star_schema = {(t.get("datasource_id"), t.get("schema")) for t in tables.values() if mp.STAR_DIM.match(t["table"])}
     for t in tables.values():
+        # a schema with dimension or lookup tables (DIM_, LU_) and up to 60 tables is one star: its facts join its
+        # lookups whatever they are called (TXN_BOOKING with LU_RESIDENCY)
+        if (t.get("datasource_id"), t.get("schema")) in star_schema and per_schema[(t.get("datasource_id"), t.get("schema"))] <= 60 \
+                and not re.match(r"^SD_[A-Z]+_[A-Z0-9]+_\d{8}_\d{4}_", t["table"], re.I):
+            t["family"] = f"{t.get('datasource_id')}/{t.get('schema')}#star"
+            continue
         # a small schema (up to 20 tables, no synthetic datasets) is one dataset
         if per_schema[(t.get("datasource_id"), t.get("schema"))] <= 20 and not re.match(r"^SD_[A-Z]+_[A-Z0-9]+_\d{8}_\d{4}_", t["table"], re.I):
             t["family"] = f"{t.get('datasource_id')}/{t.get('schema')}#schema"
@@ -371,7 +385,7 @@ def infer(graph: dict, options: dict | None = None, curation: dict | None = None
 
 # ── recommend (pure) ─────────────────────────────────────────────────────────────────────────────────────────────────
 FACT_ROLE = re.compile(r"^(fact|fct|f)_", re.I)
-NOT_FACT = re.compile(r"(?:^|_)(map|mapping|xref|bridge|brg|lookup|lkp|ref|names?|crosswalk)(?:_|$)", re.I)
+NOT_FACT = re.compile(r"(?:^|_)(map|mapping|xref|bridge|brg|lookup|lkp|lu|ref|rel|names?|crosswalk)(?:_|$)", re.I)
 
 
 def _is_fact(t: dict, keyed: set[str], home: bool = False) -> bool:
