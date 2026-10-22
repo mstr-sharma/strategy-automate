@@ -1,7 +1,7 @@
 """Discover what is in a database and recommend models to build, mostly from metadata (see StrategyAce
 docs/MODEL_RECOMMENDER.md and ../REBUILD.md).
 
-  python3 mosaic_discover.py scan --source "Synthetic Data:MCI_DEMO:SD_TECH_KOBO_*" --source "Neon PostgreSQL:public:KOBO_*" --out graph.json
+  python3 mosaic_discover.py scan --source "Warehouse:DEMO:SD_EREADER_*" --source "Postgres:public:EREADER_*" --out graph.json
   python3 mosaic_discover.py recommend --graph graph.json [--min-tables 2 --max-tables 8 --cross-store prefer] --out recs.json
 
 scan() reads, without scanning tables: the table list, row counts from statistics, declared primary and foreign keys
