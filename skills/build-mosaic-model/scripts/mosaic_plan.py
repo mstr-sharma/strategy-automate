@@ -162,6 +162,13 @@ def _relationships(plan: dict, keys: dict[str, dict], prof: dict) -> list[dict]:
         pair = (r["parent"], r["child"])
         if pair not in best or (r["table"] == lookup.get(r["child"]) and best[pair]["table"] != lookup.get(r["child"])):
             best[pair] = r
+    # two tables carrying each other's keys (stores hold a location, locations hold a store) would relate the pair both ways,
+    # a loop Strategy refuses: keep the direction set on the child's own lookup table, else the first
+    for (p, c), r in list(best.items()):
+        rev = best.get((c, p))
+        if rev and (p, c) in best:
+            keep_rev = rev["table"] == lookup.get(p) and r["table"] != lookup.get(c)
+            best.pop((p, c) if keep_rev else (c, p))
     return list(best.values())
 
 
@@ -335,13 +342,21 @@ def _short_table(table: str) -> str:
     return _friendly(re.sub(r"^[A-Za-z]+(?:_[A-Za-z]+)*_\d{6,}(?:_\d+)*_", "", table))
 
 
-def spec_from_tables(cat: dict[str, Any], prof: dict[str, Any] | None = None, name: str = "Generated model") -> dict[str, Any]:
+def spec_from_tables(cat: dict[str, Any], prof: dict[str, Any] | None = None, name: str = "Generated model",
+                     entities: list[dict] | None = None) -> dict[str, Any]:
     """keys (…_ID, …_KEY, …_NUMBER, …_CODE) become attributes shared by every table that carries them, in each table's
     own spelling, defined by the table where they are unique; other text and dates become attributes of their table;
-    numbers become summed metrics. A bare `id` is never shared: it is a different thing on every table."""
+    numbers become summed metrics. A bare `id` is never shared: it is a different thing on every table.
+    entities ([{name, members: [(table, column)], home}], e.g. from declared foreign keys) come first and join columns
+    whatever they are called (a customer's ACQUISITION_DATE and the calendar's CALENDAR_DATE)."""
     prof = prof or {}
     tables = cat["tables"]
     used: set[str] = set()
+    pre: list[dict] = []
+    for e in entities or []:
+        members = [(t, c) for t, c in e["members"] if any(x["table"] == t and any(col["name"] == c for col in x["columns"]) for x in tables)]
+        if len(members) >= 2:
+            pre.append({"name": e["name"], "members": members, "home": e.get("home") if any(t == e.get("home") for t, _ in members) else members[0][0]})
 
     def unique_name(base: str, table: str) -> str:
         n = base if base.casefold() not in used else f"{base} ({_short_table(table)})"
@@ -355,6 +370,12 @@ def spec_from_tables(cat: dict[str, Any], prof: dict[str, Any] | None = None, na
                 keys.setdefault(k, []).append((t["table"], c["name"]))
     attributes, metrics = [], []
     keyed = set()
+    for e in pre:
+        attributes.append({"name": unique_name(e["name"], e["home"]), "description": "", "lookup_table": e["home"],
+                           "forms": [{"name": "ID", "category": "ID", "table": t, "column": c} for t, c in e["members"]]})
+        keyed |= set(e["members"])
+    keys = {k: [tc for tc in occ if tc not in keyed] for k, occ in keys.items()}
+    keys = {k: occ for k, occ in keys.items() if occ}
     for k, occ in sorted(keys.items()):
         def unique_on(tc):
             p = prof.get(tc[0]) or {}
