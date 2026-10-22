@@ -636,8 +636,29 @@ def main() -> int:
     r.add_argument("--curation", help="JSON curation")
     r.add_argument("--out", required=True)
     r.add_argument("--references", help="JSON file: the references as Ace's reader extracted them")
+    f = sub.add_parser("find", help="the tables that fit a description, from metadata only (no table is read)")
+    f.add_argument("--query", default="")
+    f.add_argument("--source", action="append", default=[], help="DATASOURCE[:SCHEMA[:PATTERN,PATTERN]]; none = every source")
+    f.add_argument("--references", help="JSON file: the references as Ace's reader extracted them")
+    f.add_argument("--usage", help="JSON file: {table name: number of models using it}")
+    f.add_argument("--budget", type=float, default=120.0)
+    f.add_argument("--max-tables", type=int, default=12)
+    f.add_argument("--out", required=True)
     a = ap.parse_args()
-    opts = json.loads(a.options) if a.options else {}
+    opts = json.loads(a.options) if getattr(a, "options", None) else {}
+    if a.cmd == "find":
+        import mosaic_find
+        import mosaic_live as live
+        m = live.sign_in_from_env()
+        scopes = []
+        for src in a.source:
+            ds, *rest = src.split(":")
+            scopes.append({"datasource": ds, **({"schema": rest[0]} if rest and rest[0] else {}), **({"tables": rest[1].split(",")} if len(rest) > 1 and rest[1] else {})})
+        found = mosaic_find.find(m, a.query, scopes or None, references=json.load(open(a.references)) if a.references else None,
+                                 usage=json.load(open(a.usage)) if a.usage else None, budget=a.budget, max_tables=a.max_tables, log=lambda x: print(x, flush=True))
+        json.dump(found, open(a.out, "w"), default=str)
+        print(f"found {len(found['picked'])} tables of {found['candidates']} matching, in {len(found['read'])} schemas read" + (f"; {len(found['left'])} left" if found["left"] else ""))
+        return 0
     if a.cmd == "scan":
         import mosaic_live as live
         m = live.sign_in_from_env()
