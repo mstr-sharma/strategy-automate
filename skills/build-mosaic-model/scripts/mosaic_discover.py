@@ -93,6 +93,9 @@ def scan(m, scopes: list[dict], options: dict | None = None, log=lambda s: None)
         info = live.datasource(m, sc["datasource"])
         log(f"  · listing the tables in {info['name']}/{sc['schema']}")    # "  · " lines say what is happening; they are not items
         names = mx.list_tables(m, info["id"], sc["schema"])
+        # how big the schema really is, whatever part of it is scanned: a few tables picked out of a large catch-all
+        # schema are not one small dataset (infer's small-schema and star rules read this)
+        graph.setdefault("schema_sizes", {})[f"{info['id']}/{sc['schema']}"] = len(names)
         pats = sc.get("patterns") or ["*"]
         names = [n for n in names if any(fnmatch.fnmatchcase(n.upper(), p.upper()) for p in pats)
                  and not any(fnmatch.fnmatchcase(n.upper(), p.upper()) for p in opts["exclude_patterns"])]
@@ -312,6 +315,8 @@ def infer(graph: dict, options: dict | None = None, curation: dict | None = None
     per_schema: dict[tuple, int] = {}
     for t in tables.values():
         per_schema[(t.get("datasource_id"), t.get("schema"))] = per_schema.get((t.get("datasource_id"), t.get("schema")), 0) + 1
+    for (ds, schema), n in list(per_schema.items()):
+        per_schema[(ds, schema)] = max(n, (graph.get("schema_sizes") or {}).get(f"{ds}/{schema}", 0))
     star_schema = {(t.get("datasource_id"), t.get("schema")) for t in tables.values() if mp.STAR_DIM.match(t["table"])}
     for t in tables.values():
         # a schema with dimension or lookup tables (DIM_, LU_) and up to 60 tables is one star: its facts join its
@@ -362,7 +367,7 @@ def infer(graph: dict, options: dict | None = None, curation: dict | None = None
         def joins(c, fam):
             n = c["name"].casefold()
             return (mp.KEY_COLUMN.search(c["name"]) or (fam, n) in subjects or (on_dim.get((n, fam)) and anywhere.get((n, fam), 0) >= 2)) \
-                and n != "id" and mp._family(c.get("dataType")) in ("number", "text", "time")
+                and n != "id" and not mp.TECHNICAL_COLUMN.search(c["name"]) and mp._family(c.get("dataType")) in ("number", "text", "time")
         for k, t in tables.items():
             for c in t["columns"]:
                 if joins(c, t["family"]):
@@ -642,7 +647,7 @@ def main() -> int:
     f.add_argument("--references", help="JSON file: the references as Ace's reader extracted them")
     f.add_argument("--usage", help="JSON file: {table name: number of models using it}")
     f.add_argument("--budget", type=float, default=120.0)
-    f.add_argument("--max-tables", type=int, default=12)
+    f.add_argument("--max-tables", type=int, default=24)
     f.add_argument("--anchor", action="append", default=[], help="DATASOURCE:SCHEMA:TABLE the model starts from")
     f.add_argument("--out", required=True)
     a = ap.parse_args()

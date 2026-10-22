@@ -350,6 +350,8 @@ def errors(findings: list[dict]) -> list[dict]:
 
 # ── a specification drafted from the tables alone (the test runner's generated cases, scripts without a design) ─────
 KEY_COLUMN = re.compile(r"(?:^|_)(?:id|key|sk|number|num|no|code)$", re.I)     # …_SK: a surrogate key
+# load bookkeeping, never a business key to join on: ETL_BATCH_ID, LOAD_ID, RUN_ID, RECORD_SOURCE_ID, ROW_HASH_KEY …
+TECHNICAL_COLUMN = re.compile(r"(?i)^(etl|dw|load|batch|run|job|audit|record_source|row_hash|hash|src_sys|source_system|ingest)(_|$)|_(batch|load|run|job)_(id|key)$")
 
 
 # warehouse abbreviations spelled out in business names (CUST_CITY → Customer City, MNTH_CATEGORY_SLS → Month Category Sales)
@@ -371,12 +373,12 @@ def _short_table(table: str) -> str:
 STAR_DIM = re.compile(r"^(dim|dimension|d|lkp|lookup|lu|ref)_", re.I)
 STAR_ANY = re.compile(r"^(dim|dimension|d|fact|fct|f|lkp|lookup|lu|ref|rel|bridge|brg|agg|xref)_", re.I)
 # numbers that describe rather than measure: calendar parts, flags, codes, ranks, sequence numbers, postal codes
-DESCRIPTIVE_NUMBER = re.compile(r"(?:^|_)(date_index|date_idx|year|yr|month|mon|quarter|qtr|week|wk|day|dow|hour|hr|minute_of|num|number|no|nbr|seq|sequence|rank|level|lvl|flag|ind|indicator|zip|postal|period|version|fiscal_\w+)$|^(is|has|was|can|flag)_", re.I)
+DESCRIPTIVE_NUMBER = re.compile(r"(?:^|_)(date_index|date_idx|year|yr|month|mon|quarter|qtr|week|wk|day|dow|hour|hr|minute_of|num|number|no|nbr|seq|sequence|rank|level|lvl|flag|ind|indicator|zip|postal|period|version|fiscal_\w+|enabled|disabled|active|opted_in|opt_in|yn|bool)$|^(is|has|was|can|flag)_", re.I)
 # numbers that measure, even on a dimension table (a product's list price, a store's floor area)
 MEASURE_NUMBER = re.compile(r"(amount|amt|price|cost|revenue|sales|spend|fee|qty|quantity|units|weight|volume|area|capacity|budget|target|balance|total|count|cnt|duration|mins|minutes|hours|hrs|seconds|secs|pct|percent|rate|ratio|score|margin)", re.I)
 # measures that read as an average, not a total
 # whole words only: "ratio" inside DURATION_MINS made every duration an average (seen live 2026-10-22)
-AVERAGED = re.compile(r"(?:^|[_\s])(pct|percent|percentage|rate|ratio|avg|average|mean|score|index|margin|utili[sz]ation|efficiency|yield)(?=$|[_\s])", re.I)
+AVERAGED = re.compile(r"(?:^|[_\s])(pct|percent|percentage|rate|ratio|avg|average|mean|score|index|margin|utili[sz]ation|efficiency|yield|apr|apy|interest_rate|likelihood|probability)(?=$|[_\s])", re.I)
 
 
 def subject(table: str) -> str:

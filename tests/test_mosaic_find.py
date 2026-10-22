@@ -58,7 +58,7 @@ class FindTests(unittest.TestCase):
         self.assertNotIn("ORDERS", {p["table"] for p in found["picked"]})
         join = next(p for p in found["picked"] if p["table"] == "FACT_SCRAP")
         self.assertEqual(join["role"], "join")                       # shares PLANT_ID with a match
-        self.assertIn("joins", join["why"][0])
+        self.assertIn("shares", join["why"][0])
 
     def test_only_catalog_views_are_queried(self):
         _, src = run("downtime by machine")
@@ -129,3 +129,25 @@ class PartnerTests(unittest.TestCase):
         self.assertFalse([p for p in picked if p["table"].startswith("FACT_THING")])
         self.assertNotIn("DIM_DECLINE_REASON", [p["table"] for p in picked])        # one shared name in another schema
         self.assertNotIn("MY_MODEL", [p["table"] for p in picked])                  # a bare ID is not a form of EVENT_ID
+
+
+class DatasetTests(unittest.TestCase):
+    def row(self, schema, table, cols, n=6):
+        return {"datasource_id": "SF", "datasource": "SF", "dbms": "Snowflake", "schema": schema, "table": table, "score": 0, "why": [],
+                "columns": cols, "_t": {"table": table, "columns": [{"name": c, "comment": ""} for c in cols], "comment": "", "rows": 10}, "_n": n}
+
+    def test_rare_words_count_more_and_whole_datasets_are_picked(self):
+        """seen live: "customer churn and product sales" picked lone wide tables in five schemas; a rare word ("churn")
+        must lead, and a dataset with its join partners beats a lone table"""
+        found = [self.row("INS", "FACT_POLICY", ["POLICY_ID", "CUSTOMER_ID", "CANCELLATION_REASON"]),
+                 self.row("INS", "DIM_CUSTOMER", ["CUSTOMER_ID", "SEGMENT"]),
+                 self.row("INS", "SNOWPARK_TEMP_TABLE_X1", ["POLICY_ID", "CUSTOMER_ID"]),
+                 self.row("INS", "FACT_LOAD", ["ETL_BATCH_ID", "ROWS"]),
+                 self.row("WIDE", "HOLD_TABLE", ["CUSTOMER_ID", "PRODUCT_ID", "SALES_AMT", "CANCELED_FLAG"] + [f"C{i}" for i in range(150)], 1)] + \
+                [self.row(f"S{i}", f"CUSTOMER_{i}", ["CUSTOMER_ID", "PRODUCT_ID"], 1) for i in range(40)]
+        picked, _ = mf.pick_datasets(found, mf.terms("customer churn and product sales"), {}, set())
+        names = [p["table"] for p in picked]
+        self.assertEqual(names[:2], ["FACT_POLICY", "DIM_CUSTOMER"])
+        self.assertNotIn("SNOWPARK_TEMP_TABLE_X1", names)
+        self.assertNotIn("HOLD_TABLE", names)
+        self.assertFalse(mf._keyish("ETL_BATCH_ID"))

@@ -186,9 +186,14 @@ def _int(v) -> int | None:
 
 
 # ── scoring ──────────────────────────────────────────────────────────────────────────────────────────────────────────
-def score_table(t: dict[str, Any], want: list[str], usage: dict[str, int], referenced: set[str]) -> tuple[float, list[str]]:
-    """how well a table fits the description: its name (3), its columns (1.5 each word, at most twice), comments (1),
-    a table the references name (+3), tables existing models already use (a little), empty tables (less)"""
+def score_table(t: dict[str, Any], want: list[str], usage: dict[str, int], referenced: set[str],
+                weights: dict[str, float] | None = None, matched: set[str] | None = None) -> tuple[float, list[str]]:
+    """how well a table fits the description: its name (3), its columns (1.5 each word, at most twice, less in a very
+    wide table), comments (1), each times the word's weight (a rare word in what was read counts more than a common
+    one); a table the references name (+3), tables existing models already use (a little), empty tables (less).
+    `matched` collects the words the table matched."""
+    weights = weights or {}
+    wide = min(1.0, math.sqrt(40 / max(40, len(t["columns"]))))     # 160 columns: column hits count half
     name_w = words(t["table"])
     col_w = [words(c["name"]) for c in t["columns"]]
     text = " ".join([t.get("comment") or ""] + [c.get("comment") or "" for c in t["columns"]]).casefold()
@@ -197,20 +202,27 @@ def score_table(t: dict[str, Any], want: list[str], usage: dict[str, int], refer
     used_cols: set[str] = set()                         # a word of a name counts for one term only ("plant" ≈ "production")
     for term in want:
         vs = {term} | SYN.get(term, set())
+        w = weights.get(term, 1.0)
         if (name_w - used_name) & vs:
             used_name |= name_w & vs
-            score += 3.0 if term in name_w else 2.4
+            score += (3.0 if term in name_w else 2.4) * w
             why.append(f"its name says {term}")
+            if matched is not None:
+                matched.add(term)
             continue
         cols = [c["name"] for c, w in zip(t["columns"], col_w) if w & vs and c["name"] not in used_cols]
         if cols:
             used_cols.update(cols)
-            score += 1.5 * min(2, len(cols)) * (1 if any(term in w for w in col_w) else 0.8)
+            score += 1.5 * min(2, len(cols)) * (1 if any(term in x for x in col_w) else 0.8) * w * wide
             why.append(f"{', '.join(cols[:2])} {'match' if len(cols) > 1 else 'matches'} {term}")
+            if matched is not None:
+                matched.add(term)
             continue
         if any(re.search(r"(?<![a-z])" + re.escape(v) + r"[a-z]{0,3}(?![a-z])", text) for v in vs):
-            score += 1.0
+            score += 1.0 * w
             why.append(f"its description mentions {term}")
+            if matched is not None:
+                matched.add(term)
     if t["table"].casefold() in referenced:
         score += 3.0
         why.append("your references name it")
@@ -224,8 +236,14 @@ def score_table(t: dict[str, Any], want: list[str], usage: dict[str, int], refer
     return round(score, 2), why
 
 
+# load bookkeeping, not a business key: ETL_BATCH_ID, LOAD_ID, RECORD_SOURCE_ID, ROW_HASH_KEY …
+TECHNICAL = mp.TECHNICAL_COLUMN
+# scratch and copies: never offered as model tables
+SCRATCH = re.compile(r"(?i)(^|_)(snowpark_temp|tmp|temp|scratch|bak|backup|old|copy|test|sandbox|stg_tmp)(_|$|\d)|^(my_first_dbt_model|hold_table)$")
+
+
 def _keyish(col: str) -> bool:
-    return bool(mp.KEYISH.search(col)) or col.casefold().endswith(("_id", "_key", "_code", "_sk"))
+    return not TECHNICAL.search(col) and (bool(mp.KEYISH.search(col)) or col.casefold().endswith(("_id", "_key", "_code", "_sk")))
 
 
 def partners(anchored: list[dict[str, Any]], found: list[dict[str, Any]], room: int) -> list[dict[str, Any]]:
@@ -269,8 +287,62 @@ def partners(anchored: list[dict[str, Any]], found: list[dict[str, Any]], room: 
             for score, r, shared, same in ranked[:room]]
 
 
+def _group(r: dict[str, Any]) -> tuple[str, str, str]:
+    """the dataset a table belongs to: a schema of up to 25 tables is one; in a larger one, a family of related tables
+    (a synthetic dataset's prefix, a star schema's DIM_/FACT_ tables, else the first two words of the name)"""
+    if r.get("_n", 0) <= 25:
+        return (r["datasource_id"], r["schema"], "")
+    import mosaic_discover as md
+    return (r["datasource_id"], r["schema"], md._family_key(r["table"], r["schema"], r["datasource_id"]))
+
+
+def pick_datasets(found: list[dict[str, Any]], want: list[str], usage: dict[str, int], referenced: set[str],
+                  max_tables: int = 24, groups: int = 5) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """the tables to scan: words weighted by how rare they are in what was read ("churn" in 20 tables counts more than
+    "customer" in 600), tables scored with those weights, then the best datasets (a dataset's best tables and how many
+    of the words it covers), and from each its matching tables and the tables they join to. Returns (picked, matches)."""
+    found = [r for r in found if not SCRATCH.search(r["table"])]
+    n = max(2, len(found))
+    hits: dict[str, int] = {}
+    for r in found:
+        got: set[str] = set()
+        score_table(r["_t"], want, {}, set(), matched=got)
+        r["_terms"] = got
+        for term in got:
+            hits[term] = hits.get(term, 0) + 1
+    weights = {t: min(2.0, max(0.25, math.log(n / (1 + hits.get(t, 0))) / 2)) for t in want}
+    for r in found:
+        r["score"], r["why"] = score_table(r["_t"], want, usage, referenced, weights)
+    top = sorted([r for r in found if r["score"] > 0], key=lambda r: -r["score"])
+    if not top:
+        return [], []
+    by: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for r in found:
+        by.setdefault(_group(r), []).append(r)
+    ranked = []
+    for key, rows in by.items():
+        best = sorted((r for r in rows if r["score"] > 0), key=lambda r: -r["score"])
+        if not best:
+            continue
+        covered = set().union(*(r["_terms"] for r in best))
+        value = sum(r["score"] for r in best[:3]) + 2.0 * sum(weights.get(t, 1.0) for t in covered) + (1.0 if len(rows) > 1 else -3.0)
+        ranked.append((value, key, best, rows))
+    ranked.sort(key=lambda x: -x[0])
+    floor = ranked[0][0] * 0.3
+    picked: list[dict[str, Any]] = []
+    per = max(3, max_tables // groups + 2)
+    for value, key, best, rows in ranked[:groups]:
+        if value < floor or len(picked) >= max_tables:
+            break
+        lead = best[0]["score"]
+        matches = [dict(r, role="match") for r in best if r["score"] >= lead * 0.3][: max(2, per // 2)]
+        mates = partners(matches, [r for r in rows if r["score"] < lead * 0.3 or r not in best[: len(matches)]], per - len(matches))
+        picked += (matches + mates)[: max_tables - len(picked)]
+    return picked, top
+
+
 def find(m, query: str, scopes: list[dict[str, Any]] | None = None, *, references: list[dict[str, Any]] | None = None,
-         usage: dict[str, int] | None = None, budget: float = 120.0, max_tables: int = 12, anchors: list[dict[str, str]] | None = None,
+         usage: dict[str, int] | None = None, budget: float = 120.0, max_tables: int = 24, anchors: list[dict[str, str]] | None = None,
          log=lambda s: None) -> dict[str, Any]:
     """{picked: [{datasource_id, datasource, dbms, schema, table, score, why, role}], read: [...], left: [...], terms}.
 
@@ -357,7 +429,7 @@ def find(m, query: str, scopes: list[dict[str, Any]] | None = None, *, reference
         for t in tables:
             s, why = score_table(t, want, use, referenced)
             row = {"datasource_id": info["id"], "datasource": info["name"], "dbms": info["dbms"], "schema": schema, "table": t["table"],
-                   "score": s, "why": why, "rows": t.get("rows"), "columns": [c["name"] for c in t["columns"]], "read": how}
+                   "score": s, "why": why, "rows": t.get("rows"), "columns": [c["name"] for c in t["columns"]], "read": how, "_t": t, "_n": len(tables)}
             found.append(row)
             if s and (best is None or s > best["score"]):
                 best = row
@@ -371,20 +443,8 @@ def find(m, query: str, scopes: list[dict[str, Any]] | None = None, *, reference
                               and r["table"].casefold() == a["table"].casefold() for a in anchors)
     anchored = [dict(r, role="anchor", why=["you started from it"]) for r in found if anchors and is_anchor(r)]
     if anchors:
-        return {"terms": want, "picked": anchored + partners(anchored, found, max_tables - len(anchored)), "read": read, "left": left,
+        out = anchored + partners(anchored, found, max_tables - len(anchored))
+        return {"terms": want, "picked": [{k: v for k, v in p.items() if not k.startswith("_")} for p in out], "read": read, "left": left,
                 "candidates": len(found)}
-    top = [r for r in found if r["score"] > 0]
-    floor = max(2.0, (top[0]["score"] * 0.35) if top else 0)
-    picked = [dict(r, role="match") for r in top if r["score"] >= floor][: max(1, max_tables // 2 + 1)] if top else []
-    # the tables they join to: in the same schema, sharing a key column (from the metadata, no data read)
-    for p in list(picked):
-        keys = {c.casefold() for c in p["columns"] if _keyish(c)}
-        mates = [r for r in found if r["schema"] == p["schema"] and r["datasource_id"] == p["datasource_id"]
-                 and not any(q["table"] == r["table"] and q["schema"] == r["schema"] and q["datasource_id"] == r["datasource_id"] for q in picked)
-                 and keys & {c.casefold() for c in r["columns"] if _keyish(c)}]
-        for r in sorted(mates, key=lambda r: -r["score"]):
-            if len(picked) >= max_tables:
-                break
-            shared = sorted(keys & {c.casefold() for c in r["columns"] if _keyish(c)})
-            picked.append(dict(r, role="join", why=[f"joins {p['table']} on {', '.join(shared[:2])}"] + r["why"]))
-    return {"terms": want, "picked": picked[:max_tables], "read": read, "left": left, "candidates": len(top)}
+    picked, top = pick_datasets(found, want, use, referenced, max_tables)
+    return {"terms": want, "picked": [{k: v for k, v in p.items() if not k.startswith("_")} for p in picked], "read": read, "left": left, "candidates": len(top)}

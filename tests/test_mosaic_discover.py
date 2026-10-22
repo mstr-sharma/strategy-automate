@@ -339,3 +339,32 @@ class AggregationNameTests(unittest.TestCase):
         spec = md.recommend(md.infer(g), {})[0]["spec"]
         fn = {m["column"]: m["function"] for m in spec["metrics"]}
         self.assertEqual(fn, {"DURATION_MINS": "sum", "ConversionRate": "avg"})
+
+
+class SearchedSubsetTests(unittest.TestCase):
+    def test_tables_picked_from_a_large_schema_are_not_one_small_dataset(self):
+        """seen live: 7 tables picked by a search from a 129-table schema were read as one small dataset, so a shared
+        ACCOUNT_ID joined unrelated datasets and every breakdown across them came back empty"""
+        ts = [table("SF", "Snowflake", "PUBLIC", "ATTTZ", [("ACCOUNT_ID", T), ("APR", {"type": "double"}), ("AUTOPAY_ENABLED", N)], [], 500),
+              table("SF", "Snowflake", "PUBLIC", "SAAS_DIM_ACCOUNT", [("ACCOUNT_ID", T), ("SEGMENT", T)], [], 300),
+              table("SF", "Snowflake", "PUBLIC", "SAAS_FACT_SUBSCRIPTIONS", [("SUB_ID", N), ("ACCOUNT_ID", T), ("MRR", {"type": "double"})], [], 900)]
+        g = {"tables": {md.tkey(t): t for t in ts}, "fks": [], "schema_sizes": {"SF/PUBLIC": 129}}
+        inf = md.infer(g)
+        self.assertIsNone(next((l for l in inf["links"] if {l["from"], l["to"]} == {"SF/PUBLIC/ATTTZ", "SF/PUBLIC/SAAS_DIM_ACCOUNT"}
+                                and l["confidence"] >= 0.5), None))
+        small = md.infer({**g, "schema_sizes": {"SF/PUBLIC": 3}})        # the same three tables as a whole small schema: one dataset
+        self.assertTrue(any(l["confidence"] >= 0.5 for l in small["links"]))
+
+    def test_rates_average_and_flags_are_attributes(self):
+        self.assertTrue(mp.AVERAGED.search("APR"))
+        self.assertTrue(mp.DESCRIPTIVE_NUMBER.search("AUTOPAY_ENABLED"))
+
+
+class TechnicalKeyTests(unittest.TestCase):
+    def test_load_bookkeeping_is_never_a_join_key(self):
+        """seen live: "Company by Etl Batch" joined two tables on ETL_BATCH_ID"""
+        ts = [table("SF", "Snowflake", "INS", "DIM_COMPANY", [("COMPANY_ID", N), ("ETL_BATCH_ID", N), ("NAME", T)], ["COMPANY_ID"], 50),
+              table("SF", "Snowflake", "INS", "FACT_COVERAGE", [("COVERAGE_ID", N), ("COMPANY_ID", N), ("ETL_BATCH_ID", N), ("PREMIUM", {"type": "double"})], ["COVERAGE_ID"], 900)]
+        inf = md.infer({"tables": {md.tkey(t): t for t in ts}, "fks": []})
+        self.assertFalse([l for l in inf["links"] if "ETL_BATCH_ID" in l["columns"]])
+        self.assertTrue([l for l in inf["links"] if "COMPANY_ID" in l["columns"]])
