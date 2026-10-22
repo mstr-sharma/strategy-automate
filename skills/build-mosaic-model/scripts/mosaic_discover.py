@@ -88,15 +88,17 @@ def scan(m, scopes: list[dict], options: dict | None = None, log=lambda s: None)
     import mosaic_matrix as mx
     opts = {**DEFAULT_OPTIONS, **(options or {})}
     graph: dict[str, Any] = {"tables": {}, "fks": [], "scopes": scopes}
+    log(f"→ Reading the tables in {len(scopes)} schema{'s' if len(scopes) != 1 else ''}…")
     for sc in scopes:
         info = live.datasource(m, sc["datasource"])
+        log(f"  · listing the tables in {info['name']}/{sc['schema']}")    # "  · " lines say what is happening; they are not items
         names = mx.list_tables(m, info["id"], sc["schema"])
         pats = sc.get("patterns") or ["*"]
         names = [n for n in names if any(fnmatch.fnmatchcase(n.upper(), p.upper()) for p in pats)
                  and not any(fnmatch.fnmatchcase(n.upper(), p.upper()) for p in opts["exclude_patterns"])]
         if len(names) > opts.get("max_scan_tables", 200):
             raise ValueError(f"{len(names)} tables match in {info['name']}/{sc['schema']}; narrow the patterns (limit {opts.get('max_scan_tables', 200)})")
-        log(f"  {info['name']}/{sc['schema']}: {len(names)} tables")
+        log(f"  · counting rows and reading declared keys in {len(names)} tables")
         rows = {}
         stats = _stats_sql(info["dbms"], sc["schema"])
         if stats:
@@ -105,7 +107,9 @@ def scan(m, scopes: list[dict], options: dict | None = None, log=lambda s: None)
             except RuntimeError:
                 rows = {}
         pks, fks = _declared_keys(m, live, info, sc["schema"], set(names))
+        log(f"  · reading the columns of {len(names)} tables")
         cat = live.catalog(m, [{"datasource": info["id"], "schema": sc["schema"], "table": n} for n in names])
+        log(f"  {info['name']}/{sc['schema']}: {len(names)} tables")
         for t in cat["tables"]:
             graph["tables"][tkey(t)] = {**t, "rows": rows.get(t["table"]), "pk": pks.get(t["table"], []), "family": _family_key(t["table"], t["schema"], t["datasource_id"])}
         for fk in fks:
@@ -125,7 +129,9 @@ def measure_keys(m, graph: dict, options: dict | None = None, budget: int = 80, 
         for k, c in e["members"].items():
             want.setdefault(k, set()).add(c)
     prof = graph.setdefault("profile", {})
-    for k in [k for k in want if k not in prof][:budget]:
+    todo = [k for k in want if k not in prof][:budget]
+    log(f"→ Measuring which keys are unique where ({len(todo)} table{'s' if len(todo) != 1 else ''})…")
+    for k in todo:
         t = graph["tables"][k]
         try:
             got = live.profile(m, {"tables": [t]}, {t["table"]: sorted(want[k])[:12]})
@@ -133,8 +139,11 @@ def measure_keys(m, graph: dict, options: dict | None = None, budget: int = 80, 
             if prof[k].get("measured"):
                 uniq = [c for c, d in prof[k]["distinct"].items() if d == prof[k]["rows"]]
                 log(f"  {t['table']}: {prof[k]['rows']:,} rows{'; unique: ' + ', '.join(uniq) if uniq else ''}")
+            else:
+                log(f"  {t['table']}: not measurable; judged from its columns")
         except Exception as e:  # noqa: BLE001 - a table that cannot be measured is judged from its metadata
             prof[k] = {"measured": False, "reason": str(e)[:200]}
+            log(f"  {t['table']}: not measurable ({str(e)[:100]})")
     return graph
 
 
@@ -147,13 +156,16 @@ def confirm(m, graph: dict, options: dict | None = None, budget: int = 40, log=l
     measured = graph.setdefault("measured", {})
     todo = [l for l in inferred["links"] if "declared" not in l["evidence"] and "measured" not in l["evidence"] and f"{l['from']}|{l['to']}" not in measured]
     todo.sort(key=lambda l: "family" in l["evidence"])      # links across unrelated tables first, then within a dataset
-    for l in todo[:budget]:
+    todo = todo[:budget]
+    log(f"→ Checking links only a shared name suggests, against the data ({len(todo)} link{'s' if len(todo) != 1 else ''})…")
+    for l in todo:
         home, other = graph["tables"][l["from"]], graph["tables"][l["to"]]
         hc, oc = l["columns"]
         try:
             vals = [r["v"] for r in live.run_sql(m, other["datasource_id"], f"SELECT DISTINCT {live.quote(other['dbms'], oc)} AS v FROM {live.table_ref(other)} "
                                                  f"WHERE {live.quote(other['dbms'], oc)} IS NOT NULL LIMIT 100") if r.get("v") not in (None, "")]
             if not vals:
+                log(f"  {l['entity']}: {other['table']} → {home['table']}: no values to compare")
                 continue
             listed = ", ".join("'" + str(v).replace("'", "''") + "'" for v in vals)
             found = live.run_sql(m, home["datasource_id"], f"SELECT COUNT(DISTINCT {live.quote(home['dbms'], hc)}) AS n FROM {live.table_ref(home)} "
@@ -556,9 +568,7 @@ def main() -> int:
             scopes.append({"datasource": ds, "schema": schema, "patterns": rest[0].split(",") if rest else ["*"]})
         g = scan(m, scopes, opts, log=lambda x: print(x, flush=True))
         if not opts.get("skip_data_check"):
-            print("→ Measuring which keys are unique where…", flush=True)
             measure_keys(m, g, opts, log=lambda x: print(x, flush=True))
-            print("→ Checking links only a shared name suggests, against the data…", flush=True)
             confirm(m, g, opts, budget=int(opts.get("data_check_budget", 40)), log=lambda x: print(x, flush=True))
         json.dump(g, open(a.out, "w"), default=str)
         print(f"graph written: {len(g['tables'])} tables, {len(g['fks'])} declared foreign keys → {a.out}")
