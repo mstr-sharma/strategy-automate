@@ -342,9 +342,16 @@ def errors(findings: list[dict]) -> list[dict]:
 KEY_COLUMN = re.compile(r"(?:^|_)(?:id|key|sk|number|num|no|code)$", re.I)     # …_SK: a surrogate key
 
 
+# warehouse abbreviations spelled out in business names (CUST_CITY → Customer City, MNTH_CATEGORY_SLS → Month Category Sales)
+ABBREVIATIONS = {"mnth": "Month", "mth": "Month", "sls": "Sales", "cust": "Customer", "qtr": "Quarter", "yr": "Year", "emp": "Employee",
+                 "subcateg": "Subcategory", "categ": "Category", "curr": "Current", "amt": "Amount", "qty": "Quantity", "dt": "Date",
+                 "nbr": "Number", "addr": "Address", "dept": "Department", "mgr": "Manager", "prod": "Product", "txn": "Transaction",
+                 "acct": "Account", "inv": "Inventory", "cctr": "Call Center", "ctr": "Center", "desc": "Description", "pct": "Pct"}
+
+
 def _friendly(name: str) -> str:
     keep = {"ID", "SKU", "PO", "URL", "API", "IP", "UID", "GUID", "USA", "UK", "EU", "YTD", "MTD"}
-    return " ".join(p.upper() if p.upper() in keep else p.capitalize() for p in re.split(r"[_\s-]+", name) if p)
+    return " ".join(p.upper() if p.upper() in keep else ABBREVIATIONS.get(p.casefold(), p.capitalize()) for p in re.split(r"[_\s-]+", name) if p)
 
 
 def _short_table(table: str) -> str:
