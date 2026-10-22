@@ -255,3 +255,56 @@ class PartialExtensionFacts(unittest.TestCase):
         # covering every vehicle, it is a one-to-one extension and keeps the key
         prof["FCT_CPO_SALES"]["distinct"]["VEHICLE_ID"] = prof["FCT_CPO_SALES"]["rows"] = 10000
         self.assertEqual(mp.from_spec(spec, {"tables": [V, C, W]}, prof)["keys"].get("FCT_CPO_SALES"), "Vehicle")
+
+
+class ReferenceTests(unittest.TestCase):
+    """the person's references (ERDs, dictionaries, catalog and MDM exports, documents) inform the recommendations"""
+
+    def refs(self, a):
+        return [{"name": "orders.dbml", "kind": "erd", "relationships": [
+                    {"parent": "shopa_refunds_lookup.id", "child": "nowhere.id"},                         # tables not scanned: ignored
+                    {"parent": f"{a}CUSTOMERS.customer_id", "child": "shopa_refunds.customer_id"}]},       # case differs from the columns
+                {"name": "catalog.json", "kind": "data", "text": f"{a}CALENDAR is the fiscal calendar.",
+                 "dictionary": {"attributes": {f"{a}CUSTOMERS.CUSTOMER_ID": {"name": "Shopper", "description": "A registered shopper"}},
+                                "metrics": {f"{a}ORDERS.AMOUNT": {"name": "Order Value", "description": "Net order value in USD"}}}}]
+
+    def test_a_reference_relationship_is_a_declared_key_across_stores(self):
+        g, a, _ = graph()
+        ref = md.apply_references(g, self.refs(a))
+        added = [f for f in ref["fks"] if f.get("name") == "reference: orders.dbml"]
+        self.assertEqual(added, [{"child": "PG/p/shopa_refunds", "child_cols": ["customer_id"], "parent": f"SF/S/{a}CUSTOMERS",
+                                  "parent_cols": ["CUSTOMER_ID"], "name": "reference: orders.dbml"}])
+        l = link(md.infer(ref), a + "CUSTOMERS", "shopa_refunds")
+        self.assertIn("declared", l["evidence"])
+        self.assertEqual(len(g["fks"]), 2)                                  # the scanned graph itself is not changed
+
+    def test_tables_named_in_references_are_marked_and_their_recommendations_say_so(self):
+        g, a, _ = graph()
+        ref = md.apply_references(g, self.refs(a))
+        self.assertEqual(ref["referenced"][f"SF/S/{a}CALENDAR"], ["catalog.json"])                  # named in the text
+        self.assertEqual(ref["referenced"][f"SF/S/{a}CUSTOMERS"], ["orders.dbml", "catalog.json"])
+        opts = {"referenced": ref["referenced"], "dictionary": ref["dictionary"]}
+        plain = {r["name"]: r for r in md.recommend(md.infer(ref), {})}
+        recs = md.recommend(md.infer(ref), opts)
+        rec = next(r for r in recs if any(t.endswith("ORDERS") for t in r["tables"]))
+        self.assertIn("described in your references", rec["reasons"][-1])
+        self.assertGreater(rec["score"], plain[rec["name"]]["score"])
+        self.assertEqual(rec["references"], ["catalog.json", "orders.dbml"])
+
+    def test_dictionaries_name_and_describe_the_draft(self):
+        g, a, _ = graph()
+        ref = md.apply_references(g, self.refs(a))
+        recs = md.recommend(md.infer(ref), {"referenced": ref["referenced"], "dictionary": ref["dictionary"]})
+        spec = next(r for r in recs if any(t.endswith("ORDERS") for t in r["tables"]))["spec"]
+        metric = next(m for m in spec["metrics"] if m["column"] == "AMOUNT")
+        self.assertEqual((metric["name"], metric["description"]), ("Order Value", "Net order value in USD"))
+        shopper = next(x for x in spec["attributes"] if any(f["column"] == "CUSTOMER_ID" for f in x["forms"]))
+        self.assertEqual((shopper["name"], shopper["description"]), ("Shopper", "A registered shopper"))
+
+    def test_an_ambiguous_table_name_is_not_guessed(self):
+        g, a, _ = graph()
+        twin = dict(g["tables"][f"SF/S/{a}CUSTOMERS"], schema="S2")
+        g["tables"][md.tkey(twin)] = twin
+        ref = md.apply_references(g, self.refs(a))
+        self.assertFalse([f for f in ref["fks"] if f.get("name")])
+        self.assertNotIn(f"SF/S/{a}CUSTOMERS", ref["referenced"])

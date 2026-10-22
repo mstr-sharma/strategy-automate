@@ -177,6 +177,81 @@ def confirm(m, graph: dict, options: dict | None = None, budget: int = 40, log=l
     return graph
 
 
+def apply_references(graph: dict, refs: list[dict]) -> dict:
+    """what the person's references say about the scanned tables (ERDs, data dictionaries, documents, data catalog and
+    MDM exports, API descriptions, as Ace's reference reader extracts them): their relationships between scanned tables
+    become declared keys, the tables they name or describe are marked as referenced, and their dictionaries are kept to
+    name and describe the drafts. A reference that names a table found in more than one scanned schema is not guessed."""
+    g = {**graph, "fks": list(graph.get("fks", [])), "referenced": {}, "dictionary": {"attributes": {}, "metrics": {}}}
+    by_name: dict[str, list[str]] = {}
+    for k, t in graph["tables"].items():
+        by_name.setdefault(t["table"].casefold(), []).append(k)
+
+    def one(name: str) -> str | None:
+        ks = by_name.get(str(name).split(".")[-1].strip('"`[] ').casefold(), [])
+        return ks[0] if len(ks) == 1 else None
+
+    def column(key: str, name: str) -> str | None:
+        return next((c["name"] for c in graph["tables"][key]["columns"] if c["name"].casefold() == name.strip('"`[] ').casefold()), None)
+
+    def note(key: str | None, ref: str) -> None:
+        if key and ref not in g["referenced"].setdefault(key, []):
+            g["referenced"][key].append(ref)
+    names = sorted(by_name, key=len, reverse=True)
+    for r in refs or []:
+        ref = str(r.get("name") or "reference")
+        for rel in r.get("relationships") or []:
+            parent, child = str(rel.get("parent") or ""), str(rel.get("child") or "")
+            if "." in parent and "." in child:
+                (pt, pc), (ct, cc) = parent.rsplit(".", 1), child.rsplit(".", 1)
+                pk, ck = one(pt), one(ct)
+                if pk and ck and pk != ck and column(pk, pc) and column(ck, cc):
+                    g["fks"].append({"child": ck, "child_cols": [column(ck, cc)], "parent": pk, "parent_cols": [column(pk, pc)], "name": "reference: " + ref})
+                note(pk, ref); note(ck, ref)
+            else:
+                note(one(parent), ref); note(one(child), ref)
+        for e in r.get("entities") or []:
+            note(one(e), ref)
+        text = (r.get("text") or "")[:20000].casefold()
+        for n in names:
+            if len(n) >= 4 and re.search(r"(?<![a-z0-9_])" + re.escape(n) + r"(?![a-z0-9_])", text):
+                for k in by_name[n] if len(by_name[n]) == 1 else []:
+                    note(k, ref)
+        for kind in ("attributes", "metrics"):
+            for key, v in ((r.get("dictionary") or {}).get(kind) or {}).items():
+                if isinstance(v, dict):
+                    g["dictionary"][kind][str(key).casefold()] = v
+                    note(one(str(key).rsplit(".", 1)[0]) if "." in str(key) else None, ref)
+    return g
+
+
+def _with_references(rec: dict, referenced: dict, dictionary: dict) -> None:
+    """a recommendation the references support ranks higher and says so; the dictionaries name and describe its draft"""
+    named = [(k, referenced[k]) for k in rec["table_keys"] if k in referenced]
+    if named:
+        refs = sorted({x for _, rs in named for x in rs})
+        rec["score"] = round(rec["score"] + 0.05 * min(len(named), 4), 3)
+        rec["references"] = refs
+        rec["reasons"].append(f"{len(named)} of its tables {'is' if len(named) == 1 else 'are'} described in your references ({', '.join(refs[:3])})")
+    taken = {a["name"] for a in rec["spec"]["attributes"]} | {m["name"] for m in rec["spec"]["metrics"]}
+    for a in rec["spec"]["attributes"]:
+        for f in a.get("forms", []):
+            v = dictionary.get("attributes", {}).get(f"{f.get('table')}.{f.get('column')}".casefold())
+            if v:
+                if v.get("description") and not a.get("description"):
+                    a["description"] = str(v["description"])[:500]
+                if v.get("name") and f.get("category") == "ID" and v["name"] not in taken:
+                    taken.discard(a["name"]); a["name"] = str(v["name"])[:120]; taken.add(a["name"])
+                break
+    for m in rec["spec"]["metrics"]:
+        v = dictionary.get("metrics", {}).get(f"{m.get('table')}.{m.get('column')}".casefold()) or dictionary.get("attributes", {}).get(f"{m.get('table')}.{m.get('column')}".casefold())
+        if v:
+            if v.get("description") and not m.get("description"):
+                m["description"] = str(v["description"])[:500]
+            if v.get("name") and v["name"] not in taken:
+                taken.discard(m["name"]); m["name"] = str(v["name"])[:120]; taken.add(m["name"])
+
+
 def view_copies(tables: dict) -> set:
     """views and copies of another scanned table: FACT_X_V, FACT_X2, FACT_X_COPY or FACT_X_NEW beside FACT_X with
     (nearly) the same columns repeat it, so the base table is used and they are left out"""
@@ -542,6 +617,9 @@ def recommend(inferred: dict, options: dict | None = None) -> list[dict]:
         out.append({"checked": not problems, "problems": problems[:3], "kind": st.get("kind", "star"),
                     "name": name, "fact": tables[f]["table"], "fact_tables": [tables[x]["table"] for x in st["facts"]], "tables": [t["table"] for t in cat["tables"]], "table_keys": [tkey(t) for t in cat["tables"]],
                     "stores": stores, "facts": n_facts, "score": score, "confidence": round(conf, 2), "modeled": round(modeled, 2), "reasons": reasons, "spec": spec})
+    if opts.get("referenced") or opts.get("dictionary"):
+        for rec in out:
+            _with_references(rec, opts.get("referenced") or {}, opts.get("dictionary") or {})
     return sorted(out, key=lambda r: (not r["checked"], -r["score"]))      # ready to build first
 
 
@@ -557,6 +635,7 @@ def main() -> int:
     r.add_argument("--options", help="JSON options")
     r.add_argument("--curation", help="JSON curation")
     r.add_argument("--out", required=True)
+    r.add_argument("--references", help="JSON file: the references as Ace's reader extracted them")
     a = ap.parse_args()
     opts = json.loads(a.options) if a.options else {}
     if a.cmd == "scan":
@@ -574,6 +653,9 @@ def main() -> int:
         print(f"graph written: {len(g['tables'])} tables, {len(g['fks'])} declared foreign keys → {a.out}")
         return 0
     graph = json.load(open(a.graph))
+    if a.references:
+        graph = apply_references(graph, json.load(open(a.references)))
+        opts = {**opts, "referenced": graph["referenced"], "dictionary": graph["dictionary"]}
     inf = infer(graph, opts, json.loads(a.curation) if a.curation else None)
     recs = recommend(inf, opts)
     json.dump({"entities": inf["entities"], "links": inf["links"], "recommendations": recs}, open(a.out, "w"), default=str)
