@@ -1,0 +1,320 @@
+"""Apply, read back, publish and prove a checked plan (see ../REBUILD.md and mosaic_plan.py).
+
+apply()    writes the plan through the Model REST API: the model, its tables, attributes with every form, fact metrics
+           (one changeset), then relationships (a second changeset, each child written once with its whole set).
+readback() reads the model from Strategy and lists every difference from the plan. "Built" means none.
+publish()  loads an in-memory model and waits on Strategy's own status, with a deadline scaled to the rows.
+prove()    asks the model real questions on its SQL surface and compares them with what each source says itself:
+           metric totals against SUM(column) on the source table; a grouping on the metric's own table against the
+           source's GROUP BY; a grouping reached through relationships must add up to the total (nothing lost or
+           double counted) and must not repeat the total in every group (a cross join).
+"""
+from __future__ import annotations
+
+import os
+import sys
+import time
+from typing import Any
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import build_mosaic as bm  # noqa: E402
+import mosaic_live as live  # noqa: E402
+import mosaic_plan as mp  # noqa: E402
+
+DESC_FORM_ID = "CCFBE2A5EADB4F50941FB879CCF1721C"     # system DESC form, every tenant (REST samples; field study)
+TOLERANCE = 1e-6
+
+
+class ApplyError(RuntimeError):
+    def __init__(self, message: str, model_id: str | None = None):
+        super().__init__(message)
+        self.model_id = model_id
+
+
+def _tables_ref(tid: str, name: str) -> dict:
+    return {"objectId": tid, "subType": "logical_table", "name": name}
+
+
+def _expr(column: str, tid: str, tname: str) -> dict:
+    return {"expression": {"tokens": [{"type": "column_reference", "value": column}]}, "tables": [_tables_ref(tid, tname)]}
+
+
+def _table_body(t: dict) -> dict:
+    import json
+    outer, pipe = [], []
+    for c in t["columns"]:
+        dt = bm.sot.normalize_datatype(dict(c["dataType"]))
+        outer.append({"information": {"name": c["name"]}, "dataType": dt, "columnName": c["name"]})
+        pipe.append({"id": bm.new_uuid(), "name": c["name"], "dataType": dt, "sourceDataType": dt})
+    pipeline = {"id": bm.new_uuid(), "rootTable": {"id": bm.new_uuid(), "type": "root", "children": [{
+        "id": bm.new_uuid(), "name": t["table"], "type": "source", "columns": pipe,
+        "importSource": {"type": "single_table", "dataSourceId": t["datasource_id"], "namespace": t["schema"], "tableName": t["table"], "sql": ""}}]}}
+    return {"information": {"name": t["table"]}, "physicalTable": {"columns": outer, "type": "pipeline", "pipeline": json.dumps(pipeline)}}
+
+
+def _attribute_body(a: dict, tid: dict[str, str]) -> dict:
+    forms = []
+    for i, f in enumerate(a["forms"]):
+        exprs = [_expr(e["column"], tid[e["table"]], e["table"]) for e in f["expressions"]]
+        lookup = a["lookup"] if f["category"] == "ID" else f["expressions"][0]["table"]
+        form = {"category": f["category"] if f["category"] in ("ID", "DESC") else f["name"], "displayFormat": "text", "name": f["name"],
+                "expressions": exprs, "lookupTable": _tables_ref(tid[lookup], lookup)}
+        if f["category"] == "ID":
+            form.update(id=bm.FORM_ID, type="system")
+        elif f["category"] == "DESC" and not any(x["category"] == "DESC" for x in a["forms"][1:i]):
+            form.update(id=DESC_FORM_ID, type="system")
+        else:
+            form.update(category=f["name"], type="custom")
+        forms.append(form)
+    return {"information": {"name": a["name"], "description": a.get("description") or a["name"]}, "forms": forms,
+            "keyForm": {"id": bm.FORM_ID}, "attributeLookupTable": _tables_ref(tid[a["lookup"]], a["lookup"])}
+
+
+def _metric_body(mt: dict, col: dict, tid: str) -> dict:
+    dt = bm.sot.normalize_datatype(dict(col["dataType"]))
+    fmt = bm._resolve_metric_format(mt["format"]) if mt.get("format") else bm._default_metric_format(mt["name"], dt, mt["function"])
+    return {"information": {"name": mt["name"], "description": mt.get("description") or mt["name"]},
+            "fact": {"dataType": dt, "expressions": [_expr(mt["column"], tid, mt["table"])], "extensions": [], "entryLevel": []},
+            "function": mt["function"],
+            "functionProperties": [{"name": "UseLookupForAttributes", "value": {"type": "boolean", "value": "false"}}],
+            "dimty": {"dimtyUnits": [{"dimtyUnitType": "report_base_level", "aggregation": "normal", "filtering": "apply", "groupBy": True}],
+                      "excludeAttribute": False, "allowAddingUnit": True},
+            "format": {"header": [], "values": fmt}}
+
+
+def _ok(r, what: str, model_id: str | None) -> dict:
+    if not r.ok:
+        raise ApplyError(f"{what}: {bm.format_mstr_error(r)}", model_id)
+    return bm._json_or(r, {}) or {}
+
+
+def apply(m: bm.MSTR, plan: dict, dest_folder_id: str, log=print) -> dict[str, Any]:
+    """write a checked plan; raises ApplyError (with the model id once one exists) on the first refusal"""
+    if mp.errors(mp.check(plan)):
+        raise ApplyError("the plan has check errors; nothing was written")
+    m.login(identity=True)
+    cs = bm.open_cs(m)
+    model_id = None
+    try:
+        body = _ok(m.post("/api/model/dataModels", json={"information": {"name": plan["name"], "destinationFolderId": dest_folder_id,
+                                                                                   "description": plan.get("description", "")[:250]},
+                                                             "dataServeMode": plan["serve_mode"]}), "create model", None)
+        model_id = body["information"]["objectId"]
+        log(f"  model {model_id}")
+        tid: dict[str, str] = {}
+        for t in plan["tables"]:
+            tid[t["table"]] = _ok(m.post(f"/api/model/dataModels/{model_id}/tables", json=_table_body(t)), f"table {t['table']}", model_id)["information"]["objectId"]
+            log(f"  + table {t['table']}")
+        aid: dict[str, str] = {}
+        for a in plan["attributes"]:
+            resp = _ok(m.post(f"/api/model/dataModels/{model_id}/attributes", json=_attribute_body(a, tid)), f"attribute {a['name']}", model_id)
+            aid[a["name"]] = resp["information"]["objectId"]
+            forms = {f.get("category"): f.get("id") for f in resp.get("forms", [])}
+            show = [forms["DESC"]] if forms.get("DESC") else [forms.get("ID") or bm.FORM_ID]     # names, not ids, on reports
+            _ok(m.patch(f"/api/model/dataModels/{model_id}/attributes/{aid[a['name']]}",
+                        json={"displays": {"reportDisplays": [{"id": f} for f in show], "browseDisplays": [{"id": f} for f in show]}}),
+                f"displays of {a['name']}", model_id)
+            log(f"  + attribute {a['name']} ({len(a['forms'])} form{'s' if len(a['forms']) > 1 else ''}, on {len(a['forms'][0]['expressions'])} table{'s' if len(a['forms'][0]['expressions']) > 1 else ''})")
+        cols = {t["table"]: {c["name"]: c for c in t["columns"]} for t in plan["tables"]}
+        for mt in plan["metrics"]:
+            _ok(m.post(f"/api/model/dataModels/{model_id}/factMetrics", json=_metric_body(mt, cols[mt["table"]][mt["column"]], tid[mt["table"]])),
+                f"metric {mt['name']}", model_id)
+            log(f"  + metric {mt['name']} ({mt['function']})")
+        bm.commit_cs(m, cs)
+        cs = None
+        if plan["relationships"]:
+            cs = bm.open_cs(m)
+            by_child: dict[str, list[dict]] = {}
+            for r in plan["relationships"]:
+                by_child.setdefault(r["child"], []).append({"parent": {"objectId": aid[r["parent"]], "subType": "attribute"},
+                                                            "child": {"objectId": aid[r["child"]], "subType": "attribute"},
+                                                            "relationshipType": r["type"], "relationshipTable": {"objectId": tid[r["table"]], "subType": "logical_table"}})
+            for child, rels in by_child.items():
+                ok, _, _, err = bm.put_relationships_merged(m, model_id, aid[child], rels, cs)
+                if not ok:
+                    raise ApplyError(f"relationships into {child}: {err}", model_id)
+                log(f"  + {len(rels)} relationship{'s' if len(rels) > 1 else ''} into {child}")
+            bm.commit_cs(m, cs)
+            cs = None
+        return {"model_id": model_id, "tables": tid, "attributes": aid}
+    finally:
+        if cs:
+            try:
+                bm.discard_cs(m, cs)
+            except Exception:  # noqa: BLE001 - the error being raised matters more
+                pass
+
+
+# ── read back ────────────────────────────────────────────────────────────────────────────────────────────────────────
+def readback(m: bm.MSTR, plan: dict, model_id: str) -> list[str]:
+    """every difference between the model in Strategy and the plan (empty = Strategy holds exactly the plan)"""
+    diffs: list[str] = []
+    tables = {t["information"]["objectId"]: t["information"]["name"] for t in m.get(f"/api/model/dataModels/{model_id}/tables").json().get("tables", [])}
+    if sorted(tables.values()) != sorted(t["table"] for t in plan["tables"]):
+        diffs.append(f"tables: Strategy has {sorted(tables.values())}")
+    have = {}
+    for a in m.get(f"/api/model/dataModels/{model_id}/attributes").json().get("attributes", []):
+        info = a["information"]
+        full = m.get(f"/api/model/dataModels/{model_id}/attributes/{info['objectId']}", params={"showExpressionAs": "tokens"}).json()
+        have[info["name"]] = (info["objectId"], full)
+    names = {}
+    for a in plan["attributes"]:
+        if a["name"] not in have:
+            diffs.append(f"attribute {a['name']} is missing")
+            continue
+        aid, full = have[a["name"]]
+        names[aid] = a["name"]
+        got_forms = full.get("forms", [])
+        if len(got_forms) != len(a["forms"]):
+            diffs.append(f"{a['name']}: {len(got_forms)} forms in Strategy, {len(a['forms'])} planned")
+        want = {(e["table"], e["column"]) for e in a["forms"][0]["expressions"]}
+        idf = next((f for f in got_forms if f.get("id") == bm.FORM_ID or f.get("category") == "ID"), {})
+        got = set()
+        for e in idf.get("expressions", []):
+            col = next((t.get("value") for t in (e.get("expression") or {}).get("tokens", []) if t.get("type") == "column_reference"), None)
+            for t in e.get("tables", []):
+                got.add((tables.get(t.get("objectId"), t.get("name")), col))
+        if got != want:
+            diffs.append(f"{a['name']}: ID form on {sorted(got)} in Strategy, {sorted(want)} planned")
+    extra = set(have) - {a["name"] for a in plan["attributes"]}
+    if extra:
+        diffs.append(f"attributes not in the plan: {sorted(extra)}")
+    rels = set()
+    for aid, name in names.items():
+        for r in bm.get_attribute_relationships(m, model_id, aid) or []:
+            p, c = names.get((r.get("parent") or {}).get("objectId")), names.get((r.get("child") or {}).get("objectId"))
+            t = tables.get((r.get("relationshipTable") or {}).get("objectId"))
+            if p and c:
+                rels.add((p, c, t))
+    want_rels = {(r["parent"], r["child"], r["table"]) for r in plan["relationships"]}
+    for r in sorted(want_rels - rels):
+        diffs.append(f"relationship {r[0]} → {r[1]} on {r[2]} is missing")
+    for r in sorted(rels - want_rels):
+        diffs.append(f"relationship {r[0]} → {r[1]} on {r[2]} is not in the plan")
+    mets = {x["information"]["name"] for x in m.get(f"/api/model/dataModels/{model_id}/factMetrics").json().get("factMetrics", [])}
+    for mt in plan["metrics"]:
+        if mt["name"] not in mets:
+            diffs.append(f"metric {mt['name']} is missing")
+    return diffs
+
+
+# ── publish ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+def publish(m: bm.MSTR, model_id: str, rows: int) -> None:
+    """in-memory models only. Strategy's own status decides; the ceiling is long (20 minutes, plus a minute per million
+    rows, up to an hour) because a warehouse waking up takes minutes even for a few thousand rows."""
+    wait = int(min(3600, 1200 + rows / 1_000_000 * 60))
+    try:
+        bm._publish(m, model_id, poll_seconds=wait, skip_classify=True)
+    except SystemExit as e:
+        raise ApplyError(f"publish did not complete within {wait} s: {e}", model_id) from None
+
+
+# ── prove ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+def _num(v) -> float | None:
+    try:
+        return None if v is None else float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def sql_columns(model_rows: list[dict]) -> dict[str, str]:
+    """the model's SQL columns by lowercase name (from SHOW COLUMNS)"""
+    return {str(r.get("Column") or r.get("column") or "").lower(): str(r.get("Column") or r.get("column")) for r in model_rows}
+
+
+def prove(m: bm.MSTR, plan: dict, *, sql, source_sql=live.run_sql, attempts: int = 1) -> dict[str, Any]:
+    """sql(statement) -> rows: the model's SQL surface (Trino). Returns {ok, probes: [{name, ok, detail}]}. A dropped
+    connection is retried; anything else a query raises is that probe's failure, never the end of the proof."""
+    raw_sql = sql
+
+    def sql(statement: str) -> list[dict]:
+        import requests
+        for attempt in range(3):
+            try:
+                return raw_sql(statement)
+            except requests.ConnectionError:
+                if attempt == 2:
+                    raise
+                time.sleep(5 * (attempt + 1))
+        return []
+    q = lambda s: '"' + s.replace('"', '""') + '"'  # noqa: E731
+    model = q(plan["name"])
+    cols = sql_columns(sql(f"SHOW COLUMNS FROM {model}"))
+    tables = {t["table"]: t for t in plan["tables"]}
+    probes = []
+
+    def attr_col(a: dict) -> str | None:
+        """the SQL column of the attribute's ID form"""
+        base = a["name"].lower()
+        hits = [c for k, c in cols.items() if k == base or k.startswith(base + " (") and k.endswith(" id)")]
+        return hits[0] if hits else next((c for k, c in cols.items() if k.startswith(base + " (")), None)
+
+    reach = mp._reach(plan)
+    for mt in [x for x in plan["metrics"] if x["function"] in ("sum", "count")]:
+        mcol = cols.get(mt["name"].lower())
+        if not mcol:
+            probes.append({"name": f"{mt['name']} is on the SQL surface", "ok": False, "detail": "no column"})
+            continue
+        agg = "SUM" if mt["function"] in ("sum", "count") else mt["function"].upper()
+        t = tables[mt["table"]]
+        try:
+            total_model = _num(sql(f"SELECT {agg}({q(mcol)}) AS v FROM {model}")[0]["v"])
+        except (SystemExit, Exception) as e:  # noqa: BLE001
+            probes.append({"name": f"{mt['name']} total", "ok": False, "detail": str(e)[:300]})
+            continue
+        try:
+            src_fn = "SUM" if mt["function"] == "sum" else "COUNT"
+            src = source_sql(m, t["datasource_id"], f"SELECT {src_fn}({live.quote(t['dbms'], mt['column'])}) AS v FROM {live.table_ref(t)}")
+            total_src = _num(src[0]["v"])
+        except RuntimeError as e:
+            total_src = None
+            probes.append({"name": f"{mt['name']} total (source)", "ok": None, "detail": f"source not measurable: {e}"})
+        if total_src is not None:
+            same = total_model is not None and abs(total_model - total_src) <= TOLERANCE * max(1.0, abs(total_src))
+            probes.append({"name": f"{mt['name']} total", "ok": same, "detail": f"model {total_model} · source {total_src}"})
+        for a in plan["attributes"]:
+            if mt["table"] not in reach[a["name"]]:
+                continue
+            acol = attr_col(a)
+            if not acol:
+                probes.append({"name": f"{a['name']} is on the SQL surface", "ok": False, "detail": "no column"})
+                continue
+            try:
+                rows = sql(f"SELECT {q(acol)} AS k, {agg}({q(mcol)}) AS v FROM {model} GROUP BY 1")
+            except (SystemExit, Exception) as e:  # noqa: BLE001 - recorded as this probe's failure
+                probes.append({"name": f"{mt['name']} by {a['name']}", "ok": False, "detail": str(e)[:300]})
+                continue
+            vals = [_num(r["v"]) or 0.0 for r in rows]
+            s = sum(vals)
+            name = f"{mt['name']} by {a['name']}"
+            if total_model is None:
+                probes.append({"name": name, "ok": False, "detail": "no total to compare"})
+                continue
+            adds_up = abs(s - total_model) <= TOLERANCE * max(1.0, abs(total_model))
+            cross = len(vals) > 1 and all(abs(v - total_model) <= TOLERANCE * max(1.0, abs(total_model)) for v in vals)
+            on_table = mt["table"] in {e["table"] for e in a["forms"][0]["expressions"]}
+            detail = f"{len(rows)} groups, sum {s} vs total {total_model}"
+            ok = adds_up and not cross
+            if ok and on_table:
+                col = next(e["column"] for e in a["forms"][0]["expressions"] if e["table"] == mt["table"])
+                try:
+                    # a one-row fingerprint of the source's grouping (how many groups, and the sum of each group's total
+                    # squared): the source SQL call returns at most 1,000 rows, so the groups themselves are not fetched
+                    qc, qv = live.quote(t["dbms"], col), live.quote(t["dbms"], mt["column"])
+                    fp = source_sql(m, t["datasource_id"], f"SELECT COUNT(*) AS g, SUM(s * s) AS sq FROM (SELECT {qc} AS k, {src_fn}({qv}) AS s "
+                                                         f"FROM {live.table_ref(t)} GROUP BY {qc}) x")[0]
+                    want_g, want_sq = int(float(fp["g"])), _num(fp["sq"]) or 0.0
+                    got_sq = sum(v * v for v in vals)
+                    ok = want_g == len(vals) and abs(got_sq - want_sq) <= 1e-6 * max(1.0, abs(want_sq))
+                    detail += f"; source groups {'match' if ok else f'differ ({want_g} groups, sum of squares {want_sq} vs {got_sq})'}"
+                except RuntimeError as e:
+                    detail += f"; source grouping not measurable ({str(e)[:120]})"
+            elif cross:
+                detail += "; every group equals the total (cross join)"
+            probes.append({"name": name, "ok": ok, "detail": detail})
+    return {"ok": all(p["ok"] is not False for p in probes) and any(p["ok"] for p in probes), "probes": probes}
+
+
+def delete_model(m: bm.MSTR, model_id: str) -> bool:
+    r = m.s.delete(f"{m.base}/api/objects/{model_id}", params={"type": 3})
+    return r.ok

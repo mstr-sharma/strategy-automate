@@ -3511,6 +3511,12 @@ def _mosaic_publish_verified(m: MSTR, model_id: str, *, poll_seconds: int = 180,
     if not tids:
         die(f"_mosaic_publish_verified: model {model_id} has 0 tables; nothing to publish.")
 
+    # A model that does not answer yet is published the moment it does: on some tenants publishStatus keeps saying
+    # status 1 with no tables long after the load finished (reference_mosaic_publish_path.md, 2026-06-11), so the
+    # execute probe decides. A model that already answers (a re-publish) still holds its old data, so there the per-table
+    # publishStatus remains the only proof.
+    probe_decides = _executes(m, model_id) is False
+
     # 1. create instance
     r1 = m.post(f"/api/dataModels/{model_id}/instances")
     inst = r1.headers.get("X-MSTR-DataModelInstanceId") or r1.headers.get("X-Mstr-Datamodelinstanceid")
@@ -3533,7 +3539,14 @@ def _mosaic_publish_verified(m: MSTR, model_id: str, *, poll_seconds: int = 180,
         # 3. poll until loaded
         deadline = time.time() + poll_seconds
         last = None
+        next_probe = time.time() + 15
         while time.time() < deadline:
+            if probe_decides and time.time() >= next_probe:
+                next_probe = time.time() + 15
+                if _executes(m, model_id):
+                    print("  ✓ mosaic publish COMPLETE: the model answers queries (publishStatus still said "
+                          f"{json.dumps(last)[:120] if last else 'nothing'}).", file=sys.stderr)
+                    return
             rs = m.get(f"/api/dataModels/{model_id}/publishStatus", headers=hdr)
             try: js = rs.json()
             except Exception: js = {"raw": rs.text}
@@ -3571,6 +3584,18 @@ def _mosaic_publish_verified(m: MSTR, model_id: str, *, poll_seconds: int = 180,
                 m.delete(f"/api/dataModels/{model_id}/instances/{inst}")
             except Exception:
                 pass
+
+
+def _executes(m: MSTR, model_id: str) -> bool | None:
+    """True when the model answers a one-row query (published), False when Strategy says it is not published
+    (-2147072488), None when neither is certain (a timeout or another error)."""
+    try:
+        r = m.s.post(f"{m.base}/api/v2/cubes/{model_id}/instances", params={"limit": 1}, json={}, timeout=(15, 60))
+    except requests.RequestException:
+        return None
+    if r.ok:
+        return True
+    return False if "-2147072488" in r.text or "not published" in r.text.lower() else None
 
 
 def _classic_cube_publish(m: MSTR, cube_id: str) -> None:

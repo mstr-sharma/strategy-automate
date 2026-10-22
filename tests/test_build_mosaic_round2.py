@@ -514,6 +514,32 @@ def publish_routes(status_resp):
 
 
 class PublishTests(unittest.TestCase):
+    def test_a_status_that_never_lists_tables_is_decided_by_the_model_answering(self):
+        # observed on a live tenant: publishStatus says status 1 with no tables long after the load finished
+        state = {"probes": 0}
+
+        def probe(call):
+            state["probes"] += 1
+            if state["probes"] < 3:          # before the trigger, and once while loading
+                return Resp(500, {"iServerCode": -2147072488, "message": "Intelligent Cube is not published"})
+            return Resp(200, {"result": {"data": {}}})
+        routes = publish_routes(Resp(200, {"status": 1, "tables": []}))
+        routes[("POST", r"/api/v2/cubes/M/instances")] = probe
+        m = make_m(routes)
+        with mock.patch.object(bm.time, "time", side_effect=[i * 20.0 for i in range(1000)]), \
+             mock.patch.object(bm.time, "sleep"), quiet():
+            bm._mosaic_publish_verified(m, "M", poll_seconds=600, poll_interval=0.01)
+        self.assertEqual(state["probes"], 3)
+        self.assertEqual(len(calls(m, "DELETE")), 1)     # finished: instance deleted
+
+    def test_a_model_that_already_answers_still_waits_for_its_tables(self):
+        routes = publish_routes(Resp(200, {"status": 1, "tables": [{"status": "completed"}]}))
+        routes[("POST", r"/api/v2/cubes/M/instances")] = Resp(200, {"result": {}})
+        m = make_m(routes)
+        with quiet():
+            bm._mosaic_publish_verified(m, "M", poll_seconds=30, poll_interval=0.01)
+        self.assertEqual(len(calls(m, "POST", r"/api/v2/cubes/M/instances")), 1)    # only the check before the trigger
+
     def test_schema_comparison_error_fails_fast(self):
         m = make_m(publish_routes(Resp(200, {"status": 1, "tables": [{"status": "schema_comparison_error"}]})))
         started = time.monotonic()

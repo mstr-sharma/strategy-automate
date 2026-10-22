@@ -65,6 +65,14 @@ keeps finding shapes nobody wrote down. **No Ace kit ships unless the latest mat
 4. The live matrix runner; run it until it passes; wire it as the release gate for Ace kits.
 5. Ace sends its specification as the plan; the Model Designer shows the check result before Build, and the Terminal
    turns a failed check or probe into a proposed fix (a plan change, applied with one confirmation, then proven again).
+   The plan is the editing surface, before and after a build:
+   - every item says where it came from (the draft, a key found in the data, a relationship the person added), and
+     any suggestion can be switched off; the check runs again on every change and says what it costs ("Region then
+     reaches no metric");
+   - a person edits it directly (rename, change an aggregation, move a form, add or remove a relationship) or tells
+     the Terminal, which proposes the same edits as a plan change the person reviews before it is applied;
+   - an existing model reads back into a plan, so editing a built model is the same flow: change the plan, check,
+     apply only the difference, prove again.
 6. Remove the old `cmd_build` path once Ace runs only on the new one.
 
 New Ace features wait until step 4 passes.
