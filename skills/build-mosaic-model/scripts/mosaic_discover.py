@@ -479,9 +479,11 @@ def recommend(inferred: dict, options: dict | None = None) -> list[dict]:
         by = list(dict.fromkeys(l["entity"] for l in used if not l["entity"].endswith(" Key")))[:2]
         name = (", ".join(subjects[:-1]) + " and " + subjects[-1] if len(subjects) > 1 else
                 f"{subjects[0]} by {' and '.join(by)}" if subjects and by else subjects[0] if subjects else mp.subject(tables[f]["table"]))
-        lead = ", ".join(mp._short_table(tables[x]["table"]) for x in st["facts"])
+        lead = ", ".join(subjects)
         reasons = [f"{lead} {'has' if len(st['facts']) == 1 else 'have'} numbers to measure, described by {len(group) - len(st['facts'])} related table{'s' if len(group) - len(st['facts']) != 1 else ''}"]
-        reasons += [f"{l['entity']} links {mp._short_table(tables[l['from']]['table'])} and {mp._short_table(tables[l['to']]['table'])} ({', '.join(x.replace('_', ' ') for x in l['evidence'])})" for l in used[:4]]
+        words = {"declared": "declared key", "primary_key_name": "primary key name", "same_name": "same column name", "suffix_name": "matching key name",
+                 "family": "same dataset", "measured": "values match", "confirmed": "confirmed by you", "history": "joined in queries"}
+        reasons += [f"{l['entity']} links {mp.subject(tables[l['from']]['table'])} and {mp.subject(tables[l['to']]['table'])} ({', '.join(words.get(x, x.replace('_', ' ')) for x in l['evidence'] if x != 'family')})" for l in used[:4]]
         if len(stores) > 1:
             reasons.append(f"joins {' and '.join(stores)} without moving data")
         if modeled:
@@ -502,8 +504,14 @@ def recommend(inferred: dict, options: dict | None = None) -> list[dict]:
             if e["key"] == root(e["key"]):
                 r["name"], r["home"] = e["name"], tables[e["home"]]["table"] if e["home"] in group else None
             r["members"] += [(tables[k]["table"], c) for k, c in e["members"].items() if k in group]
+        dims_named = list(dict.fromkeys(l["entity"] for l in used if not l["entity"].endswith(" Key")))[:4]
+        where = sorted({f"{tables[k]['datasource']} / {tables[k]['schema']}" for k in group})
+        description = (f"{' and '.join(subjects) if len(subjects) < 3 else ', '.join(subjects[:-1]) + ' and ' + subjects[-1]}"
+                       + (f", by {', '.join(dims_named[:-1]) + ' and ' + dims_named[-1] if len(dims_named) > 1 else dims_named[0]}" if dims_named else "")
+                       + f". From {', '.join(where)}.")[:250]
         spec = mp.spec_from_tables(cat, {}, name,
                                    entities=[{"name": r["name"], "members": r["members"], "home": r["home"]} for r in merged.values() if len(r["members"]) >= 2])
+        spec["description"] = description
         # every draft is checked as the builder would check it; one the check refuses is offered for a decision, not a build
         sub = {"tables": [tables[k] for k in group]}
         measured_prof = {tables[k]["table"]: (inferred.get("profile") or {})[k] for k in group if k in (inferred.get("profile") or {})}

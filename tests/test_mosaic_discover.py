@@ -160,6 +160,10 @@ class StarSchemaByRoleNames(unittest.TestCase):
         self.assertTrue({"Machine Type", "Country"} <= attrs)
         named = {a["name"]: f["column"] for a in spec["attributes"] for f in a["forms"] if f["category"] == "DESC"}
         self.assertEqual(named.get("Machine"), "MACHINE_NAME"); self.assertEqual(named.get("Plant"), "PLANT_NAME")   # names are name forms
+        forms = {a["name"]: {f["column"] for f in a["forms"]} for a in spec["attributes"]}
+        self.assertNotIn("Plant Key", forms); self.assertNotIn("Machine Key", forms)         # surrogates are forms of their key
+        self.assertIn("PLANT_KEY", forms["Plant"]); self.assertIn("MACHINE_KEY", forms["Machine"])
+        self.assertTrue(spec["description"].startswith("Downtime Events, Production Runs and Recycling Intake, by "))
 
     def test_each_table_gets_its_conformed_key(self):
         plan = mp.from_spec(self.recs[0]["spec"], {"tables": list(self.graph["tables"].values())}, {})

@@ -396,10 +396,25 @@ def spec_from_tables(cat: dict[str, Any], prof: dict[str, Any] | None = None, na
     groups: dict[tuple, list[dict]] = {}
     for e in pre:
         home_col = next((c for t, c in e["members"] if t == e["home"]), e["members"][0][1])
-        groups.setdefault((e["home"], stem_of(home_col), frozenset(t for t, _ in e["members"])), []).append({**e, "home_col": home_col})
+        groups.setdefault((e["home"], stem_of(home_col).split("_")[-1]), []).append({**e, "home_col": home_col, "tables": frozenset(t for t, _ in e["members"])})
+    # keys of one thing on one home (PLANT_KEY beside SOURCE_PLANT_ID on DIM_PLANT) whose tables are within the main
+    # key's tables are its alternate forms; keys reaching other tables stay their own attributes
+    split: dict[tuple, list[dict]] = {}
+    for g_key, same in groups.items():
+        same.sort(key=lambda e: (-len(e["tables"]), rank(e["home_col"])))
+        main, rest = same[0], same[1:]
+        inside = [e for e in rest if e["tables"] <= main["tables"]]
+        split[g_key] = [main, *inside]
+        for e in rest:
+            if e not in inside:
+                split[(g_key[0], g_key[1], e["home_col"])] = [e]
+    groups = split
     pre = []
-    for (home, stem, _), same in groups.items():
-        same.sort(key=lambda e: rank(e["home_col"]))
+    for (home, stem, *_), same in groups.items():
+        main0 = same[0]
+        same = [main0] + sorted(same[1:], key=lambda e: rank(e["home_col"]))
+        if len(same) > 1 and len({e["tables"] for e in same}) == 1:
+            same.sort(key=lambda e: rank(e["home_col"]))      # equal reach: the readable key is the ID
         main = same[0]
         if len(same) > 1 and stem:
             main = {**main, "name": re.sub(r" Key$", "", main["name"]),
@@ -436,6 +451,15 @@ def spec_from_tables(cat: dict[str, Any], prof: dict[str, Any] | None = None, na
         stem = re.sub(KEY_COLUMN, "", occ[0][1]).strip("_") or _short_table(occ[0][0])
         home = next((tc for tc in occ if unique_on(tc) and stem.casefold().rstrip("s") in tc[0].casefold()), None) \
             or next((tc for tc in occ if unique_on(tc)), occ[0])
+        if len(occ) == 1:
+            owner = next((a for a, e in zip(attributes, pre) if e["home"] == occ[0][0]
+                          and re.sub(KEY_COLUMN, "", next((c for t, c in e["members"] if t == e["home"]), "")).strip("_").casefold().split("_")[-1] == stem.casefold().split("_")[-1]), None)
+            if owner is not None:             # MACHINE_KEY on DIM_MACHINE beside Machine: another form of Machine
+                sfx = re.search(r"[^_]+$", occ[0][1]).group(0)
+                nm = {"ID": "Internal ID", "Id": "Internal ID", "No": "Number", "Num": "Number", "Nbr": "Number"}.get(_friendly(sfx), _friendly(sfx))
+                owner["forms"].append({"name": nm, "category": nm, "table": occ[0][0], "column": occ[0][1]})
+                keyed |= {(occ[0][0], occ[0][1])}
+                continue
         label = _friendly(stem)
         if label.casefold() in used and len(occ) == 1 and re.search(r"(?:^|_)key$", occ[0][1], re.I):
             label = f"{label} Key"                 # a surrogate key beside the table's own key: Machine Key, not Machine (Dim Machine)
