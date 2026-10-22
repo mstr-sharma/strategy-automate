@@ -1,0 +1,1116 @@
+{
+ "spec": {
+  "name": "Last Mile Big Box Delivery",
+  "description": "Combines shipments, customers, products and carriers with delivery performance and freight invoices to answer on-time delivery, damage claims, freight cost and overbilling questions for big box home deliveries.",
+  "serve_mode": "in_memory",
+  "publish": true,
+  "certify": false,
+  "sources": [
+   {
+    "instance_id": "6883FE75BB4FF604B5D8DA9F4604B082",
+    "instance": "Synthetic Data",
+    "schema": "MCI_DEMO",
+    "table": "SD_RETAIL_FREIGHT_SHIPMENTS",
+    "role": "fact",
+    "description": "One row per shipment of an online order to a customer with carrier, product, mode, distance and amount.",
+    "kind": "table",
+    "query": "",
+    "query_digest": "",
+    "query_columns": []
+   },
+   {
+    "instance_id": "6883FE75BB4FF604B5D8DA9F4604B082",
+    "instance": "Synthetic Data",
+    "schema": "MCI_DEMO",
+    "table": "SD_RETAIL_FREIGHT_PRODUCTS",
+    "role": "dimension",
+    "description": "Products shipped with category, SKU and list price.",
+    "kind": "table",
+    "query": "",
+    "query_digest": "",
+    "query_columns": []
+   },
+   {
+    "instance_id": "6883FE75BB4FF604B5D8DA9F4604B082",
+    "instance": "Synthetic Data",
+    "schema": "MCI_DEMO",
+    "table": "SD_RETAIL_FREIGHT_CUSTOMERS",
+    "role": "dimension",
+    "description": "Customers receiving deliveries with region and segment.",
+    "kind": "table",
+    "query": "",
+    "query_digest": "",
+    "query_columns": []
+   },
+   {
+    "instance_id": "6883FE75BB4FF604B5D8DA9F4604B082",
+    "instance": "Synthetic Data",
+    "schema": "MCI_DEMO",
+    "table": "SD_RETAIL_FREIGHT_CARRIERS",
+    "role": "dimension",
+    "description": "Carriers delivering shipments with service level.",
+    "kind": "table",
+    "query": "",
+    "query_digest": "",
+    "query_columns": []
+   },
+   {
+    "instance_id": "1026BAC01A4AAA58A344BC83897F9F12",
+    "instance": "Neon PostgreSQL",
+    "schema": "freight",
+    "table": "shipment_delivery_performance",
+    "role": "fact",
+    "description": "One row per shipment delivery with timeliness, attempts and damage claims.",
+    "kind": "table",
+    "query": "",
+    "query_digest": "",
+    "query_columns": []
+   },
+   {
+    "instance_id": "1026BAC01A4AAA58A344BC83897F9F12",
+    "instance": "Neon PostgreSQL",
+    "schema": "freight",
+    "table": "shipment_freight_invoice",
+    "role": "fact",
+    "description": "One row per shipment freight invoice with charges, weight and overbilling.",
+    "kind": "table",
+    "query": "",
+    "query_digest": "",
+    "query_columns": []
+   }
+  ],
+  "attributes": [
+   {
+    "name": "Shipment",
+    "description": "A last mile shipment; the conformed key across shipments, delivery performance and freight invoices.",
+    "forms": [
+     {
+      "name": "ID",
+      "table": "SD_RETAIL_FREIGHT_SHIPMENTS",
+      "column": "SHIPMENT_ID",
+      "category": "ID"
+     },
+     {
+      "name": "ID",
+      "table": "shipment_delivery_performance",
+      "column": "shipment_id",
+      "category": "ID"
+     },
+     {
+      "name": "ID",
+      "table": "shipment_freight_invoice",
+      "column": "shipment_id",
+      "category": "ID"
+     }
+    ],
+    "lookup_table": "SD_RETAIL_FREIGHT_SHIPMENTS",
+    "time": false
+   },
+   {
+    "name": "Customer",
+    "description": "The customer receiving the delivery.",
+    "forms": [
+     {
+      "name": "ID",
+      "table": "SD_RETAIL_FREIGHT_CUSTOMERS",
+      "column": "CUSTOMER_ID",
+      "category": "ID"
+     },
+     {
+      "name": "ID",
+      "table": "SD_RETAIL_FREIGHT_SHIPMENTS",
+      "column": "CUSTOMER_ID",
+      "category": "ID"
+     },
+     {
+      "name": "Name",
+      "table": "SD_RETAIL_FREIGHT_CUSTOMERS",
+      "column": "CUSTOMER_NAME",
+      "category": "DESC"
+     }
+    ],
+    "lookup_table": "SD_RETAIL_FREIGHT_CUSTOMERS",
+    "time": false
+   },
+   {
+    "name": "Product",
+    "description": "The item shipped.",
+    "forms": [
+     {
+      "name": "ID",
+      "table": "SD_RETAIL_FREIGHT_PRODUCTS",
+      "column": "PRODUCT_ID",
+      "category": "ID"
+     },
+     {
+      "name": "ID",
+      "table": "SD_RETAIL_FREIGHT_SHIPMENTS",
+      "column": "PRODUCT_ID",
+      "category": "ID"
+     },
+     {
+      "name": "Name",
+      "table": "SD_RETAIL_FREIGHT_PRODUCTS",
+      "column": "PRODUCT_NAME",
+      "category": "DESC"
+     },
+     {
+      "name": "SKU",
+      "table": "SD_RETAIL_FREIGHT_PRODUCTS",
+      "column": "SKU_CODE",
+      "category": "DESC"
+     }
+    ],
+    "lookup_table": "SD_RETAIL_FREIGHT_PRODUCTS",
+    "time": false
+   },
+   {
+    "name": "Carrier",
+    "description": "The carrier that delivers the shipment.",
+    "forms": [
+     {
+      "name": "ID",
+      "table": "SD_RETAIL_FREIGHT_CARRIERS",
+      "column": "CARRIER_ID",
+      "category": "ID"
+     },
+     {
+      "name": "ID",
+      "table": "SD_RETAIL_FREIGHT_SHIPMENTS",
+      "column": "CARRIER_ID",
+      "category": "ID"
+     },
+     {
+      "name": "Name",
+      "table": "SD_RETAIL_FREIGHT_CARRIERS",
+      "column": "CARRIER_NAME",
+      "category": "DESC"
+     }
+    ],
+    "lookup_table": "SD_RETAIL_FREIGHT_CARRIERS",
+    "time": false
+   },
+   {
+    "name": "Product Category",
+    "description": "Merchandise category of the product.",
+    "forms": [
+     {
+      "name": "ID",
+      "table": "SD_RETAIL_FREIGHT_PRODUCTS",
+      "column": "CATEGORY",
+      "category": "ID"
+     }
+    ],
+    "lookup_table": "SD_RETAIL_FREIGHT_PRODUCTS",
+    "time": false
+   },
+   {
+    "name": "Region",
+    "description": "Customer geographic region.",
+    "forms": [
+     {
+      "name": "ID",
+      "table": "SD_RETAIL_FREIGHT_CUSTOMERS",
+      "column": "REGION",
+      "category": "ID"
+     }
+    ],
+    "lookup_table": "SD_RETAIL_FREIGHT_CUSTOMERS",
+    "time": false
+   },
+   {
+    "name": "Customer Segment",
+    "description": "Customer segment such as member type.",
+    "forms": [
+     {
+      "name": "ID",
+      "table": "SD_RETAIL_FREIGHT_CUSTOMERS",
+      "column": "SEGMENT",
+      "category": "ID"
+     }
+    ],
+    "lookup_table": "SD_RETAIL_FREIGHT_CUSTOMERS",
+    "time": false
+   },
+   {
+    "name": "Service Level",
+    "description": "Carrier service level.",
+    "forms": [
+     {
+      "name": "ID",
+      "table": "SD_RETAIL_FREIGHT_CARRIERS",
+      "column": "SERVICE_LEVEL",
+      "category": "ID"
+     }
+    ],
+    "lookup_table": "SD_RETAIL_FREIGHT_CARRIERS",
+    "time": false
+   },
+   {
+    "name": "Shipping Mode",
+    "description": "Mode used to ship the order.",
+    "forms": [
+     {
+      "name": "ID",
+      "table": "SD_RETAIL_FREIGHT_SHIPMENTS",
+      "column": "SHIPPING_MODE",
+      "category": "ID"
+     }
+    ],
+    "lookup_table": "SD_RETAIL_FREIGHT_SHIPMENTS",
+    "time": false
+   },
+   {
+    "name": "Ship Date",
+    "description": "Date the shipment was created.",
+    "forms": [
+     {
+      "name": "ID",
+      "table": "SD_RETAIL_FREIGHT_SHIPMENTS",
+      "column": "DATE",
+      "category": "ID"
+     }
+    ],
+    "lookup_table": "SD_RETAIL_FREIGHT_SHIPMENTS",
+    "time": true
+   },
+   {
+    "name": "Delivered Date",
+    "description": "Date the shipment was delivered.",
+    "forms": [
+     {
+      "name": "ID",
+      "table": "shipment_delivery_performance",
+      "column": "delivered_date",
+      "category": "ID"
+     }
+    ],
+    "lookup_table": "shipment_delivery_performance",
+    "time": true
+   },
+   {
+    "name": "Invoice Date",
+    "description": "Date the freight invoice was issued.",
+    "forms": [
+     {
+      "name": "ID",
+      "table": "shipment_freight_invoice",
+      "column": "invoice_date",
+      "category": "ID"
+     }
+    ],
+    "lookup_table": "shipment_freight_invoice",
+    "time": true
+   },
+   {
+    "name": "Delivery Service",
+    "description": "Delivery service type used for the last mile delivery.",
+    "forms": [
+     {
+      "name": "ID",
+      "table": "shipment_delivery_performance",
+      "column": "delivery_service",
+      "category": "ID"
+     }
+    ],
+    "lookup_table": "shipment_delivery_performance",
+    "time": false
+   },
+   {
+    "name": "Freight Class",
+    "description": "Freight class of the invoiced shipment.",
+    "forms": [
+     {
+      "name": "ID",
+      "table": "shipment_freight_invoice",
+      "column": "freight_class",
+      "category": "ID"
+     }
+    ],
+    "lookup_table": "shipment_freight_invoice",
+    "time": false
+   },
+   {
+    "name": "Invoice",
+    "description": "A freight invoice.",
+    "forms": [
+     {
+      "name": "Number",
+      "table": "shipment_freight_invoice",
+      "column": "invoice_number",
+      "category": "ID"
+     }
+    ],
+    "lookup_table": "shipment_freight_invoice",
+    "time": false
+   }
+  ],
+  "metrics": [
+   {
+    "name": "Shipment Amount",
+    "description": "Order value of shipments.",
+    "table": "SD_RETAIL_FREIGHT_SHIPMENTS",
+    "column": "AMOUNT",
+    "function": "sum",
+    "format": "currency"
+   },
+   {
+    "name": "Distance Miles",
+    "description": "Miles traveled to deliver shipments.",
+    "table": "SD_RETAIL_FREIGHT_SHIPMENTS",
+    "column": "DISTANCE_MILES",
+    "function": "sum",
+    "format": "integer"
+   },
+   {
+    "name": "List Price",
+    "description": "Average list price of products.",
+    "table": "SD_RETAIL_FREIGHT_PRODUCTS",
+    "column": "LIST_PRICE",
+    "function": "avg",
+    "format": "currency"
+   },
+   {
+    "name": "Damage Claim Amount",
+    "description": "Dollar value of damage claims.",
+    "table": "shipment_delivery_performance",
+    "column": "damage_claim_usd",
+    "function": "sum",
+    "format": "currency"
+   },
+   {
+    "name": "Damage Claims",
+    "description": "Number of damage claims.",
+    "table": "shipment_delivery_performance",
+    "column": "damage_claims",
+    "function": "sum",
+    "format": "integer"
+   },
+   {
+    "name": "Deliveries",
+    "description": "Number of deliveries.",
+    "table": "shipment_delivery_performance",
+    "column": "deliveries",
+    "function": "sum",
+    "format": "integer"
+   },
+   {
+    "name": "Delivery Attempts",
+    "description": "Number of delivery attempts.",
+    "table": "shipment_delivery_performance",
+    "column": "delivery_attempts",
+    "function": "sum",
+    "format": "integer"
+   },
+   {
+    "name": "Late Deliveries",
+    "description": "Deliveries made after the promised date.",
+    "table": "shipment_delivery_performance",
+    "column": "late_deliveries",
+    "function": "sum",
+    "format": "integer"
+   },
+   {
+    "name": "On Time Deliveries",
+    "description": "Deliveries made by the promised date.",
+    "table": "shipment_delivery_performance",
+    "column": "on_time_deliveries",
+    "function": "sum",
+    "format": "integer"
+   },
+   {
+    "name": "Promised Days",
+    "description": "Average promised transit days.",
+    "table": "shipment_delivery_performance",
+    "column": "promised_days",
+    "function": "avg",
+    "format": "fixed2"
+   },
+   {
+    "name": "Transit Days",
+    "description": "Average actual transit days.",
+    "table": "shipment_delivery_performance",
+    "column": "transit_days",
+    "function": "avg",
+    "format": "fixed2"
+   },
+   {
+    "name": "Accessorial Charges",
+    "description": "Accessorial charges such as liftgate or inside delivery.",
+    "table": "shipment_freight_invoice",
+    "column": "accessorial_usd",
+    "function": "sum",
+    "format": "currency"
+   },
+   {
+    "name": "Fuel Surcharge",
+    "description": "Fuel surcharges invoiced.",
+    "table": "shipment_freight_invoice",
+    "column": "fuel_surcharge_usd",
+    "function": "sum",
+    "format": "currency"
+   },
+   {
+    "name": "Invoiced Amount",
+    "description": "Total freight invoiced.",
+    "table": "shipment_freight_invoice",
+    "column": "invoiced_amount_usd",
+    "function": "sum",
+    "format": "currency"
+   },
+   {
+    "name": "Linehaul Charges",
+    "description": "Linehaul freight charges.",
+    "table": "shipment_freight_invoice",
+    "column": "linehaul_usd",
+    "function": "sum",
+    "format": "currency"
+   },
+   {
+    "name": "Overbilled Invoices",
+    "description": "Number of overbilled invoices.",
+    "table": "shipment_freight_invoice",
+    "column": "overbilled_invoices",
+    "function": "sum",
+    "format": "integer"
+   },
+   {
+    "name": "Overbilled Amount",
+    "description": "Dollar amount billed above the expected charge.",
+    "table": "shipment_freight_invoice",
+    "column": "overbilled_usd",
+    "function": "sum",
+    "format": "currency"
+   },
+   {
+    "name": "Pieces",
+    "description": "Number of pieces shipped.",
+    "table": "shipment_freight_invoice",
+    "column": "pieces",
+    "function": "sum",
+    "format": "integer"
+   },
+   {
+    "name": "Weight Lbs",
+    "description": "Shipment weight in pounds.",
+    "table": "shipment_freight_invoice",
+    "column": "weight_lbs",
+    "function": "sum",
+    "format": "integer"
+   }
+  ],
+  "derived": [
+   {
+    "name": "On Time Delivery Rate",
+    "description": "Share of deliveries made on time.",
+    "formula": "{On Time Deliveries} / {Deliveries}",
+    "format": "percent"
+   },
+   {
+    "name": "Late Delivery Rate",
+    "description": "Share of deliveries made late.",
+    "formula": "{Late Deliveries} / {Deliveries}",
+    "format": "percent"
+   },
+   {
+    "name": "Damage Claim Rate",
+    "description": "Damage claims per delivery.",
+    "formula": "{Damage Claims} / {Deliveries}",
+    "format": "percent"
+   },
+   {
+    "name": "Attempts per Delivery",
+    "description": "Average delivery attempts per delivery.",
+    "formula": "{Delivery Attempts} / {Deliveries}",
+    "format": "fixed2"
+   },
+   {
+    "name": "Delivery Timing Gap",
+    "description": "Deliveries minus on-time and late deliveries; should read 0.",
+    "formula": "{Deliveries} - {On Time Deliveries} - {Late Deliveries}",
+    "format": "integer"
+   },
+   {
+    "name": "Freight Cost per Pound",
+    "description": "Invoiced freight per pound shipped.",
+    "formula": "{Invoiced Amount} / {Weight Lbs}",
+    "format": "currency"
+   },
+   {
+    "name": "Freight Cost per Mile",
+    "description": "Invoiced freight per mile.",
+    "formula": "{Invoiced Amount} / {Distance Miles}",
+    "format": "currency"
+   },
+   {
+    "name": "Freight Cost Rate",
+    "description": "Freight cost as share of shipment value.",
+    "formula": "{Invoiced Amount} / {Shipment Amount}",
+    "format": "percent"
+   },
+   {
+    "name": "Overbilled Rate",
+    "description": "Overbilled dollars as share of invoiced freight.",
+    "formula": "{Overbilled Amount} / {Invoiced Amount}",
+    "format": "percent"
+   },
+   {
+    "name": "Invoice Reconciliation Gap",
+    "description": "Invoiced amount less linehaul, fuel and accessorials; should read 0.",
+    "formula": "{Invoiced Amount} - {Linehaul Charges} - {Fuel Surcharge} - {Accessorial Charges}",
+    "format": "currency"
+   },
+   {
+    "name": "Accessorial Share",
+    "description": "Accessorials as share of invoiced freight.",
+    "formula": "{Accessorial Charges} / {Invoiced Amount}",
+    "format": "percent"
+   },
+   {
+    "name": "Damage Claim Cost per Delivery",
+    "description": "Average damage claim dollars per delivery.",
+    "formula": "{Damage Claim Amount} / {Deliveries}",
+    "format": "currency"
+   }
+  ],
+  "conditional": [],
+  "relationships": [
+   {
+    "parent": "SD_RETAIL_FREIGHT_CUSTOMERS.CUSTOMER_ID",
+    "child": "SD_RETAIL_FREIGHT_SHIPMENTS.CUSTOMER_ID",
+    "relationship_table": "SD_RETAIL_FREIGHT_SHIPMENTS",
+    "type": "one_to_many"
+   },
+   {
+    "parent": "SD_RETAIL_FREIGHT_PRODUCTS.PRODUCT_ID",
+    "child": "SD_RETAIL_FREIGHT_SHIPMENTS.PRODUCT_ID",
+    "relationship_table": "SD_RETAIL_FREIGHT_SHIPMENTS",
+    "type": "one_to_many"
+   },
+   {
+    "parent": "SD_RETAIL_FREIGHT_CARRIERS.CARRIER_ID",
+    "child": "SD_RETAIL_FREIGHT_SHIPMENTS.CARRIER_ID",
+    "relationship_table": "SD_RETAIL_FREIGHT_SHIPMENTS",
+    "type": "one_to_many"
+   },
+   {
+    "parent": "SD_RETAIL_FREIGHT_SHIPMENTS.SHIPMENT_ID",
+    "child": "shipment_delivery_performance.shipment_id",
+    "relationship_table": "shipment_delivery_performance",
+    "type": "one_to_many"
+   },
+   {
+    "parent": "SD_RETAIL_FREIGHT_SHIPMENTS.SHIPMENT_ID",
+    "child": "shipment_freight_invoice.shipment_id",
+    "relationship_table": "shipment_freight_invoice",
+    "type": "one_to_many"
+   },
+   {
+    "parent": "SD_RETAIL_FREIGHT_PRODUCTS.CATEGORY",
+    "child": "SD_RETAIL_FREIGHT_PRODUCTS.PRODUCT_ID",
+    "relationship_table": "SD_RETAIL_FREIGHT_PRODUCTS",
+    "type": "one_to_many"
+   }
+  ],
+  "skip_columns": [],
+  "links": [],
+  "notes": [
+   "Two instances are combined, so the model is in_memory; the conformed key across stores is SHIPMENT_ID (shipments) = shipment_id (delivery performance and freight invoice).",
+   "SHIPMENTS is treated as the shipment-grain parent; the two Neon tables are assumed one row per shipment, so verify grain to avoid double counting.",
+   "Entity counts (shipment count, customer count) should be added in Studio, not as base metrics.",
+   "No existing Mosaic model clearly matches, so no links were added."
+  ]
+ },
+ "catalog": {
+  "tables": [
+   {
+    "datasource_id": "6883FE75BB4FF604B5D8DA9F4604B082",
+    "datasource": "Synthetic Data",
+    "dbms": "Snowflake",
+    "schema": "MCI_DEMO",
+    "table": "SD_RETAIL_FREIGHT_SHIPMENTS",
+    "columns": [
+     {
+      "name": "AMOUNT",
+      "dataType": {
+       "type": "float",
+       "scale": -1,
+       "precision": 0
+      }
+     },
+     {
+      "name": "CARRIER_ID",
+      "dataType": {
+       "type": "int64",
+       "precision": 8,
+       "scale": 0
+      }
+     },
+     {
+      "name": "CUSTOMER_ID",
+      "dataType": {
+       "type": "int64",
+       "precision": 8,
+       "scale": 0
+      }
+     },
+     {
+      "name": "DATE",
+      "dataType": {
+       "type": "date",
+       "precision": 10,
+       "scale": 0
+      }
+     },
+     {
+      "name": "DISTANCE_MILES",
+      "dataType": {
+       "type": "int64",
+       "precision": 8,
+       "scale": 0
+      }
+     },
+     {
+      "name": "PRODUCT_ID",
+      "dataType": {
+       "type": "int64",
+       "precision": 8,
+       "scale": 0
+      }
+     },
+     {
+      "name": "SHIPMENT_ID",
+      "dataType": {
+       "type": "int64",
+       "precision": 8,
+       "scale": 0
+      }
+     },
+     {
+      "name": "SHIPPING_MODE",
+      "dataType": {
+       "type": "utf8_char",
+       "precision": 32000,
+       "scale": 0
+      }
+     }
+    ]
+   },
+   {
+    "datasource_id": "6883FE75BB4FF604B5D8DA9F4604B082",
+    "datasource": "Synthetic Data",
+    "dbms": "Snowflake",
+    "schema": "MCI_DEMO",
+    "table": "SD_RETAIL_FREIGHT_PRODUCTS",
+    "columns": [
+     {
+      "name": "CATEGORY",
+      "dataType": {
+       "type": "utf8_char",
+       "precision": 32000,
+       "scale": 0
+      }
+     },
+     {
+      "name": "LIST_PRICE",
+      "dataType": {
+       "type": "float",
+       "scale": -1,
+       "precision": 0
+      }
+     },
+     {
+      "name": "PRODUCT_ID",
+      "dataType": {
+       "type": "int64",
+       "precision": 8,
+       "scale": 0
+      }
+     },
+     {
+      "name": "PRODUCT_NAME",
+      "dataType": {
+       "type": "utf8_char",
+       "precision": 32000,
+       "scale": 0
+      }
+     },
+     {
+      "name": "SKU_CODE",
+      "dataType": {
+       "type": "utf8_char",
+       "precision": 32000,
+       "scale": 0
+      }
+     }
+    ]
+   },
+   {
+    "datasource_id": "6883FE75BB4FF604B5D8DA9F4604B082",
+    "datasource": "Synthetic Data",
+    "dbms": "Snowflake",
+    "schema": "MCI_DEMO",
+    "table": "SD_RETAIL_FREIGHT_CUSTOMERS",
+    "columns": [
+     {
+      "name": "CUSTOMER_ID",
+      "dataType": {
+       "type": "int64",
+       "precision": 8,
+       "scale": 0
+      }
+     },
+     {
+      "name": "CUSTOMER_NAME",
+      "dataType": {
+       "type": "utf8_char",
+       "precision": 32000,
+       "scale": 0
+      }
+     },
+     {
+      "name": "REGION",
+      "dataType": {
+       "type": "utf8_char",
+       "precision": 32000,
+       "scale": 0
+      }
+     },
+     {
+      "name": "SEGMENT",
+      "dataType": {
+       "type": "utf8_char",
+       "precision": 32000,
+       "scale": 0
+      }
+     }
+    ]
+   },
+   {
+    "datasource_id": "6883FE75BB4FF604B5D8DA9F4604B082",
+    "datasource": "Synthetic Data",
+    "dbms": "Snowflake",
+    "schema": "MCI_DEMO",
+    "table": "SD_RETAIL_FREIGHT_CARRIERS",
+    "columns": [
+     {
+      "name": "CARRIER_ID",
+      "dataType": {
+       "type": "int64",
+       "precision": 8,
+       "scale": 0
+      }
+     },
+     {
+      "name": "CARRIER_NAME",
+      "dataType": {
+       "type": "utf8_char",
+       "precision": 32000,
+       "scale": 0
+      }
+     },
+     {
+      "name": "SERVICE_LEVEL",
+      "dataType": {
+       "type": "utf8_char",
+       "precision": 32000,
+       "scale": 0
+      }
+     }
+    ]
+   },
+   {
+    "datasource_id": "1026BAC01A4AAA58A344BC83897F9F12",
+    "datasource": "Neon PostgreSQL",
+    "dbms": "PostgreSQL",
+    "schema": "freight",
+    "table": "shipment_delivery_performance",
+    "columns": [
+     {
+      "name": "damage_claim_usd",
+      "dataType": {
+       "type": "double",
+       "precision": 12,
+       "scale": 2
+      }
+     },
+     {
+      "name": "damage_claims",
+      "dataType": {
+       "type": "integer",
+       "scale": 0,
+       "precision": 4
+      }
+     },
+     {
+      "name": "delivered_date",
+      "dataType": {
+       "type": "date",
+       "precision": 10,
+       "scale": 0
+      }
+     },
+     {
+      "name": "deliveries",
+      "dataType": {
+       "type": "integer",
+       "scale": 0,
+       "precision": 4
+      }
+     },
+     {
+      "name": "delivery_attempts",
+      "dataType": {
+       "type": "integer",
+       "scale": 0,
+       "precision": 4
+      }
+     },
+     {
+      "name": "delivery_service",
+      "dataType": {
+       "type": "utf8_char",
+       "precision": 32000,
+       "scale": 0
+      }
+     },
+     {
+      "name": "late_deliveries",
+      "dataType": {
+       "type": "integer",
+       "scale": 0,
+       "precision": 4
+      }
+     },
+     {
+      "name": "on_time_deliveries",
+      "dataType": {
+       "type": "integer",
+       "scale": 0,
+       "precision": 4
+      }
+     },
+     {
+      "name": "promised_days",
+      "dataType": {
+       "type": "integer",
+       "scale": 0,
+       "precision": 4
+      }
+     },
+     {
+      "name": "shipment_id",
+      "dataType": {
+       "type": "integer",
+       "scale": 0,
+       "precision": 4
+      }
+     },
+     {
+      "name": "transit_days",
+      "dataType": {
+       "type": "integer",
+       "scale": 0,
+       "precision": 4
+      }
+     }
+    ]
+   },
+   {
+    "datasource_id": "1026BAC01A4AAA58A344BC83897F9F12",
+    "datasource": "Neon PostgreSQL",
+    "dbms": "PostgreSQL",
+    "schema": "freight",
+    "table": "shipment_freight_invoice",
+    "columns": [
+     {
+      "name": "accessorial_usd",
+      "dataType": {
+       "type": "double",
+       "precision": 12,
+       "scale": 2
+      }
+     },
+     {
+      "name": "freight_class",
+      "dataType": {
+       "type": "utf8_char",
+       "precision": 32000,
+       "scale": 0
+      }
+     },
+     {
+      "name": "fuel_surcharge_usd",
+      "dataType": {
+       "type": "double",
+       "precision": 12,
+       "scale": 2
+      }
+     },
+     {
+      "name": "invoice_date",
+      "dataType": {
+       "type": "date",
+       "precision": 10,
+       "scale": 0
+      }
+     },
+     {
+      "name": "invoice_number",
+      "dataType": {
+       "type": "utf8_char",
+       "precision": 32000,
+       "scale": 0
+      }
+     },
+     {
+      "name": "invoiced_amount_usd",
+      "dataType": {
+       "type": "double",
+       "precision": 12,
+       "scale": 2
+      }
+     },
+     {
+      "name": "linehaul_usd",
+      "dataType": {
+       "type": "double",
+       "precision": 12,
+       "scale": 2
+      }
+     },
+     {
+      "name": "overbilled_invoices",
+      "dataType": {
+       "type": "integer",
+       "scale": 0,
+       "precision": 4
+      }
+     },
+     {
+      "name": "overbilled_usd",
+      "dataType": {
+       "type": "double",
+       "precision": 12,
+       "scale": 2
+      }
+     },
+     {
+      "name": "pieces",
+      "dataType": {
+       "type": "integer",
+       "scale": 0,
+       "precision": 4
+      }
+     },
+     {
+      "name": "shipment_id",
+      "dataType": {
+       "type": "integer",
+       "scale": 0,
+       "precision": 4
+      }
+     },
+     {
+      "name": "weight_lbs",
+      "dataType": {
+       "type": "integer",
+       "scale": 0,
+       "precision": 4
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "profile": {
+  "SD_RETAIL_FREIGHT_SHIPMENTS": {
+   "measured": true,
+   "rows": 3000,
+   "distinct": {
+    "SHIPMENT_ID": 3000,
+    "CUSTOMER_ID": 200,
+    "PRODUCT_ID": 100,
+    "CARRIER_ID": 4,
+    "SHIPPING_MODE": 3,
+    "DATE": 614
+   },
+   "nulls": {
+    "SHIPMENT_ID": 0,
+    "CUSTOMER_ID": 0,
+    "PRODUCT_ID": 0,
+    "CARRIER_ID": 0,
+    "SHIPPING_MODE": 0,
+    "DATE": 0
+   }
+  },
+  "SD_RETAIL_FREIGHT_PRODUCTS": {
+   "measured": true,
+   "rows": 100,
+   "distinct": {
+    "PRODUCT_ID": 100,
+    "CATEGORY": 4
+   },
+   "nulls": {
+    "PRODUCT_ID": 0,
+    "CATEGORY": 0
+   }
+  },
+  "SD_RETAIL_FREIGHT_CUSTOMERS": {
+   "measured": true,
+   "rows": 200,
+   "distinct": {
+    "CUSTOMER_ID": 200,
+    "REGION": 4,
+    "SEGMENT": 4
+   },
+   "nulls": {
+    "CUSTOMER_ID": 0,
+    "REGION": 0,
+    "SEGMENT": 0
+   }
+  },
+  "SD_RETAIL_FREIGHT_CARRIERS": {
+   "measured": true,
+   "rows": 4,
+   "distinct": {
+    "CARRIER_ID": 4,
+    "SERVICE_LEVEL": 4
+   },
+   "nulls": {
+    "CARRIER_ID": 0,
+    "SERVICE_LEVEL": 0
+   }
+  },
+  "shipment_delivery_performance": {
+   "measured": true,
+   "rows": 3000,
+   "distinct": {
+    "shipment_id": 3000,
+    "delivered_date": 618,
+    "delivery_service": 4
+   },
+   "nulls": {
+    "shipment_id": 0,
+    "delivered_date": 0,
+    "delivery_service": 0
+   }
+  },
+  "shipment_freight_invoice": {
+   "measured": true,
+   "rows": 3000,
+   "distinct": {
+    "shipment_id": 3000,
+    "invoice_date": 625,
+    "freight_class": 7,
+    "invoice_number": 3000
+   },
+   "nulls": {
+    "shipment_id": 0,
+    "invoice_date": 0,
+    "freight_class": 0,
+    "invoice_number": 0
+   }
+  }
+ }
+}
