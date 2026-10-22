@@ -183,6 +183,130 @@ def cmd_build(args) -> int:
     return 0
 
 
+def _audit_inputs(m, model_id: str):
+    say("→ Reading the model from Strategy…")
+    spec, rels, info = ma.spec_from_model(m, model_id)
+    if info["unsupported"]:
+        say(f"  note: {len(info['unsupported'])} query-built table(s) are not audited: {', '.join(info['unsupported'][:5])}")
+    say(f"  {len(spec['sources'])} tables · {len(spec['attributes'])} attributes · {len(spec['metrics'])} metrics · {len(rels)} relationships")
+    refs = [{"datasource": s["instance_id"], "schema": s["schema"], "table": s["table"]} for s in spec["sources"]]
+    cat = live.catalog(m, refs)
+    keys: dict[str, list[str]] = {}
+    for a in spec["attributes"]:
+        for f in a["forms"]:
+            if f["category"] == "ID":
+                keys.setdefault(f["table"], []).append(f["column"])
+    say("→ Measuring each table's keys in the data…")
+    prof = live.profile(m, cat, keys)
+    return spec, rels, info, cat, prof
+
+
+def cmd_audit(args) -> int:
+    """the model as built against the plan: relationships to add or remove and what each fixes; nothing is written"""
+    m = live.sign_in_from_env()
+    spec, rels, info, cat, prof = _audit_inputs(m, args.model_id)
+    result = ma.audit_model(spec, rels, cat, prof)
+    say(f"→ {len(result['add'])} relationship(s) to add, {len(result['remove'])} to remove; fixes {len(result['fixed'])} finding(s), {len(result['remaining'])} remain")
+    out = {"model_id": args.model_id, "name": info["name"], "serve_mode": info["serve_mode"], "unsupported": info["unsupported"],
+           **{k: v for k, v in result.items() if k != "after"}, "relationships": rels}
+    text = json.dumps(out, default=str)
+    if args.out:
+        with open(args.out, "w") as fh:
+            fh.write(text)
+        say(f"audit written: {args.out}")
+    else:
+        print(text)
+    return 0
+
+
+def cmd_fix(args) -> int:
+    """apply reviewed relationship changes ({add: [...], remove: [...]}) to an existing model, read them back, republish
+    (in-memory) and prove the model against its sources"""
+    changes = json.load(open(args.changes))
+    m = live.sign_in_from_env()
+    spec, rels, info, cat, prof = _audit_inputs(m, args.model_id)
+    summary = {"ok": False, "model_id": args.model_id, "added": 0, "removed": 0, "published": False, "proof": None}
+    current = {(r["parent"], r["child"], r["table"]) for r in rels}
+    add = [r for r in changes.get("add", []) if (r["parent"], r["child"], r["table"]) not in current]
+    remove = [r for r in changes.get("remove", []) if (r["parent"], r["child"], r["table"]) in current]
+    after = [r for r in rels if (r["parent"], r["child"], r["table"]) not in {(x["parent"], x["child"], x["table"]) for x in remove}] + \
+        [{k: r[k] for k in ("parent", "child", "table", "type")} for r in add]
+    plan_after = {**mp.from_spec(spec, cat, prof), "relationships": after}
+    errs = mp.errors(mp.check(plan_after))
+    if any(e["code"].startswith("relationship_") for e in errs):
+        say(f"FATAL: plan check: {next(e['text'] for e in errs if e['code'].startswith('relationship_'))}")
+        print(json.dumps(summary))
+        return 2
+    m.login(identity=True)
+    attrs = {a["information"]["name"]: a["information"]["objectId"] for a in m.get(f"/api/model/dataModels/{args.model_id}/attributes").json().get("attributes", [])}
+    tables = {}
+    for row in m.get(f"/api/model/dataModels/{args.model_id}/tables").json().get("tables", []):
+        tid = row["information"]["objectId"]
+        t = m.get(f"/api/model/dataModels/{args.model_id}/tables/{tid}").json()
+        pt = t.get("physicalTable") or {}
+        pipe = json.loads(pt["pipeline"]) if isinstance(pt.get("pipeline"), str) else (pt.get("pipeline") or {})
+        src = ((pipe.get("rootTable") or {}).get("children") or [{}])[0].get("importSource") or {}
+        tables[src.get("tableName") or row["information"]["name"]] = tid
+    say(f"→ Writing {len(add)} new and removing {len(remove)} relationship(s)…")
+    cs = ma.bm.open_cs(m)
+    try:
+        by_child: dict[str, list[dict]] = {}
+        for r in add:
+            by_child.setdefault(r["child"], []).append({"parent": {"objectId": attrs[r["parent"]], "subType": "attribute"}, "child": {"objectId": attrs[r["child"]], "subType": "attribute"},
+                                                         "relationshipType": r.get("type", "one_to_many"), "relationshipTable": {"objectId": tables[r["table"]], "subType": "logical_table"}})
+        for child, new in by_child.items():
+            ok, _, _, err = ma.bm.put_relationships_merged(m, args.model_id, attrs[child], new, cs)
+            if not ok:
+                raise ma.ApplyError(f"relationships into {child}: {err}", args.model_id)
+            summary["added"] += len(new)
+            say(f"  + {len(new)} into {child}")
+        for r in remove:
+            kept = [x for x in ma.bm.get_attribute_relationships(m, args.model_id, attrs[r["child"]]) or []
+                    if not ((x.get("parent") or {}).get("objectId") == attrs[r["parent"]] and (x.get("child") or {}).get("objectId") == attrs[r["child"]]
+                            and (x.get("relationshipTable") or {}).get("objectId") == tables[r["table"]])]
+            ok, _, _, err = ma.bm.put_relationships_merged(m, args.model_id, attrs[r["child"]], kept, cs, replace=True)
+            if not ok:
+                raise ma.ApplyError(f"removing {r['parent']} → {r['child']}: {err}", args.model_id)
+            summary["removed"] += 1
+            say(f"  − {r['parent']} → {r['child']} on {r['table']}")
+        ma.bm.commit_cs(m, cs)
+        cs = None
+    except (ma.ApplyError, KeyError) as e:
+        if cs:
+            ma.bm.discard_cs(m, cs)
+        say(f"FATAL: {e}")
+        print(json.dumps(summary))
+        return 1
+    _, now, _ = ma.spec_from_model(m, args.model_id)
+    have = {(r["parent"], r["child"], r["table"]) for r in now}
+    missing = [r for r in add if (r["parent"], r["child"], r["table"]) not in have] + [r for r in remove if (r["parent"], r["child"], r["table"]) in have]
+    if missing:
+        say(f"FATAL: read back: {len(missing)} change(s) not in Strategy")
+        print(json.dumps(summary))
+        return 1
+    say("  ✓ Strategy holds exactly the reviewed relationships")
+    if info["serve_mode"] == "in_memory":
+        say("→ Republishing so the changes reach the loaded data…")
+        try:
+            ma.bm._publish(m, args.model_id, poll_seconds=1200, skip_classify=True)
+            summary["published"] = True
+        except SystemExit as e:
+            say(f"FATAL: publish: {e}")
+            print(json.dumps(summary))
+            return 1
+    say("→ Proving: asking the model real questions and comparing the answers with the sources…")
+    plan_after["name"] = info["name"]
+    proof = ma.prove(m, plan_after, sql=_sql(m), breakdowns_per_table=1)
+    bad = [p for p in proof["probes"] if p["ok"] is False]
+    for p in bad[:20]:
+        say(f"PROOF FAILED: {p['name']} — {p['detail']}")
+    summary["proof"] = {"passed": sum(1 for p in proof["probes"] if p["ok"]), "failed": len(bad)}
+    summary["ok"] = not bad
+    say(f"  ✓ proof: {summary['proof']['passed']} checks passed" if not bad else f"  {len(bad)} proof check(s) failed")
+    print(json.dumps(summary))
+    return 0 if not bad else 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -193,8 +317,14 @@ def main() -> int:
     p = sub.add_parser("plan")
     p.add_argument("--spec", required=True)
     p.add_argument("--out", help="write the plan and findings here instead of stdout")
+    a = sub.add_parser("audit")
+    a.add_argument("--model-id", required=True)
+    a.add_argument("--out")
+    f = sub.add_parser("fix")
+    f.add_argument("--model-id", required=True)
+    f.add_argument("--changes", required=True, help="JSON {add: [...], remove: [...]} from audit, as reviewed")
     args = ap.parse_args()
-    return cmd_build(args) if args.cmd == "build" else cmd_plan(args)
+    return {"build": cmd_build, "plan": cmd_plan, "audit": cmd_audit, "fix": cmd_fix}[args.cmd](args)
 
 
 if __name__ == "__main__":

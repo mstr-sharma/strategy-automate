@@ -11,6 +11,7 @@ prove()    asks the model real questions on its SQL surface and compares them wi
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
@@ -322,3 +323,92 @@ def prove(m: bm.MSTR, plan: dict, *, sql, source_sql=live.run_sql, attempts: int
 def delete_model(m: bm.MSTR, model_id: str) -> bool:
     r = m.s.delete(f"{m.base}/api/objects/{model_id}", params={"type": 3})
     return r.ok
+
+
+# ── an existing model, read back into a specification and its relationships (the audit's starting point) ────────────
+def spec_from_model(m: bm.MSTR, model_id: str) -> tuple[dict, list[dict], dict]:
+    """(specification as designed, relationships as they are in Strategy, model info). Query-built tables are listed in
+    info['unsupported'] and left out: the audit covers tables read straight from a source."""
+    info = m.get(f"/api/model/dataModels/{model_id}").json()
+    names, sources, unsupported = {}, [], []
+    cache: dict[str, dict] = {}
+    for row in m.get(f"/api/model/dataModels/{model_id}/tables").json().get("tables", []):
+        tid = row["information"]["objectId"]
+        t = m.get(f"/api/model/dataModels/{model_id}/tables/{tid}").json()
+        pt = t.get("physicalTable") or {}
+        pipe = json.loads(pt["pipeline"]) if isinstance(pt.get("pipeline"), str) else (pt.get("pipeline") or {})
+        src = ((pipe.get("rootTable") or {}).get("children") or [{}])[0].get("importSource") or {}
+        name = row["information"]["name"]
+        names[tid] = name
+        if src.get("type") != "single_table":
+            unsupported.append(name)
+            continue
+        ds = live.datasource(m, src["dataSourceId"], cache)
+        sources.append({"instance_id": ds["id"], "instance": ds["name"], "schema": src["namespace"], "table": src["tableName"], "_logical": name})
+    logical_to_physical = {s["_logical"]: s["table"] for s in sources}
+    attributes = []
+    for a in m.get(f"/api/model/dataModels/{model_id}/attributes").json().get("attributes", []):
+        aid = a["information"]["objectId"]
+        full = m.get(f"/api/model/dataModels/{model_id}/attributes/{aid}", params={"showExpressionAs": "tokens"}).json()
+        forms = []
+        for f in full.get("forms", []):
+            cat = "ID" if f.get("id") == bm.FORM_ID or f.get("category") == "ID" else "DESC"
+            for e in f.get("expressions", []):
+                col = next((tk.get("value") for tk in (e.get("expression") or {}).get("tokens", []) if tk.get("type") == "column_reference"), None)
+                for tb in e.get("tables", []):
+                    tname = logical_to_physical.get(names.get(tb.get("objectId"), tb.get("name")))
+                    if col and tname:
+                        forms.append({"name": f.get("name") or cat, "category": cat, "table": tname, "column": col})
+        lookup = logical_to_physical.get(names.get((full.get("attributeLookupTable") or {}).get("objectId"), ""))
+        if any(f["category"] == "ID" for f in forms):
+            attributes.append({"name": a["information"]["name"], "description": (full.get("information") or {}).get("description", ""),
+                               "lookup_table": lookup, "forms": sorted(forms, key=lambda f: f["category"] != "ID"), "_id": aid})
+    metrics = []
+    for mt in m.get(f"/api/model/dataModels/{model_id}/factMetrics", params={"showExpressionAs": "tokens"}).json().get("factMetrics", []):
+        exprs = (mt.get("fact") or {}).get("expressions") or []
+        if not exprs:
+            continue
+        col = next((tk.get("value") for tk in (exprs[0].get("expression") or {}).get("tokens", []) if tk.get("type") == "column_reference"), None)
+        tname = logical_to_physical.get(names.get(((exprs[0].get("tables") or [{}])[0]).get("objectId"), ""))
+        if col and tname:
+            metrics.append({"name": mt["information"]["name"], "table": tname, "column": col, "function": (mt.get("function") or "sum").lower(), "format": "fixed2"})
+    by_id = {a["_id"]: a["name"] for a in attributes}
+    rels, seen = [], set()
+    for a in attributes:
+        for r in bm.get_attribute_relationships(m, model_id, a["_id"]) or []:
+            p, c = by_id.get((r.get("parent") or {}).get("objectId")), by_id.get((r.get("child") or {}).get("objectId"))
+            t = logical_to_physical.get(names.get((r.get("relationshipTable") or {}).get("objectId"), ""))
+            if p and c and t and (p, c, t) not in seen:
+                seen.add((p, c, t))
+                rels.append({"parent": p, "child": c, "table": t, "type": r.get("relationshipType") or "one_to_many", "source": "model"})
+    spec = {"name": (info.get("information") or {}).get("name", model_id), "serve_mode": info.get("dataServeMode") or "in_memory",
+            "sources": [{k: v for k, v in s.items() if k != "_logical"} for s in sources],
+            "attributes": [{k: v for k, v in a.items() if k != "_id"} for a in attributes], "metrics": metrics,
+            "derived": [], "conditional": [], "relationships": []}
+    return spec, rels, {"unsupported": unsupported, "serve_mode": spec["serve_mode"], "name": spec["name"]}
+
+
+def audit_model(spec: dict, current_rels: list[dict], cat: dict, prof: dict) -> dict:
+    """the model as built against what the plan would build: relationships to add (keys found in the data, the missing
+    ones), relationships to remove (loops, both-way pairs, ends off their table), what each change fixes, and the
+    remaining findings. Pure."""
+    import mosaic_plan as mp
+    suggested = mp.from_spec(spec, cat, prof)
+    current = {**suggested, "relationships": [dict(r) for r in current_rels]}
+    have = {(r["parent"], r["child"]) for r in current_rels}
+    findings_now = mp.check(current)
+    remove = []
+    for f in findings_now:
+        if f["code"] in ("relationship_both_ways", "relationship_cycle", "relationship_end_off_table", "relationship_twice"):
+            for r in current_rels:
+                if r["parent"] in f["text"] and r["child"] in f["text"] and not any((r["parent"], r["child"]) == (s["parent"], s["child"]) and r["table"] == s["table"] for s in suggested["relationships"]):
+                    if r not in remove:
+                        remove.append({**r, "why": f["text"]})
+    add = [{**r, "why": f"{r['child']} is the key of {r['table']}" + (f" (unique in {prof[r['table']]['rows']:,} rows)" if (prof.get(r['table']) or {}).get('measured') else "")}
+           for r in suggested["relationships"] if (r["parent"], r["child"]) not in have and (r["child"], r["parent"]) not in have]
+    after = {**suggested, "relationships": [r for r in current_rels if r not in [{k: v for k, v in x.items() if k != "why"} for x in remove]] + [{k: v for k, v in r.items() if k != "why"} for r in add]}
+    findings_after = mp.check(after)
+    now_codes = {(f["code"], f["text"]) for f in findings_now if f["level"] == "error"}
+    after_codes = {(f["code"], f["text"]) for f in findings_after if f["level"] == "error"}
+    return {"add": add, "remove": remove, "fixed": [t for c, t in sorted(now_codes - after_codes)], "remaining": [t for c, t in sorted(after_codes)],
+            "findings": findings_now, "keys": suggested.get("keys", {}), "after": after}
