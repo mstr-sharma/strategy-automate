@@ -100,6 +100,18 @@ class RepoHygieneTests(unittest.TestCase):
         self.assertEqual(self._hits(EMAIL, lambda m: bool(EMAIL_OK.search(m.group(0)))), [],
                          "use an example.com address")
 
+    def test_no_name_from_the_local_blocklist(self):
+        """the repo cannot list the names it must not contain, so an operator keeps them in a gitignored file:
+        ignore/blocked-names.txt, one name per line (# comments allowed). Skipped where the file is absent (CI)."""
+        path = os.path.join(ROOT, "ignore", "blocked-names.txt")
+        if not os.path.isfile(path):
+            self.skipTest("no local blocklist")
+        names = [n.strip() for n in open(path, encoding="utf-8") if n.strip() and not n.lstrip().startswith("#")]
+        if not names:
+            self.skipTest("empty local blocklist")
+        rx = re.compile(r"(?i)(?<![A-Za-z0-9])(?:" + "|".join(re.escape(n) for n in names) + r")(?![A-Za-z0-9])")
+        self.assertEqual(self._hits(rx), [], "a real company or person name is tracked: use the stand-in vocabulary")
+
     def test_no_real_tenant_host_names(self):
         self.assertEqual(self._hits(TENANT_HOST, lambda m: m.group(0).lower() in TENANT_HOST_OK), [],
                          "use <tenant>.strategy.com for tenant hosts")

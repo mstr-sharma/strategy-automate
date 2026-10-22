@@ -390,7 +390,7 @@ def find(m, query: str, scopes: list[dict[str, Any]] | None = None, *, reference
                 continue
         if not schemas:
             try:
-                schemas = _bounded(lambda: matrix.list_schemas(m, info["id"]), max(1.0, source_deadline - time.monotonic()))
+                schemas = _bounded(lambda info=info: matrix.list_schemas(m, info["id"]), max(1.0, source_deadline - time.monotonic()))
             except Exception as e:  # noqa: BLE001 - a source that does not answer is said and skipped
                 log(f"  · {info['name']}: not readable ({str(e)[:80] or 'no answer in time'}), left out")
                 unreadable.append(info["name"])
@@ -421,7 +421,7 @@ def find(m, query: str, scopes: list[dict[str, Any]] | None = None, *, reference
             break
         try:
             tables, how = (pre[(info["id"], schema)], "catalog views") if (info["id"], schema) in pre else \
-                _bounded(lambda: schema_tables(m, live, matrix, info, schema, time.monotonic() + per_source), per_source + 5)
+                _bounded(lambda info=info, schema=schema: schema_tables(m, live, matrix, info, schema, time.monotonic() + per_source), per_source + 5)
         except Exception as e:  # noqa: BLE001 - one schema that cannot be read never ends the search
             log(f"  {info['name']}/{schema}: not readable ({str(e)[:80]})")
             continue

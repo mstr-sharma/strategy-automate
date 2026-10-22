@@ -5,7 +5,6 @@ import _hermetic  # noqa: E402,F401  (scrub MSTR_*/proxy env, private secret sto
 
 # The model recommender's pure steps (infer, recommend) on an invented catalog: a Snowflake retail dataset with declared
 # keys, an unrelated Snowflake dataset that reuses CUSTOMER_ID, and a Postgres table that really belongs to the first.
-import copy  # noqa: E402
 import os  # noqa: E402
 import sys  # noqa: E402
 import unittest  # noqa: E402

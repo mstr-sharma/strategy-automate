@@ -67,6 +67,14 @@ class ReadOnlyCatalogTests(unittest.TestCase):
         for name, sql in self.statements():
             self.assertNotRegex(sql, r"(?i)UNION(\s+ALL)?\s+SELECT", name)
 
+    def test_a_name_a_quote_cannot_contain_safely_never_reaches_sql(self):
+        for name in TYPES:
+            for evil in ("x\\' OR 1=1 --", "a`b", "tab\there"):
+                self.assertEqual(d.catalog_queries(name, evil), [], name)
+                self.assertIsNone(d.row_counts_sql(name, evil))
+                self.assertEqual(d.keys_sqls(name, evil), [])
+                self.assertIsNone(d.column_stats_sql(name, evil))
+
     def test_a_schema_name_is_a_literal_never_injected(self):
         for name, f in TYPES.items():
             for kind, sql in d.catalog_queries(name, "O'BRIEN") if f and f != "bigquery" else []:

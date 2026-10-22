@@ -55,6 +55,13 @@ def lit(s: str) -> str:
     return "'" + str(s).replace("'", "''") + "'"
 
 
+def safe_name(name: str | None) -> bool:
+    """a schema or dataset name the catalog SQL may carry: no backslash (an escape character in MySQL, Snowflake,
+    Databricks, ClickHouse and BigQuery strings), no control characters, no backtick. Anything else is read through
+    Strategy's catalog API instead, never pasted into SQL."""
+    return name is None or (bool(name) and not re.search(r"[\\`\x00-\x1f]", name) and len(name) <= 256)
+
+
 SKIP = "('INFORMATION_SCHEMA','information_schema','pg_catalog','sys','mysql','performance_schema','SYS','SYSTEM','system','INFORMATION_SCHEMA_ACCESS')"
 
 
@@ -65,6 +72,8 @@ def catalog_queries(dbms: str, schema: str | None) -> list[tuple[str, str]]:
     f = flavor(dbms)
     one = schema is not None
     q: list[tuple[str, str]] = []
+    if not safe_name(schema):
+        return []
     if f == "snowflake":
         w = f" AND c.TABLE_SCHEMA={lit(schema)}" if one else ""
         q.append(("tables", "SELECT c.TABLE_SCHEMA AS s, c.TABLE_NAME AS t, MAX(tb.ROW_COUNT) AS n, MAX(tb.COMMENT) AS tc, "
@@ -222,6 +231,8 @@ def paged(dbms: str, sql: str, page: int, size: int = PAGE) -> str:
 
 def row_counts_sql(dbms: str, schema: str) -> str | None:
     """t, n: the row counts the database keeps for a schema's tables (no table is counted)"""
+    if not safe_name(schema):
+        return None
     f, s = flavor(dbms), lit(schema)
     return {
         "snowflake": f"SELECT TABLE_NAME AS t, ROW_COUNT AS n FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA={s} AND TABLE_TYPE='BASE TABLE'",
@@ -250,7 +261,7 @@ def keys_sqls(dbms: str, schema: str) -> list[str]:
     n, one row per key column (Snowflake keeps its keys in each table's DDL: see mosaic_discover._declared_keys). Where
     primary and foreign keys live in different views they are separate statements: Strategy's gateway refuses a UNION
     over system views, parenthesized or not."""
-    sql = _keys_sql(dbms, schema)
+    sql = _keys_sql(dbms, schema) if safe_name(schema) else None
     return [] if not sql else sql if isinstance(sql, list) else [sql]
 
 
@@ -319,6 +330,8 @@ def column_stats_sql(dbms: str, schema: str) -> str | None:
     """t, c, rows_n, ndv, nulls (and, for PostgreSQL, the most common values and histogram bounds as text): the
     statistics the database keeps for its query planner, read from its catalog. ndv below 0 is PostgreSQL's
     fraction of rows (-1 = every row distinct)."""
+    if not safe_name(schema):
+        return None
     f, s = flavor(dbms), lit(schema)
     if f == "postgres":
         return ("SELECT st.tablename AS t, st.attname AS c, NULLIF(cl.reltuples, -1)::bigint AS rows_n, st.n_distinct AS ndv, st.null_frac AS nulls, "

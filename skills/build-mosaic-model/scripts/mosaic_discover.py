@@ -63,10 +63,13 @@ def _declared_keys(m, live, info: dict, schema: str, tables: set[str]) -> tuple[
                 elif r.get("pt") in tables and r.get("pc"):
                     fks.append({"child": r["t"], "child_cols": [r["c"]], "parent": r["pt"], "parent_cols": [r["pc"]], "name": r.get("n") or ""})
         elif "snowflake" in d:
+            if not (dialects.safe_name(schema) and all(dialects.safe_name(t) for t in tables)):
+                return pks, fks                         # a name that cannot be quoted safely is never pasted into SQL
             have = {r["t"] for r in live.run_sql(m, info["id"], "SELECT DISTINCT TABLE_NAME AS t FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS "
-                                                 f"WHERE TABLE_SCHEMA='{schema}' AND CONSTRAINT_TYPE IN ('PRIMARY KEY','FOREIGN KEY')")}
+                                                 f"WHERE TABLE_SCHEMA={dialects.lit(schema)} AND CONSTRAINT_TYPE IN ('PRIMARY KEY','FOREIGN KEY')")}
             for t in sorted(have & tables):
-                ddl = live.run_sql(m, info["id"], f"SELECT GET_DDL('TABLE', '{schema}.{t}') AS d")[0]["d"] or ""
+                ref = live.quote(info["dbms"], schema) + "." + live.quote(info["dbms"], t)
+                ddl = live.run_sql(m, info["id"], f"SELECT GET_DDL('TABLE', {dialects.lit(ref)}) AS d")[0]["d"] or ""
                 for kind, cols, ref, refcols in re.findall(r"(?i)(primary key|foreign key)\s*\(([^)]*)\)(?:\s*references\s+([\w.\"]+)\s*\(([^)]*)\))?", ddl):
                     cols_l = [c.strip().strip('"') for c in cols.split(",")]
                     if kind.lower() == "primary key":
@@ -164,7 +167,7 @@ def confirm(m, graph: dict, options: dict | None = None, budget: int = 40, log=l
         hc, oc = l["columns"]
         try:
             vals = [r["v"] for r in live.run_sql(m, other["datasource_id"], f"SELECT DISTINCT {live.quote(other['dbms'], oc)} AS v FROM {live.table_ref(other)} "
-                                                 f"WHERE {live.quote(other['dbms'], oc)} IS NOT NULL LIMIT 100") if r.get("v") not in (None, "")]
+                                                 f"WHERE {live.quote(other['dbms'], oc)} IS NOT NULL LIMIT 100") if r.get("v") not in (None, "") and "\\" not in str(r["v"])]  # a backslash escapes quotes in some databases
             if not vals:
                 log(f"  {l['entity']}: {other['table']} → {home['table']}: no values to compare")
                 continue
