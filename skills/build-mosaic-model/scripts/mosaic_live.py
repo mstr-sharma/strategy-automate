@@ -70,6 +70,10 @@ def load_json(path: str, what: str):
 
 # ── SQL through a datasource ─────────────────────────────────────────────────────────────────────────────────────────
 def quote(dbms: str, ident: str) -> str:
+    # Delimiter doubling alone is unsafe when a database also honors backslash
+    # escapes. Refuse ambiguous names rather than depending on connection modes.
+    if not isinstance(ident, str) or not ident or re.search(r"[\\\x00-\x1f\x7f]", ident):
+        raise ValueError("SQL identifiers must be nonempty and contain no backslashes or control characters")
     d = (dbms or "").lower()
     if any(k in d for k in ("bigquery", "google", "mysql", "mariadb", "databricks", "spark", "hive", "starrocks")):
         return "`" + ident.replace("`", "``") + "`"
@@ -134,7 +138,7 @@ def profile(m: bm.MSTR, cat: dict[str, Any], columns: dict[str, list[str]],
         for i, c in enumerate(want):
             parts += [f"COUNT(DISTINCT {q(c)}) AS d{i}", f"COUNT({q(c)}) AS v{i}"]
         try:
-            row = sql(m, t["datasource_id"], f"SELECT {', '.join(parts)} FROM {table_ref(t)}")[0]
+            row = sql(m, t["datasource_id"], f"SELECT {', '.join(parts)} FROM {table_ref(t)}")[0]  # nosec B608  # identifiers go through quote/table_ref; only fixed COUNT projections
             n = int(row["n_rows"])
             out[t["table"]] = {"measured": True, "rows": n,
                                "distinct": {c: int(row[f"d{i}"]) for i, c in enumerate(want)},

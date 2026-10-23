@@ -164,3 +164,27 @@ class CommandLineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IndependentSqlBoundaryTests(unittest.TestCase):
+    def test_identifier_escaping_never_depends_on_warehouse_backslash_modes(self):
+        import mosaic_live as live
+        for dbms in ('MySQL', 'Snowflake', 'Google BigQuery', 'Databricks', 'PostgreSQL', 'Microsoft SQL Server'):
+            for value in ('', 'name\\', 'name\x00', 'name\n', 'name\x7f'):
+                with self.subTest(dbms=dbms, value=repr(value)):
+                    with self.assertRaises(ValueError):
+                        live.quote(dbms, value)
+            quote = live.quote(dbms, 'name`"with delimiters')
+            self.assertIn('name', quote)
+            self.assertEqual(live.table_ref({'dbms': dbms, 'schema': 's', 'table': 't'}), live.quote(dbms, 's') + '.' + live.quote(dbms, 't'))
+
+    def test_literals_refuse_ambiguous_escape_modes(self):
+        for value in ('x\\\' OR 1=1 --', 'x\x00', 'x\n'):
+            with self.assertRaises(ValueError):
+                d.lit(value)
+        self.assertEqual(d.lit("O'BRIEN"), "'O''BRIEN'")
+
+    def test_paging_numbers_cannot_be_sql_fragments(self):
+        for page, size in (('0; DROP TABLE t', 1000), (0, '1000 UNION SELECT'), (-1, 10), (0, 1001), (True, 10)):
+            with self.assertRaises(ValueError):
+                d.paged('Snowflake', 'SELECT s, t FROM information_schema.tables ORDER BY 1, 2', page, size)

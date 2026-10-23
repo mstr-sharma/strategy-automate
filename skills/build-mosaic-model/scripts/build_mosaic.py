@@ -1647,6 +1647,11 @@ def _list_all(m: MSTR, path: str, key: str, *, page_size: int = _PAGE_SIZE,
     offset = 0
     for _ in range(500):
         r = m.get(path, params={**(params or {}), "limit": page_size, "offset": offset})
+        for wait in (3, 10, 30):                        # seen live: a model's table list answered 500 once, right after a publish
+            if r.ok or r.status_code < 500:
+                break
+            time.sleep(wait)
+            r = m.get(path, params={**(params or {}), "limit": page_size, "offset": offset})
         if not r.ok:
             return items, r
         body = _json_or(r, {})

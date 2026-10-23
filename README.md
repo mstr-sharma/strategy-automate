@@ -241,10 +241,12 @@ Security posture for humans: no hardcoded credentials, tenant IDs, real company 
 
 ## Testing and CI
 
+The source-SQL helpers reject identifiers/literals whose backslashes or control characters depend on a warehouse's escape mode, and catalog paging accepts a nonnegative integer page and a bounded integer page size. Generated-SQL sites carry individually reviewed B608 annotations; the Bandit rule stays enabled globally and the escaping boundaries have adversarial tests.
+
 The suite is offline and hermetic: no tenant, no network beyond loopback, no Keychain.
 
 ```bash
-python3 -m unittest discover -s tests          # the whole suite (432 tests, ~15 s)
+python3 -m unittest discover -s tests          # the whole suite (529 tests, about 15 s)
 python3 tests/tools/check.py                   # the CI gates: tests, ruff, mypy, bandit, coverage
 python3 tests/tools/check.py --online deps     # OSV audit of every package in uv.lock
 python3 tests/live/smoke.py --project "<p>"    # read-only checks against YOUR tenant (signs in with auto)

@@ -12,6 +12,7 @@ prove()    asks the model real questions on its SQL surface and compares them wi
 from __future__ import annotations
 
 import json
+import re
 import os
 import sys
 import time
@@ -207,7 +208,9 @@ def publish(m: bm.MSTR, model_id: str, rows: int) -> None:
     try:
         bm._publish(m, model_id, poll_seconds=wait, skip_classify=True)
     except SystemExit as e:
-        raise ApplyError(f"publish did not complete within {wait} s: {e}", model_id) from None
+        # the reason as Strategy gave it: a timeout says so itself; a refused request is not a timeout
+        why = str(e)
+        raise ApplyError(why if re.search(r"(?i)timed? ?out|did not (finish|complete)|within \d+", why) else f"publish failed: {why}", model_id) from None
 
 
 # ── prove ────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -263,7 +266,7 @@ def prove(m: bm.MSTR, plan: dict, *, sql, source_sql=live.run_sql, attempts: int
         agg = "SUM" if mt["function"] in ("sum", "count") else mt["function"].upper()
         t = tables[mt["table"]]
         try:
-            total_model = _num(sql(f"SELECT {agg}({q(mcol)}) AS v FROM {model}")[0]["v"])
+            total_model = _num(sql(f"SELECT {agg}({q(mcol)}) AS v FROM {model}")[0]["v"])  # nosec B608  # identifiers are quoted; aggregate names come from the fixed allowed set
         except (SystemExit, Exception) as e:  # noqa: BLE001
             probes.append({"name": f"{mt['name']} total", "ok": False, "detail": str(e)[:300]})
             continue
@@ -271,7 +274,7 @@ def prove(m: bm.MSTR, plan: dict, *, sql, source_sql=live.run_sql, attempts: int
             src_fn = {"sum": "SUM", "count": "COUNT", "avg": "AVG", "min": "MIN", "max": "MAX"}[mt["function"]]
             # "* 1.0" keeps an average of whole numbers from being rounded by stores that average integers as integers
             src_arg = live.quote(t["dbms"], mt["column"]) + (" * 1.0" if src_fn == "AVG" else "")
-            src = source_sql(m, t["datasource_id"], f"SELECT {src_fn}({src_arg}) AS v FROM {live.table_ref(t)}")
+            src = source_sql(m, t["datasource_id"], f"SELECT {src_fn}({src_arg}) AS v FROM {live.table_ref(t)}")  # nosec B608  # identifiers are quoted; aggregate names come from the fixed allowed set
             total_src = _num(src[0]["v"])
         except RuntimeError as e:
             total_src = None
@@ -290,7 +293,7 @@ def prove(m: bm.MSTR, plan: dict, *, sql, source_sql=live.run_sql, attempts: int
                 probes.append({"name": f"{a['name']} is on the SQL surface", "ok": False, "detail": "no column"})
                 continue
             try:
-                rows = sql(f"SELECT {q(acol)} AS k, {agg}({q(mcol)}) AS v FROM {model} GROUP BY 1")
+                rows = sql(f"SELECT {q(acol)} AS k, {agg}({q(mcol)}) AS v FROM {model} GROUP BY 1")  # nosec B608  # identifiers are quoted; aggregate names come from the fixed allowed set
             except (SystemExit, Exception) as e:  # noqa: BLE001 - recorded as this probe's failure
                 probes.append({"name": f"{mt['name']} by {a['name']}", "ok": False, "detail": str(e)[:300]})
                 continue
@@ -313,7 +316,7 @@ def prove(m: bm.MSTR, plan: dict, *, sql, source_sql=live.run_sql, attempts: int
                     # a one-row fingerprint of the source's grouping (how many groups, and the sum of each group's total
                     # squared): the source SQL call returns at most 1,000 rows, so the groups themselves are not fetched
                     qc, qv = live.quote(t["dbms"], col), live.quote(t["dbms"], mt["column"]) + (" * 1.0" if src_fn == "AVG" else "")
-                    fp = source_sql(m, t["datasource_id"], f"SELECT COUNT(*) AS g, SUM(s * s) AS sq FROM (SELECT {qc} AS k, {src_fn}({qv}) AS s "
+                    fp = source_sql(m, t["datasource_id"], f"SELECT COUNT(*) AS g, SUM(s * s) AS sq FROM (SELECT {qc} AS k, {src_fn}({qv}) AS s "  # nosec B608  # identifiers are quoted; aggregate names come from the fixed allowed set
                                                          f"FROM {live.table_ref(t)} GROUP BY {qc}) x")[0]
                     want_g, want_sq = int(float(fp["g"])), _num(fp["sq"]) or 0.0
                     got_sq = sum(v * v for v in vals)

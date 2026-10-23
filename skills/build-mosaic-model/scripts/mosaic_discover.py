@@ -65,7 +65,7 @@ def _declared_keys(m, live, info: dict, schema: str, tables: set[str]) -> tuple[
         elif "snowflake" in d:
             if not (dialects.safe_name(schema) and all(dialects.safe_name(t) for t in tables)):
                 return pks, fks                         # a name that cannot be quoted safely is never pasted into SQL
-            have = {r["t"] for r in live.run_sql(m, info["id"], "SELECT DISTINCT TABLE_NAME AS t FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS "
+            have = {r["t"] for r in live.run_sql(m, info["id"], "SELECT DISTINCT TABLE_NAME AS t FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS "  # nosec B608  # identifiers are quoted; literals reject backslashes and double single quotes
                                                  f"WHERE TABLE_SCHEMA={dialects.lit(schema)} AND CONSTRAINT_TYPE IN ('PRIMARY KEY','FOREIGN KEY')")}
             for t in sorted(have & tables):
                 ref = live.quote(info["dbms"], schema) + "." + live.quote(info["dbms"], t)
@@ -166,13 +166,13 @@ def confirm(m, graph: dict, options: dict | None = None, budget: int = 40, log=l
         home, other = graph["tables"][l["from"]], graph["tables"][l["to"]]
         hc, oc = l["columns"]
         try:
-            vals = [r["v"] for r in live.run_sql(m, other["datasource_id"], f"SELECT DISTINCT {live.quote(other['dbms'], oc)} AS v FROM {live.table_ref(other)} "
+            vals = [r["v"] for r in live.run_sql(m, other["datasource_id"], f"SELECT DISTINCT {live.quote(other['dbms'], oc)} AS v FROM {live.table_ref(other)} "  # nosec B608  # identifiers are quoted; literals reject backslashes and double single quotes
                                                  f"WHERE {live.quote(other['dbms'], oc)} IS NOT NULL LIMIT 100") if r.get("v") not in (None, "") and "\\" not in str(r["v"])]  # a backslash escapes quotes in some databases
             if not vals:
                 log(f"  {l['entity']}: {other['table']} → {home['table']}: no values to compare")
                 continue
             listed = ", ".join("'" + str(v).replace("'", "''") + "'" for v in vals)
-            found = live.run_sql(m, home["datasource_id"], f"SELECT COUNT(DISTINCT {live.quote(home['dbms'], hc)}) AS n FROM {live.table_ref(home)} "
+            found = live.run_sql(m, home["datasource_id"], f"SELECT COUNT(DISTINCT {live.quote(home['dbms'], hc)}) AS n FROM {live.table_ref(home)} "  # nosec B608  # identifiers are quoted; literals reject backslashes and double single quotes
                                                        f"WHERE CAST({live.quote(home['dbms'], hc)} AS VARCHAR(400)) IN ({listed})")[0]["n"]
             measured[f"{l['from']}|{l['to']}"] = round(int(float(found)) / len(vals), 2)
             log(f"  {l['entity']}: {other['table']} → {home['table']}: {int(float(found))}/{len(vals)} values found")
