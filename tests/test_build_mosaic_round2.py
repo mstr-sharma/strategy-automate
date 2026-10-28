@@ -550,6 +550,45 @@ class PublishTests(unittest.TestCase):
             bm._mosaic_publish_verified(m, "M", poll_seconds=600, poll_interval=0.01)
         self.assertEqual(state["probes"], 2)
 
+    def test_tables_said_completed_do_not_finish_a_first_publish_until_the_model_answers(self):
+        # observed live (a cross-store model): every table said completed within seconds; the model loaded for minutes
+        state = {"probes": 0}
+
+        def probe(call):
+            state["probes"] += 1
+            if state["probes"] < 4:
+                return Resp(500, {"iServerCode": -2147072488, "message": "Intelligent Cube is not published"})
+            return Resp(200, {"result": {"data": {}}})
+        routes = publish_routes(Resp(200, {"status": 1, "tables": [{"status": "completed"}]}))
+        routes[("POST", r"/api/v2/cubes/M/instances")] = probe
+        m = make_m(routes)
+        with mock.patch.object(bm.time, "time", side_effect=[i * 20.0 for i in range(1000)]), \
+             mock.patch.object(bm.time, "sleep"), quiet():
+            bm._mosaic_publish_verified(m, "M", poll_seconds=600, poll_interval=0.01)
+        self.assertEqual(state["probes"], 4)
+        self.assertEqual(len(calls(m, "DELETE")), 1)
+
+    def test_tables_completed_but_a_silent_model_is_published_once_more(self):
+        # observed live: tables said completed, the model never loaded; a second publish loaded it in seconds
+        state = {"probes": 0, "publishes": 0}
+
+        def probe(call):
+            state["probes"] += 1
+            return Resp(200, {"result": {}}) if state["publishes"] >= 2 else \
+                Resp(500, {"iServerCode": -2147072488, "message": "Intelligent Cube is not published"})
+
+        def publish(call):
+            state["publishes"] += 1
+            return Resp(204)
+        routes = publish_routes(Resp(200, {"status": 1, "tables": [{"status": "completed"}]}))
+        routes[("POST", r"/api/v2/cubes/M/instances")] = probe
+        routes[("POST", r"/api/dataModels/M/publish")] = publish
+        m = make_m(routes)
+        with mock.patch.object(bm.time, "time", side_effect=[i * 20.0 for i in range(2000)]), \
+             mock.patch.object(bm.time, "sleep"), quiet():
+            bm._mosaic_publish_verified(m, "M", poll_seconds=1200, poll_interval=0.01)
+        self.assertEqual(state["publishes"], 2)
+
     def test_a_model_that_already_answers_still_waits_for_its_tables(self):
         routes = publish_routes(Resp(200, {"status": 1, "tables": [{"status": "completed"}]}))
         routes[("POST", r"/api/v2/cubes/M/instances")] = Resp(200, {"result": {}})

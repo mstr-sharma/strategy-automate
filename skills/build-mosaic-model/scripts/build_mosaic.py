@@ -3491,6 +3491,9 @@ def classify_object_surface(m: MSTR, object_id: str) -> dict:
 REFRESH_POLICIES = ("replace", "add", "update", "upsert")
 
 
+LOADED_BUT_SILENT_S = 180     # tables said completed, the model still refuses queries: publish once more after this
+
+
 def _mosaic_publish_verified(m: MSTR, model_id: str, *, poll_seconds: int = 180,
                              poll_interval: float = 5.0, refresh_policy: str = "replace") -> None:
     """Publish a Mosaic data model via the verified 3-step flow and assert completion.
@@ -3551,7 +3554,29 @@ def _mosaic_publish_verified(m: MSTR, model_id: str, *, poll_seconds: int = 180,
         deadline = time.time() + poll_seconds
         last = None
         next_probe = time.time() + 15
+        tables_loaded = False
+        loaded_at = 0.0
+        retriggered = False
         while time.time() < deadline:
+            if probe_decides and tables_loaded and not retriggered and time.time() - loaded_at >= LOADED_BUT_SILENT_S:
+                # seen live (2026-10-28): every table said completed, the model never loaded (size 0) and kept refusing
+                # queries; a second publish on a fresh instance loaded it in seconds. The first instance is idle by now.
+                retriggered = True
+                try:
+                    m.delete(f"/api/dataModels/{model_id}/instances/{inst}")
+                except Exception:
+                    pass
+                r1 = m.post(f"/api/dataModels/{model_id}/instances")
+                inst = r1.headers.get("X-MSTR-DataModelInstanceId") or r1.headers.get("X-Mstr-Datamodelinstanceid") or inst
+                hdr = {"X-MSTR-DataModelInstanceId": inst}
+                r2 = m.post(f"/api/dataModels/{model_id}/publish", headers=hdr,
+                            json={"tables": [{"id": tid, "refreshPolicy": refresh_policy} for tid in tids]})
+                if r2.status_code not in (200, 202, 204):
+                    die(f"_mosaic_publish_verified: second publish POST {r2.status_code} {r2.text[:300]}")
+                print(f"  ↳ the tables said loaded {LOADED_BUT_SILENT_S}s ago but the model does not answer; publishing again "
+                      f"(instanceId={inst})", file=sys.stderr)
+                tables_loaded = False
+                next_probe = time.time() + 15
             if probe_decides and time.time() >= next_probe:
                 next_probe = time.time() + 15
                 if _executes(m, model_id):
@@ -3574,8 +3599,15 @@ def _mosaic_publish_verified(m: MSTR, model_id: str, *, poll_seconds: int = 180,
             if failed_tables:
                 die(f"_mosaic_publish_verified: table(s) failed to load: {json.dumps(failed_tables)[:400]}")
             if tbl and all(str(t.get("status") or "").lower() in ("loaded", "completed") for t in tbl):
-                print(f"  ✓ mosaic publish COMPLETE: {len(tbl)} tables loaded.", file=sys.stderr)
-                return
+                if not probe_decides:
+                    print(f"  ✓ mosaic publish COMPLETE: {len(tbl)} tables loaded.", file=sys.stderr)
+                    return
+                # seen live (2026-10-28, a cross-store model): every table said completed within seconds while the model
+                # went on loading for minutes and did not answer; a first publish is complete only when the model answers
+                if not tables_loaded:
+                    tables_loaded, loaded_at = True, time.time()
+                    next_probe = time.time()
+                    print(f"  ↳ {len(tbl)} tables loaded; waiting for the model to answer queries…", file=sys.stderr)
             time.sleep(poll_interval)
         keep_instance = True
         die(f"_mosaic_publish_verified: timeout after {poll_seconds}s; last status: "
