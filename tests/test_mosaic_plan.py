@@ -149,7 +149,7 @@ class SpecFromTablesTests(unittest.TestCase):
                                      PERF: "Shipment", INV: "Invoice"})
         shipment = next(a for a in spec["attributes"] if a["name"] == "Shipment")
         self.assertEqual(len(shipment["forms"]), 3)                     # SHIPMENT_ID and both shipment_id, one attribute
-        self.assertTrue(all(m["function"] == "sum" for m in spec["metrics"]))
+        self.assertTrue(all(m["function"] == ("avg" if m["column"] == "LIST_PRICE" else "sum") for m in spec["metrics"]))
 
     def test_a_bare_id_is_never_shared_and_names_never_collide(self):
         cat = {"tables": [{"datasource_id": "D", "datasource": "S", "dbms": "PostgreSQL", "schema": "s", "table": t,

@@ -429,3 +429,313 @@ class StructuralEvidenceTests(unittest.TestCase):
         rec = next(r for r in recs if any(t.endswith("ORDERS") for t in r["tables"]))
         self.assertEqual(sum(rec["joins"].values()), rec["joins"]["declared"] + rec["joins"]["data"] + rec["joins"]["statistics"] + rec["joins"]["name"])
         self.assertGreaterEqual(rec["joins"]["declared"], 1)
+
+
+class MetadataOnlyRecommendationTests(unittest.TestCase):
+    """Adversarial metadata, no source-table queries: preserve recall without inventing join/rollup guarantees."""
+
+    def graph(self, *tables, **extra):
+        return {"tables": {md.tkey(t): t for t in tables}, "fks": [], **extra}
+
+    def dim(self, ds="A", schema="s", name="DIM_CUSTOMER"):
+        return table(ds, "PostgreSQL", schema, name, [("CUSTOMER_ID", N), ("CUSTOMER_NAME", T)], ["CUSTOMER_ID"])
+
+    def fact(self, ds="A", schema="s", name="FACT_ORDERS"):
+        return table(ds, "PostgreSQL", schema, name, [("ORDER_ID", N), ("CUSTOMER_ID", N), ("AMOUNT", N)], ["ORDER_ID"], 1000)
+
+    def test_catalog_rows_form_one_ordered_composite_fk_with_parent_schema(self):
+        from types import SimpleNamespace
+        rows = [{"t": "FACT_LINES", "c": "ITEM_ID", "k": "FOREIGN KEY", "pt": "DIM_ITEMS", "pc": "ITEM_ID", "ps": "lookup", "n": "item_fk", "o": 2},
+                {"t": "FACT_LINES", "c": "TENANT_ID", "k": "FOREIGN KEY", "pt": "DIM_ITEMS", "pc": "TENANT_ID", "ps": "lookup", "n": "item_fk", "o": 1}]
+        _, fks = md._declared_keys(None, SimpleNamespace(run_sql=lambda *args: rows), {"id": "A", "dbms": "PostgreSQL"}, "sales", {"FACT_LINES"})
+        self.assertEqual(len(fks), 1)
+        self.assertEqual(fks[0]["child_cols"], ["TENANT_ID", "ITEM_ID"])
+        self.assertEqual(fks[0]["parent_cols"], ["TENANT_ID", "ITEM_ID"])
+        self.assertEqual(fks[0]["parent_schema"], "lookup")
+
+    def test_ambiguous_catalog_cross_product_is_not_independent_single_keys(self):
+        from types import SimpleNamespace
+        rows = [{"t": "F", "c": c, "k": "FOREIGN KEY", "pt": "D", "pc": pc, "n": "compound"}
+                for c in ("TENANT_ID", "ITEM_ID") for pc in ("TENANT_ID", "ITEM_ID")]
+        _, fks = md._declared_keys(None, SimpleNamespace(run_sql=lambda *args: rows), {"id": "A", "dbms": "PostgreSQL"}, "s", {"F", "D"})
+        self.assertEqual(len(fks), 1)
+        self.assertTrue(fks[0]["ambiguous_columns"])
+
+    def test_composite_join_remains_visible_without_unsafe_component_conformance(self):
+        dim = table("A", "PostgreSQL", "s", "DIM_ITEM", [("TENANT_ID", N), ("ITEM_ID", N), ("NAME", T)], ["TENANT_ID", "ITEM_ID"])
+        fact = table("A", "PostgreSQL", "s", "FACT_LINES", [("LINE_ID", N), ("TENANT_ID", N), ("ITEM_ID", N), ("AMOUNT", N)], ["LINE_ID"])
+        g = self.graph(dim, fact, fks=[{"parent": md.tkey(dim), "child": md.tkey(fact), "parent_cols": ["TENANT_ID", "ITEM_ID"], "child_cols": ["TENANT_ID", "ITEM_ID"]}])
+        inf = md.infer(g)
+        self.assertEqual(len(inf["links"]), 1)
+        self.assertEqual(inf["links"][0]["column_pairs"], [["TENANT_ID", "TENANT_ID"], ["ITEM_ID", "ITEM_ID"]])
+        rec = md.recommend(inf)[0]
+        self.assertEqual(set(rec["tables"]), {"DIM_ITEM", "FACT_LINES"})
+        self.assertFalse(rec["checked"])
+        self.assertTrue(any("composite" in p for p in rec["problems"]))
+        self.assertFalse(any(len({f["table"] for f in a["forms"] if f["category"] == "ID"}) > 1 for a in rec["spec"]["attributes"]))
+
+    def test_partial_composite_parent_key_never_becomes_unique_from_its_name(self):
+        dim = self.dim()
+        dim["columns"].append({"name": "REGION_ID", "dataType": N})
+        dim["pk"] = ["CUSTOMER_ID", "REGION_ID"]
+        inf = md.infer(self.graph(dim, self.fact()))
+        self.assertTrue(all(l["confidence"] < 0.5 for l in inf["links"]))
+
+    def test_two_foreign_key_roles_are_retained_and_require_aliases(self):
+        dim = table("A", "PostgreSQL", "s", "DIM_DATE", [("DATE_ID", N), ("CALENDAR_DATE", D)], ["DATE_ID"])
+        fact = table("A", "PostgreSQL", "s", "FACT_ORDERS", [("ORDER_ID", N), ("ORDER_DATE_ID", N), ("SHIP_DATE_ID", N), ("AMOUNT", N)], ["ORDER_ID"])
+        fks = [{"parent": md.tkey(dim), "child": md.tkey(fact), "parent_cols": ["DATE_ID"], "child_cols": [c]} for c in ("ORDER_DATE_ID", "SHIP_DATE_ID")]
+        inf = md.infer(self.graph(dim, fact, fks=fks))
+        self.assertEqual({tuple(l["columns"]) for l in inf["links"] if l.get("role_playing")}, {("DATE_ID", "ORDER_DATE_ID"), ("DATE_ID", "SHIP_DATE_ID")})
+        rec = md.recommend(inf)[0]
+        self.assertFalse(rec["checked"])
+        self.assertTrue(any("aliases" in p for p in rec["problems"]))
+        self.assertTrue({"Order Date", "Ship Date"} <= {a["name"] for a in rec["spec"]["attributes"]})
+
+    def test_related_or_partitioned_tables_are_not_treated_as_copies(self):
+        base = self.fact()
+        siblings = [dict(base, table=n) for n in ("FACT_ORDERS_RETURNS", "FACT_ORDERS_2026", "FACT_ORDERS2", "FACT_ORDERS_NEW")]
+        g = self.graph(base, *siblings)
+        self.assertEqual(md.view_copies(g["tables"]), set())
+
+    def test_explicit_selected_view_is_not_dropped(self):
+        dim, fact = self.dim(), self.fact()
+        view = dict(fact, table="FACT_ORDERS_V")
+        g = self.graph(dim, fact, view, selected_tables=[md.tkey(view)])
+        inf = md.infer(g)
+        self.assertIn(md.tkey(view), inf["tables"])
+        self.assertTrue(any("FACT_ORDERS_V" in r["tables"] for r in md.recommend(inf)))
+
+    def test_strict_draft_does_not_recreate_rejected_name_join(self):
+        dim, fact = self.dim(), self.fact()
+        for t in (dim, fact):
+            t["columns"].append({"name": "REGION_ID", "dataType": N})
+        spec = mp.spec_from_tables({"tables": [dim, fact]}, entities=[{"name": "Region", "home": dim["table"],
+                                  "members": [(dim["table"], "REGION_ID"), (fact["table"], "REGION_ID")]}], strict_entities=True)
+        customer = [a for a in spec["attributes"] if any(f["column"] == "CUSTOMER_ID" for f in a["forms"])]
+        self.assertEqual(len(customer), 2)
+        self.assertTrue(all(len({f["table"] for f in a["forms"]}) == 1 for a in customer))
+
+    def test_one_unambiguous_named_dimension_proposes_metadata_cross_store_model(self):
+        g = self.graph(self.dim("A"), self.fact("B"))
+        inf = md.infer(g)
+        self.assertTrue(any("metadata_conformance" in l["evidence"] for l in inf["links"]))
+        rec = md.recommend(inf, {"cross_store": "prefer"})[0]
+        self.assertTrue(rec["cross_store"])
+        self.assertEqual(rec["stores"], ["PostgreSQL"])
+        self.assertEqual(rec["semantic_status"], "needs_review")
+        self.assertTrue(any("parent uniqueness" in w for w in rec["spec"]["notes"]))
+        self.assertFalse(any("without moving" in r for r in rec["reasons"]))
+        att = next(a for a in rec["spec"]["attributes"] if a["name"] == "Customer")
+        self.assertEqual({f["table"] for f in att["forms"] if f["category"] == "ID"}, {"DIM_CUSTOMER", "FACT_ORDERS"})
+
+    def test_two_independent_dimension_homes_do_not_guess_cross_store_conformance(self):
+        g = self.graph(self.dim("A"), self.dim("B", name="DIM_OTHER_CUSTOMER"), self.fact("C"))
+        self.assertFalse(any("metadata_conformance" in l["evidence"] for l in md.infer(g)["links"]))
+
+    def test_named_domains_do_not_conform_just_because_one_owns_the_key(self):
+        g = self.graph(self.dim("A", name="CRM_DIM_CUSTOMER"), self.fact("B", name="SUPPORT_FACT_ORDERS"))
+        self.assertTrue(all(l["confidence"] < 0.5 for l in md.infer(g)["links"]))
+
+    def test_snowflake_path_keeps_all_parent_dimensions(self):
+        country = table("A", "PostgreSQL", "s", "DIM_COUNTRY", [("COUNTRY_ID", N), ("COUNTRY_NAME", T)], ["COUNTRY_ID"])
+        customer, fact = self.dim(), self.fact()
+        customer["columns"].append({"name": "COUNTRY_ID", "dataType": N})
+        rec = md.recommend(md.infer(self.graph(country, customer, fact)))[0]
+        self.assertEqual(set(rec["tables"]), {"DIM_COUNTRY", "DIM_CUSTOMER", "FACT_ORDERS"})
+        self.assertTrue(rec["checked"], rec["problems"])
+        self.assertTrue(any(f["column"] == "COUNTRY_NAME" for a in rec["spec"]["attributes"] for f in a["forms"]))
+
+    def test_identical_dimensions_preserve_each_star_and_all_combined_joins(self):
+        first, second = self.fact(), self.fact(name="FACT_RETURNS")
+        second["columns"][0]["name"] = "RETURN_ID"
+        second["pk"] = ["RETURN_ID"]
+        recs = md.recommend(md.infer(self.graph(self.dim(), first, second)))
+        self.assertEqual(len([r for r in recs if r["kind"] == "star"]), 2)
+        combined = next(r for r in recs if r["kind"] == "combined")
+        customer = next(a for a in combined["spec"]["attributes"] if a["name"] == "Customer")
+        self.assertEqual({f["table"] for f in customer["forms"] if f["category"] == "ID"}, {"DIM_CUSTOMER", "FACT_ORDERS", "FACT_RETURNS"})
+        self.assertTrue(any("Multiple fact grains" in w for w in combined["semantic_warnings"]))
+
+    def test_measured_nonunique_parent_cannot_be_promoted_by_confirmation(self):
+        dim, fact = self.dim(), self.fact()
+        g = self.graph(dim, fact, profile={md.tkey(dim): {"measured": True, "rows": 100, "distinct": {"CUSTOMER_ID": 20}, "nulls": {"CUSTOMER_ID": 0}}})
+        inf = md.infer(g, curation={"confirmed_links": [[md.tkey(dim), md.tkey(fact)]]})
+        self.assertTrue(all(l["confidence"] < 0.5 for l in inf["links"]))
+
+    def test_history_business_key_is_not_rescued_by_overlapping_statistics(self):
+        dim, fact = self.dim(), self.fact()
+        dim["pk"] = ["CUSTOMER_SK"]
+        dim["columns"] += [{"name": c, "dataType": dt} for c, dt in (("CUSTOMER_SK", N), ("VALID_FROM", D), ("VALID_TO", D))]
+        stat = {"rows": 100, "distinct": 100, "nulls": 0, "values": ["1"], "low": "1", "high": "100"}
+        g = self.graph(dim, fact, stats={md.tkey(t): {"CUSTOMER_ID": stat} for t in (dim, fact)})
+        self.assertTrue(all(l["confidence"] < 0.5 for l in md.infer(g)["links"]))
+
+    def test_rates_balances_and_unit_prices_have_explicit_aggregation_review(self):
+        dim, fact = self.dim(), self.fact()
+        fact["columns"] += [{"name": c, "dataType": N} for c in ("CONVERSION_RATE", "ACCOUNT_BALANCE", "UNIT_PRICE", "REVENUE_YTD")]
+        rec = md.recommend(md.infer(self.graph(dim, fact)))[0]
+        kinds = {m["column"]: m["additivity"] for m in rec["metric_semantics"]}
+        self.assertEqual(kinds["AMOUNT"], "additive-candidate")
+        self.assertEqual(kinds["CONVERSION_RATE"], "non-additive")
+        self.assertEqual(kinds["ACCOUNT_BALANCE"], "semi-additive")
+        self.assertEqual(kinds["REVENUE_YTD"], "semi-additive")
+        metric = next(m for m in rec["spec"]["metrics"] if m["column"] == "UNIT_PRICE")
+        self.assertEqual(metric["function"], "avg")
+        self.assertTrue(any("weighted" in w for w in rec["spec"]["notes"]))
+        self.assertTrue(any("must not sum across time" in w for w in rec["spec"]["notes"]))
+
+    def test_dimension_prices_are_descriptors_not_fact_totals(self):
+        dim, fact = self.dim(), self.fact()
+        dim["columns"].append({"name": "ANNUAL_BUDGET", "dataType": N})
+        rec = md.recommend(md.infer(self.graph(dim, fact)))[0]
+        self.assertFalse(any(m["table"] == dim["table"] for m in rec["spec"]["metrics"]))
+        self.assertTrue(any(f["column"] == "ANNUAL_BUDGET" for a in rec["spec"]["attributes"] for f in a["forms"]))
+
+    def test_table_limit_reports_related_tables_it_dropped(self):
+        dim, fact = self.dim(), self.fact()
+        region = table("A", "PostgreSQL", "s", "DIM_REGION", [("REGION_ID", N), ("REGION_NAME", T)], ["REGION_ID"])
+        dim["columns"].append({"name": "REGION_ID", "dataType": N})
+        rec = md.recommend(md.infer(self.graph(dim, region, fact)), {"max_tables": 2})[0]
+        self.assertEqual(rec["omitted_related_tables"], [{"table_key": md.tkey(region), "table": "DIM_REGION", "reason": "table_limit"}])
+
+    def test_duplicate_source_table_names_fail_instead_of_silently_overwriting(self):
+        dim, fact = self.dim(), self.fact()
+        copy = dict(dim, datasource="B", datasource_id="B")
+        with self.assertRaisesRegex(mp.PlanError, "aliases"):
+            mp.from_spec(mp.spec_from_tables({"tables": [dim, copy, fact]}), {"tables": [dim, copy, fact]})
+
+    def test_schema_qualified_references_resolve_duplicate_names(self):
+        dim, other, fact = self.dim(schema="lookup"), self.dim(schema="archive"), self.fact(schema="sales")
+        g = md.apply_references(self.graph(dim, other, fact), [{"name": "model contract", "relationships": [
+            {"parent": "A.lookup.DIM_CUSTOMER.CUSTOMER_ID", "child": "A.sales.FACT_ORDERS.CUSTOMER_ID"}]}])
+        self.assertEqual([(fk["parent"], fk["child"]) for fk in g["fks"]], [(md.tkey(dim), md.tkey(fact))])
+
+    def test_scan_cli_defaults_to_metadata_only(self):
+        import tempfile
+        from unittest.mock import patch
+        import mosaic_live
+        with tempfile.TemporaryDirectory() as tmp:
+            argv = ["mosaic_discover.py", "scan", "--source", "A:s:*", "--out", os.path.join(tmp, "graph.json")]
+            with patch.object(sys, "argv", argv), patch.object(mosaic_live, "sign_in_from_env", return_value=object()), \
+                    patch.object(md, "scan", return_value={"tables": {}, "fks": []}), patch.object(md, "catalog_stats"), \
+                    patch.object(md, "measure_keys", side_effect=AssertionError("must not read table rows")), \
+                    patch.object(md, "confirm", side_effect=AssertionError("must not read table rows")):
+                self.assertEqual(md.main(), 0)
+
+    def test_scan_retains_other_sources_and_reports_partial_metadata_without_exception_payloads(self):
+        from unittest.mock import patch
+        import mosaic_live
+        import mosaic_matrix
+        info = {"id": "A", "name": "Warehouse", "dbms": "PostgreSQL"}
+        scopes = [{"datasource": "A", "schema": "offline", "patterns": ["*"]},
+                  {"datasource": "A", "schema": "s", "patterns": ["*"]}]
+        def listing(m, ds, schema):
+            if schema == "offline":
+                raise RuntimeError("private error payload must not be retained")
+            return ["DIM_CUSTOMER", "FACT_ORDERS"]
+        def metadata(m, ds, schema, name):
+            if name == "FACT_ORDERS":
+                raise RuntimeError("private error payload must not be retained")
+            return {"description": "Customer lookup", "columns": [{"name": "CUSTOMER_ID", "dataType": N, "description": "Governed customer key"}]}
+        def sql(m, ds, text):
+            self.assertNotIn('FROM "s".', text)       # only catalog SQL, never a source-table SELECT
+            return []
+        with patch.object(mosaic_live, "datasource", return_value=info), patch.object(mosaic_matrix, "list_tables", side_effect=listing), \
+                patch.object(mosaic_live.bm, "fetch_table_metadata", side_effect=metadata), patch.object(mosaic_live, "run_sql", side_effect=sql):
+            g = md.scan(object(), scopes)
+        self.assertEqual(list(g["tables"]), ["A/s/DIM_CUSTOMER"])
+        self.assertEqual(g["tables"]["A/s/DIM_CUSTOMER"]["columns"][0]["description"], "Governed customer key")
+        self.assertEqual(g["coverage"][0]["tables"], "unavailable")
+        self.assertEqual(g["coverage"][1]["columns"], "partial")
+        self.assertEqual(g["coverage"][1]["catalog_tables"], 1)
+        self.assertEqual({e["stage"] for e in g["errors"]}, {"tables", "columns"})
+        self.assertNotIn("private error payload", str(g))
+
+    def test_exactly_requested_backup_name_survives_generic_noise_exclusion(self):
+        from unittest.mock import patch
+        import mosaic_live
+        import mosaic_matrix
+        requested = self.fact(name="FACT_ORDERS_BACKUP")
+        info = {"id": "A", "name": "Warehouse", "dbms": "PostgreSQL"}
+        with patch.object(mosaic_live, "datasource", return_value=info), patch.object(mosaic_matrix, "list_tables", return_value=[requested["table"]]), \
+                patch.object(mosaic_live, "run_sql", return_value=[]), patch.object(mosaic_live, "catalog", return_value={"tables": [requested]}) as cat:
+            g = md.scan(object(), [{"datasource": "A", "schema": "s", "patterns": [requested["table"]]}])
+        self.assertEqual(g["selected_tables"], [md.tkey(requested)])
+        self.assertEqual(cat.call_args[0][1][0]["table"], requested["table"])
+
+    def test_catalog_comments_identify_aggregation_risk_without_changing_metric_contract(self):
+        dim, fact = self.dim(), self.fact()
+        fact["columns"][2]["description"] = "Closing account balance at the end of each month"
+        rec = md.recommend(md.infer(self.graph(dim, fact)))[0]
+        self.assertEqual(rec["metric_semantics"][0]["additivity"], "semi-additive")
+        self.assertTrue(any("end-of-period" in n for n in rec["spec"]["notes"]))
+
+    def test_find_cli_reads_vocabulary_file_at_the_real_boundary(self):
+        import json
+        import tempfile
+        from unittest.mock import patch
+        import mosaic_live
+        import mosaic_find
+        vocabulary = {"aliases": [["customer", "cust"]], "domains": [{"name": "commerce", "terms": ["order", "invoice"]}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "vocabulary.json")
+            with open(path, "w") as handle:
+                json.dump(vocabulary, handle)
+            argv = ["mosaic_discover.py", "find", "--query", "customer orders", "--search-options", path, "--out", os.path.join(tmp, "found.json")]
+            with patch.object(sys, "argv", argv), patch.object(mosaic_live, "sign_in_from_env", return_value=object()), \
+                    patch.object(mosaic_find, "find", return_value={"picked": [], "candidates": 0, "read": [], "left": []}) as find:
+                self.assertEqual(md.main(), 0)
+            self.assertEqual(find.call_args.kwargs["search_options"], vocabulary)
+
+    def test_scan_cli_structured_scopes_preserve_identifier_delimiters(self):
+        import json
+        import tempfile
+        from unittest.mock import patch
+        import mosaic_live
+        scopes = [{"datasource": "Warehouse:East", "schema": "archive:2026", "tables": ["orders,archive"]}]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "sources.json")
+            with open(path, "w") as handle:
+                json.dump(scopes, handle)
+            argv = ["mosaic_discover.py", "scan", "--sources-json", path, "--out", os.path.join(tmp, "graph.json")]
+            with patch.object(sys, "argv", argv), patch.object(mosaic_live, "sign_in_from_env", return_value=object()), \
+                    patch.object(md, "scan", return_value={"tables": {}, "fks": []}) as scan, patch.object(md, "catalog_stats"), \
+                    patch.object(md, "measure_keys", side_effect=AssertionError("must not query source rows")):
+                self.assertEqual(md.main(), 0)
+            self.assertEqual(scan.call_args[0][1], [{**scopes[0], "patterns": ["orders,archive"]}])
+
+    def test_find_cli_structured_scopes_and_anchors_preserve_identifier_delimiters(self):
+        import json
+        import tempfile
+        from unittest.mock import patch
+        import mosaic_live
+        import mosaic_find
+        scopes = [{"datasource": "Warehouse:East", "schema": "archive:2026", "tables": ["orders,archive"]}]
+        anchors = [{"datasource": "Warehouse:East", "schema": "archive:2026", "table": "orders,archive"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = [os.path.join(tmp, name) for name in ("sources.json", "anchors.json")]
+            for path, content in zip(paths, (scopes, anchors)):
+                with open(path, "w") as handle:
+                    json.dump(content, handle)
+            argv = ["mosaic_discover.py", "find", "--sources-json", paths[0], "--anchors-json", paths[1], "--out", os.path.join(tmp, "found.json")]
+            with patch.object(sys, "argv", argv), patch.object(mosaic_live, "sign_in_from_env", return_value=object()), \
+                    patch.object(mosaic_find, "find", return_value={"picked": [], "candidates": 0, "read": [], "left": []}) as find:
+                self.assertEqual(md.main(), 0)
+            self.assertEqual(find.call_args[0][2], scopes)
+            self.assertEqual(find.call_args.kwargs["anchors"], anchors)
+
+
+    def test_scan_real_identifiers_take_precedence_over_glob_syntax(self):
+        from unittest.mock import patch
+        import mosaic_live
+        import mosaic_matrix
+        names = ["FACT[1]", "FACT1", "FACT*", "FACT?", "FACT2"]
+        info = {"id": "A", "name": "Warehouse", "dbms": "PostgreSQL"}
+        for requested in ("FACT[1]", "FACT*", "FACT?"):
+            with self.subTest(requested=requested), patch.object(mosaic_live, "datasource", return_value=info), \
+                    patch.object(mosaic_matrix, "list_tables", return_value=names), patch.object(mosaic_live, "run_sql", return_value=[]), \
+                    patch.object(mosaic_live, "catalog", return_value={"tables": []}) as catalog:
+                g = md.scan(object(), [{"datasource": "A", "schema": "s", "patterns": [requested]}])
+            self.assertEqual([t["table"] for t in catalog.call_args[0][1]], [requested])
+            self.assertEqual(g["selected_tables"], ["A/s/" + requested])

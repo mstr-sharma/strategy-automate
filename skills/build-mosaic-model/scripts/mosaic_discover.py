@@ -23,14 +23,14 @@ from typing import Any
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mosaic_plan as mp  # noqa: E402
 
-EVIDENCE = {"declared": 0.95, "primary_key_name": 0.75, "same_name": 0.55, "suffix_name": 0.5, "measured": 0.85, "history": 0.9, "statistics": 0.75}
+EVIDENCE = {"declared": 0.95, "primary_key_name": 0.75, "same_name": 0.55, "suffix_name": 0.5, "measured": 0.85, "history": 0.9, "statistics": 0.75, "metadata_conformance": 0.65}
 UNRELATED_NAME = 0.35        # the same key name in two unrelated table families, until the data says they match
 GENERIC_NAME = 0.45          # a key name two tables share where neither owns it (below the default 0.5 bar)
 DEFAULT_OPTIONS = {
     "min_tables": 2, "max_tables": 8, "cross_store": "allow",          # allow | prefer | avoid
     "signals": {"declared": True, "same_name": True, "family": True},
     "weights": {}, "exclude_patterns": ["*_BAK", "*_BACKUP", "TMP_*", "*_TMP", "*_OLD"], "modeled_tables": [],
-    "min_confidence": 0.5,
+    "min_confidence": 0.5, "skip_data_check": True,
 }
 
 
@@ -45,11 +45,12 @@ def _stats_sql(dbms: str, schema: str) -> str | None:
     return dialects.row_counts_sql(dbms, schema)
 
 
-def _declared_keys(m, live, info: dict, schema: str, tables: set[str]) -> tuple[dict, list]:
+def _declared_keys(m, live, info: dict, schema: str, tables: set[str], errors: list[dict] | None = None) -> tuple[dict, list]:
     """{table: [pk columns]}, [fk {child, child_cols, parent, parent_cols}] for tables in scope"""
     import mosaic_dialects as dialects
     d, pks, fks = info["dbms"].lower(), {}, []
     sqls = dialects.keys_sqls(info["dbms"], schema)
+    grouped: dict[tuple, list[dict]] = {}
     try:
         if sqls:
             # every kind of database that lists its keys in catalog views (PostgreSQL, Redshift, SQL Server and Fabric,
@@ -60,8 +61,19 @@ def _declared_keys(m, live, info: dict, schema: str, tables: set[str]) -> tuple[
                 if str(r["k"]).upper().startswith("PRIMARY"):
                     if r["c"] not in pks.setdefault(r["t"], []):
                         pks[r["t"]].append(r["c"])
-                elif r.get("pt") in tables and r.get("pc"):
-                    fks.append({"child": r["t"], "child_cols": [r["c"]], "parent": r["pt"], "parent_cols": [r["pc"]], "name": r.get("n") or ""})
+                elif r.get("pt") and r.get("pc"):
+                    # One constraint can have several components. Treating each catalog row as a whole FK creates
+                    # false single-column joins (tenant_id alone must never join every row in a composite key).
+                    key = (r["t"], r.get("ps") or schema, r["pt"], r.get("n") or f"{r['c']}:{r['pc']}")
+                    grouped.setdefault(key, []).append(r)
+            for (child, parent_schema, parent, name), rows in grouped.items():
+                pairs = list(dict.fromkeys((r["c"], r["pc"]) for r in sorted(rows, key=lambda r: (int(r.get("o") or 0), str(r["c"]), str(r["pc"])))))
+                # Some ANSI catalogs return a cross product for composite keys. Without an ordinal mapping it is
+                # unsafe to invent a pairing; retain the relationship as review evidence rather than single FKs.
+                ambiguous = len({c for c, _ in pairs}) != len(pairs) or len({c for _, c in pairs}) != len(pairs)
+                fks.append({"child": child, "child_cols": [c for c, _ in pairs], "parent": parent,
+                            "parent_schema": parent_schema, "parent_cols": [c for _, c in pairs], "name": name,
+                            **({"ambiguous_columns": True} if ambiguous else {})})
         elif "snowflake" in d:
             if not (dialects.safe_name(schema) and all(dialects.safe_name(t) for t in tables)):
                 return pks, fks                         # a name that cannot be quoted safely is never pasted into SQL
@@ -76,10 +88,12 @@ def _declared_keys(m, live, info: dict, schema: str, tables: set[str]) -> tuple[
                         pks[t] = cols_l
                     elif ref:
                         pt = ref.split(".")[-1].strip('"')
-                        if pt in tables:
-                            fks.append({"child": t, "child_cols": cols_l, "parent": pt, "parent_cols": [c.strip().strip('"') for c in refcols.split(",")], "name": ""})
-    except RuntimeError:
-        pass                                    # declared keys are one signal among several
+                        parts = [x.strip('"') for x in ref.split(".")]
+                        fks.append({"child": t, "child_cols": cols_l, "parent": pt, "parent_schema": parts[-2] if len(parts) >= 2 else schema,
+                                    "parent_cols": [c.strip().strip('"') for c in refcols.split(",")], "name": ""})
+    except RuntimeError as exc:
+        if errors is not None:
+            errors.append({"datasource": info["id"], "schema": schema, "stage": "keys", "error": type(exc).__name__})
     return pks, fks
 
 
@@ -87,38 +101,64 @@ def scan(m, scopes: list[dict], options: dict | None = None, log=lambda s: None)
     """scopes: [{datasource, schema, patterns:[glob...]}] → the source graph's raw facts"""
     import mosaic_live as live
     import mosaic_matrix as mx
+    import mosaic_dialects as dialects
     opts = {**DEFAULT_OPTIONS, **(options or {})}
-    graph: dict[str, Any] = {"tables": {}, "fks": [], "scopes": scopes}
+    graph: dict[str, Any] = {"tables": {}, "fks": [], "scopes": scopes, "selected_tables": list(opts.get("selected_tables") or []), "metadata_only": opts.get("skip_data_check", True), "coverage": [], "errors": []}
     log(f"→ Reading the tables in {len(scopes)} schema{'s' if len(scopes) != 1 else ''}…")
     for sc in scopes:
-        info = live.datasource(m, sc["datasource"])
-        log(f"  · listing the tables in {info['name']}/{sc['schema']}")    # "  · " lines say what is happening; they are not items
-        names = mx.list_tables(m, info["id"], sc["schema"])
+        coverage = {"datasource": sc["datasource"], "schema": sc["schema"], "listed": 0, "selected": 0, "catalog_tables": 0,
+                    "tables": "unavailable", "keys": "unavailable", "statistics": "unavailable", "columns": "unavailable"}
+        graph["coverage"].append(coverage)
+        try:
+            info = live.datasource(m, sc["datasource"])
+            log(f"  · listing the tables in {info['name']}/{sc['schema']}")
+            names = mx.list_tables(m, info["id"], sc["schema"])
+        except RuntimeError as exc:
+            graph["errors"].append({"datasource": sc["datasource"], "schema": sc["schema"], "stage": "tables", "error": type(exc).__name__})
+            log(f"  · table metadata unavailable for {sc['schema']}; continuing with other sources")
+            continue
+        coverage.update(datasource_id=info["id"], listed=len(names), tables="available")
         # how big the schema really is, whatever part of it is scanned: a few tables picked out of a large catch-all
         # schema are not one small dataset (infer's small-schema and star rules read this)
         graph.setdefault("schema_sizes", {})[f"{info['id']}/{sc['schema']}"] = len(names)
         pats = sc.get("patterns") or ["*"]
-        names = [n for n in names if any(fnmatch.fnmatchcase(n.upper(), p.upper()) for p in pats)
-                 and not any(fnmatch.fnmatchcase(n.upper(), p.upper()) for p in opts["exclude_patterns"])]
+        # A real catalog identifier wins over glob syntax: FACT[1] is not FACT1, and a literal * or ? in a table
+        # name is preserved. Patterns remain available when no table has that exact name.
+        exact = {p: {n for n in names if n == p} or {n for n in names if n.casefold() == p.casefold()} for p in pats}
+        explicit = {str(p).casefold() for p in pats if exact[p] or not any(x in str(p) for x in "*?[")}
+        names = [n for n in names if any(n in exact[p] if exact[p] else fnmatch.fnmatchcase(n.upper(), p.upper()) for p in pats)
+                 and (n.casefold() in explicit or f"{info['id']}/{sc['schema']}/{n}" in graph["selected_tables"]
+                      or not any(fnmatch.fnmatchcase(n.upper(), p.upper()) for p in opts["exclude_patterns"]))]
+        graph["selected_tables"] = sorted(set(graph["selected_tables"]) | {f"{info['id']}/{sc['schema']}/{n}" for n in names if n.casefold() in explicit})
         if len(names) > opts.get("max_scan_tables", 200):
             raise ValueError(f"{len(names)} tables match in {info['name']}/{sc['schema']}; narrow the patterns (limit {opts.get('max_scan_tables', 200)})")
-        log(f"  · counting rows and reading declared keys in {len(names)} tables")
+        coverage["selected"] = len(names)
+        log(f"  · reading catalog row estimates and declared keys for {len(names)} tables")
         rows = {}
         stats = _stats_sql(info["dbms"], sc["schema"])
         if stats:
             try:
-                rows = {r["t"]: int(float(r["n"] or 0)) for r in live.run_sql(m, info["id"], stats)}
-            except RuntimeError:
+                rows = {r["t"]: int(float(r["n"])) for r in live.run_sql(m, info["id"], stats) if r.get("n") is not None and float(r["n"]) >= 0}
+                coverage["statistics"] = "available"
+            except (RuntimeError, ValueError, TypeError) as exc:
                 rows = {}
-        pks, fks = _declared_keys(m, live, info, sc["schema"], set(names))
+                graph["errors"].append({"datasource": info["id"], "schema": sc["schema"], "stage": "row_estimates", "error": type(exc).__name__})
+        else:
+            coverage["statistics"] = "unsupported"
+        key_errors: list[dict] = []
+        pks, fks = _declared_keys(m, live, info, sc["schema"], set(names), errors=key_errors)
+        coverage["keys"] = "unavailable" if key_errors else "available" if dialects.keys_sqls(info["dbms"], sc["schema"]) or "snowflake" in info["dbms"].lower() else "unsupported"
+        graph["errors"].extend(key_errors)
         log(f"  · reading the columns of {len(names)} tables")
-        cat = live.catalog(m, [{"datasource": info["id"], "schema": sc["schema"], "table": n} for n in names])
+        cat = live.catalog(m, [{"datasource": info["id"], "schema": sc["schema"], "table": n} for n in names], errors=graph["errors"])
+        coverage["catalog_tables"] = len(cat["tables"])
+        coverage["columns"] = "complete" if len(cat["tables"]) == len(names) else "partial" if cat["tables"] else "unavailable"
         log(f"  {info['name']}/{sc['schema']}: {len(names)} tables")
         for t in cat["tables"]:
             graph["tables"][tkey(t)] = {**t, "rows": rows.get(t["table"]), "pk": pks.get(t["table"], []), "family": _family_key(t["table"], t["schema"], t["datasource_id"])}
         for fk in fks:
             base = f"{info['id']}/{sc['schema']}/"
-            graph["fks"].append({**fk, "child": base + fk["child"], "parent": base + fk["parent"]})
+            graph["fks"].append({**fk, "child": base + fk["child"], "parent": f"{info['id']}/{fk.get('parent_schema') or sc['schema']}/{fk['parent']}"})
     return graph
 
 
@@ -192,7 +232,17 @@ def apply_references(graph: dict, refs: list[dict]) -> dict:
         by_name.setdefault(t["table"].casefold(), []).append(k)
 
     def one(name: str) -> str | None:
-        ks = by_name.get(str(name).split(".")[-1].strip('"`[] ').casefold(), [])
+        raw = str(name).strip()
+        direct = [k for k in graph["tables"] if k.casefold() == raw.casefold()]
+        if len(direct) == 1:
+            return direct[0]
+        parts = [x.strip('"`[] ').casefold() for x in raw.split(".")]
+        ks = by_name.get(parts[-1], [])
+        if len(parts) >= 2:
+            ks = [k for k in ks if graph["tables"][k]["schema"].casefold() == parts[-2]]
+        if len(parts) >= 3:
+            ks = [k for k in ks if parts[-3] in {str(graph["tables"][k].get("datasource") or "").casefold(),
+                                                str(graph["tables"][k].get("datasource_id") or "").casefold()}]
         return ks[0] if len(ks) == 1 else None
 
     def column(key: str, name: str) -> str | None:
@@ -278,12 +328,18 @@ def catalog_stats(m, graph: dict, log=lambda s: None) -> dict:
     for (ds, schema), keys in by_schema.items():
         t0 = graph["tables"][keys[0]]
         sql = dialects.column_stats_sql(t0.get("dbms", ""), schema)
+        coverage = next((x for x in graph.get("coverage", []) if x.get("datasource_id") == ds and x.get("schema") == schema), None)
+        if coverage is not None:
+            coverage["column_statistics"] = "unavailable" if sql else "unsupported"
         if not sql:
             continue
         try:
             rows = live.run_sql(m, ds, sql)
-        except RuntimeError:
+        except RuntimeError as exc:
+            graph.setdefault("errors", []).append({"datasource": ds, "schema": schema, "stage": "column_statistics", "error": type(exc).__name__})
             continue                                    # statistics are one signal among several
+        if coverage is not None:
+            coverage["column_statistics"] = "available"
         names = {graph["tables"][k]["table"]: k for k in keys}
         n = 0
         for r in rows:
@@ -342,9 +398,8 @@ def _stats_overlap(a: dict | None, b: dict | None) -> float | None:
 
 
 def view_copies(tables: dict) -> set:
-    """views and copies of another scanned table: FACT_X_V, FACT_X2, FACT_X_COPY or FACT_X_NEW beside FACT_X with
-    (nearly) the same columns repeat it, so the base table is used and they are left out. A copy's name starts with its
-    base's, so each name's own prefixes are looked up (linear in the tables, not every pair)."""
+    """Explicitly named copies with the same columns. An arbitrary suffix or a numbered sibling is NOT proof of a copy:
+    FACT_ORDERS_RETURNS and FACT_ORDERS_2026 may be separate processes or partitions with identical schemas."""
     norm = lambda n: re.sub(r"[^a-z0-9]", "", n.casefold())  # noqa: E731
     by_name = {(t["datasource_id"], t.get("schema"), t["table"].casefold()): k for k, t in tables.items()}
     cols_of: dict[str, set] = {}
@@ -353,13 +408,10 @@ def view_copies(tables: dict) -> set:
     for k, t in tables.items():
         name = t["table"].casefold()
         for cut in range(1, len(name)):
-            # the copy's name is the base's plus a suffix: digits, or _v/_vw/_view, or _<word>
             kk = by_name.get((t["datasource_id"], t.get("schema"), name[:cut]))
-            if kk is None or kk == k or not re.fullmatch(r"_?(\d+|v|vw|view|[a-z]+)", name[cut:]):
+            if kk is None or kk == k or not re.fullmatch(r"_(v|vw|view|copy|backup|bak)", name[cut:]):
                 continue
-            suffix = name[cut:].lstrip("_")
-            need = 0.8 if re.fullmatch(r"\d+|v|vw|view", suffix) else 0.9
-            if len(cols(k) & cols(kk)) >= need * max(len(cols(k)), 1):
+            if cols(k) and cols(k) == cols(kk):
                 out.add(k)
                 break
     return out
@@ -419,10 +471,16 @@ def infer(graph: dict, options: dict | None = None, curation: dict | None = None
         tok = (t.get("datasource_id"), t.get("schema"), t["table"].split("_")[0].casefold())
         if "_" in t["table"] and first.get(tok, 0) >= 3 and not t["family"].endswith("#star") and not re.match(r"^SD_[A-Z]+_[A-Z0-9]+_\d{8}_\d{4}_", t["table"], re.I):
             t["family"] = f"{tok[0]}/{tok[1]}#{tok[2]}"
-    copies = view_copies(tables)                        # once: inside the comprehension it ran per table (n³ on large scans)
+    selected = set(opts.get("selected_tables") or graph.get("selected_tables") or [])
+    copies = view_copies(tables) - selected
     tables = {k: t for k, t in tables.items() if k not in copies}
     entities: dict[str, dict] = {}
-    declared: set[tuple[str, str]] = set()
+    declared: set[tuple[str, str, str, str]] = set()
+    composite_fks: list[dict] = []
+    roles: dict[tuple[str, str, str], list[str]] = {}
+    for fk in graph.get("fks", []):
+        if fk.get("parent") in tables and fk.get("child") in tables and len(fk.get("parent_cols") or []) == len(fk.get("child_cols") or []) == 1:
+            roles.setdefault((fk["parent"], fk["child"], fk["parent_cols"][0].casefold()), []).append(fk["child_cols"][0])
 
     def entity(key: str, name: str) -> dict:
         return entities.setdefault(key, {"key": key, "name": cur.get("names", {}).get(key, name), "members": {}, "home": None, "why": {}})
@@ -432,13 +490,24 @@ def infer(graph: dict, options: dict | None = None, curation: dict | None = None
         e["why"].setdefault(k, set()).add(why)
     if sig.get("declared", True):
         for fk in graph.get("fks", []):
-            if fk["child"] not in tables or fk["parent"] not in tables or len(fk["parent_cols"]) != 1:
+            if fk["child"] not in tables or fk["parent"] not in tables:
+                continue
+            if not fk.get("parent_cols") or len(fk["parent_cols"]) != len(fk.get("child_cols") or []):
+                continue
+            if len(fk["parent_cols"]) > 1 or fk.get("ambiguous_columns"):
+                composite_fks.append(fk)
                 continue
             pc, cc = fk["parent_cols"][0], fk["child_cols"][0]
-            e = entity(f"{fk['parent']}#{pc.casefold()}", mp._friendly(re.sub(mp.KEY_COLUMN, "", pc).strip("_") or mp._short_table(tables[fk["parent"]]["table"])))
+            if not any(c["name"] == pc for c in tables[fk["parent"]]["columns"]) or not any(c["name"] == cc for c in tables[fk["child"]]["columns"]):
+                continue
+            role = len(set(roles.get((fk["parent"], fk["child"], pc.casefold()), []))) > 1
+            e = entity(f"{fk['parent']}#{pc.casefold()}" + (f"#role:{cc.casefold()}" if role else ""),
+                       mp._friendly(re.sub(mp.KEY_COLUMN, "", cc if role else pc).strip("_") or mp._short_table(tables[fk["parent"]]["table"])))
+            if role:
+                e["role_playing"] = True
             member(e, fk["parent"], pc, "declared"); member(e, fk["child"], cc, "declared")
             e["home"] = fk["parent"]
-            declared.add((fk["parent"], fk["child"]))
+            declared.add((fk["parent"], fk["child"], pc, cc))
     if sig.get("same_name", True):
         clusters: dict[tuple[str, str], list[tuple[str, str]]] = {}
         # beyond …_ID/_KEY/_CODE names, a join key in a star: a column a dimension shares by name with another table
@@ -461,7 +530,7 @@ def infer(graph: dict, options: dict | None = None, curation: dict | None = None
                 if joins(c, t["family"]):
                     clusters.setdefault((c["name"].casefold(), t["family"]), []).append((k, c["name"]))
         for (name, fam), occ in clusters.items():
-            existing = next((e for e in entities.values() if any(e["members"].get(k, "").casefold() == name for k, _ in occ)), None)
+            existing = next((e for e in entities.values() if not e.get("role_playing") and any(e["members"].get(k, "").casefold() == name for k, _ in occ)), None)
             e = existing or entity(f"name#{name}#{fam}", mp._friendly(re.sub(mp.KEY_COLUMN, "", occ[0][1]).strip("_") or occ[0][1]))
             for k, c in occ:
                 member(e, k, c, "primary_key_name" if [x.casefold() for x in tables[k].get("pk", [])] == [name] else "same_name")
@@ -475,7 +544,7 @@ def infer(graph: dict, options: dict | None = None, curation: dict | None = None
             return tables[next(iter(e["members"]))]["family"]
         for a_ in list(entities.values()):
             for b_ in list(entities.values()):
-                if a_ is b_ or a_["key"] not in entities or b_["key"] not in entities or fam(a_) != fam(b_):
+                if a_ is b_ or a_["key"] not in entities or b_["key"] not in entities or fam(a_) != fam(b_) or a_.get("role_playing") or b_.get("role_playing"):
                     continue
                 plain, qual = col(a_), col(b_)
                 if qual.endswith("_" + plain) and mp.KEY_COLUMN.search(plain) and not any(k in a_["members"] for k in b_["members"]):
@@ -517,14 +586,14 @@ def infer(graph: dict, options: dict | None = None, curation: dict | None = None
         ev = set(ev) | ({"family"} if sig.get("family", True) and same_family else set())
         base = max([opts["weights"].get(x, EVIDENCE.get(x, 0.5)) for x in ev if x != "family"] or [0.5])
         c = min(1.0, base + (0.05 if "family" in ev else 0))
-        if "declared" not in ev and not same_family:
+        if not ev & {"declared", "metadata_conformance"} and not same_family:
             c = min(c, opts.get("unrelated_name", UNRELATED_NAME))   # a shared name across unrelated families needs the data to agree
         # the two columns' types must be able to hold the same values: a number never joins a date; a number and text
         # might (a cast), and two text keys of very different lengths (a 36-character id and a 5-character code) do not
         hc, kc = (next((x for x in tables[home]["columns"] if x["name"] == cols[0]), None), next((x for x in tables[k]["columns"] if x["name"] == cols[-1]), None))
         if hc and kc and opts.get("type_check", True):
             fa, fb = mp._family(hc.get("dataType")), mp._family(kc.get("dataType"))
-            if {fa, fb} == {"number", "time"} or {fa, fb} == {"text", "time"} and "declared" not in ev:
+            if {fa, fb} == {"number", "time"} or {fa, fb} == {"text", "time"}:
                 return None
             if fa != fb and "declared" not in ev:
                 c -= 0.15
@@ -550,7 +619,7 @@ def infer(graph: dict, options: dict | None = None, curation: dict | None = None
             stem = re.sub(mp.KEY_COLUMN, "", cols[0]).strip("_").casefold().rstrip("s")
             owned = (bool(stem) and stem in tables[home]["table"].casefold()) or bool(mp.STAR_DIM.match(tables[home]["table"])) \
                 or [x.casefold() for x in tables[home].get("pk", [])] == [cols[0].casefold()] \
-                or _stats_unique((st.get(home) or {}).get(cols[0])) or bool(((graph.get("profile") or {}).get(home) or {}).get("measured"))
+                or _stats_unique((st.get(home) or {}).get(cols[0]))
             if not owned:
                 c = min(c, opts.get("generic_name", GENERIC_NAME))
         measured = (graph.get("measured") or {}).get(f"{home}|{k}")
@@ -564,6 +633,17 @@ def infer(graph: dict, options: dict | None = None, curation: dict | None = None
             return None
         if pair in cur.get("confirmed_links", []) or pair[::-1] in cur.get("confirmed_links", []):
             c, ev = 1.0, ev | {"confirmed"}
+        # Confidence boosts cannot turn a known nonunique parent or part of a compound PK into a safe lookup.
+        hp = (graph.get("profile") or {}).get(home) or {}
+        hd = (hp.get("distinct") or {}).get(cols[0])
+        if hp.get("measured") and hd is not None and (hd != hp.get("rows") or (hp.get("nulls") or {}).get(cols[0])):
+            c = min(c, opts.get("generic_name", GENERIC_NAME))
+        pk = [x.casefold() for x in tables[home].get("pk", [])]
+        if "declared" not in ev and len(pk) > 1 and cols[0].casefold() in pk:
+            c = min(c, opts.get("generic_name", GENERIC_NAME))
+        if "declared" not in ev and opts.get("history", True) and _history(tables[home]) and pk != [cols[0].casefold()] \
+                and not re.search(r"(?i)(_sk|_skey|surrogate|_dwh_id)$", cols[0]):
+            c = min(c, opts.get("generic_name", GENERIC_NAME))
         return {"from": home, "to": k, "entity": e_name, "entity_keys": keys, "columns": cols, "evidence": sorted(ev), "confidence": round(c, 2),
                 "cross_store": tables[home]["datasource_id"] != tables[k]["datasource_id"]}
     out_entities, links = [], []
@@ -572,31 +652,72 @@ def infer(graph: dict, options: dict | None = None, curation: dict | None = None
         for k in e["members"]:
             if k == e["home"]:
                 continue
-            ev = {"declared"} if (e["home"], k) in declared else {x for x in e["why"][k] if x != "declared"} or {"same_name"}
+            ev = {"declared"} if (e["home"], k, e["members"][e["home"]], e["members"][k]) in declared else {x for x in e["why"][k] if x != "declared"} or {"same_name"}
             if "declared" not in ev and e["members"][e["home"]].casefold() != e["members"][k].casefold():
                 ev = (ev - {"same_name", "primary_key_name"}) | {"suffix_name"}     # joined by a qualified name, not the same one
             l = link(e["home"], k, e["name"], [e["key"]], [e["members"][e["home"]], e["members"][k]], ev)
             if l:
+                if e.get("role_playing"):
+                    l["role_playing"] = True
                 links.append(l)
+    # Composite joins remain visible as one relationship, never promoted into independent component joins.
+    for fk in composite_fks:
+        pairs = list(zip(fk["parent_cols"], fk["child_cols"]))
+        links = [l for l in links if not (l["from"] == fk["parent"] and l["to"] == fk["child"] and tuple(l["columns"]) in pairs)]
+        if [fk["parent"], fk["child"]] in cur.get("rejected_links", []) or [fk["child"], fk["parent"]] in cur.get("rejected_links", []):
+            continue
+        if all(any(c["name"] == pc for c in tables[fk["parent"]]["columns"]) and any(c["name"] == cc for c in tables[fk["child"]]["columns"]) for pc, cc in pairs):
+            links.append({"from": fk["parent"], "to": fk["child"], "entity": mp.subject(tables[fk["parent"]]["table"]),
+                          "entity_keys": [], "columns": list(pairs[0]), "column_pairs": [list(p) for p in pairs],
+                          "evidence": ["declared"], "confidence": 0.95, "composite": True,
+                          "ambiguous_columns": bool(fk.get("ambiguous_columns")),
+                          "cross_store": tables[fk["parent"]]["datasource_id"] != tables[fk["child"]]["datasource_id"]})
     # the same key in two families: one weak link between their homes, from the side that defines it
     by_col: dict[str, list[dict]] = {}
     for e in entities.values():
         by_col.setdefault(e["members"][e["home"]].casefold(), []).append(e)
+    def metadata_owner(e: dict, col: str) -> bool:
+        t = tables[e["home"]]
+        stem = re.sub(mp.KEY_COLUMN, "", col).strip("_").casefold()
+        if not stem or stem in {"id", "key", "code", "type", "status", "tenant", "source_system"}:
+            return False
+        pk = [x.casefold() for x in t.get("pk", [])]
+        declared_owner = pk == [col] and not _is_fact(t, {col}, True)
+        dimension_owner = bool(mp.STAR_DIM.match(t["table"])) and stem.rstrip("s") in t["table"].casefold()
+        return (declared_owner or dimension_owner) and not (_history(t) and pk != [col])
+
+    def domain(t: dict) -> str:
+        # Preserve independently named datasets. Generic DIM_/FACT_ tables have no domain prefix; a named
+        # SAAS_DIM_ACCOUNT must not be conformed to BANK_FACT_PAYMENTS just because both carry ACCOUNT_ID.
+        name = t["table"].casefold()
+        synthetic = re.match(r"^(sd_[a-z]+_[a-z0-9]+_\d{8}_\d{4})_", name)
+        if synthetic:
+            return synthetic.group(1)
+        match = re.match(r"^(.+?)_(?:dim|dimension|fact|fct|lookup|lkp|lu)_", name)
+        return match.group(1) if match else ""
+
     for col, group in by_col.items():
-        ranked = sorted(group, key=lambda e: ([x.casefold() for x in tables[e["home"]].get("pk", [])] == [col], -(tables[e["home"]].get("rows") or 0)), reverse=True)
+        owners = {e["home"] for e in group if metadata_owner(e, col)}
+        ranked = sorted(group, key=lambda e: (e["home"] in owners, [x.casefold() for x in tables[e["home"]].get("pk", [])] == [col], -(tables[e["home"]].get("rows") or 0)), reverse=True)
         for i, parent in enumerate(ranked):
             for child in ranked[i + 1:]:
                 if tables[parent["home"]]["family"] == tables[child["home"]]["family"]:
                     continue
+                ev = {"same_name"}
+                pt, ct = tables[parent["home"]], tables[child["home"]]
+                if len(owners) == 1 and parent["home"] in owners and pt["datasource_id"] != ct["datasource_id"] \
+                        and not (domain(pt) and domain(ct) and domain(pt) != domain(ct)):
+                    ev.add("metadata_conformance")
                 l = link(parent["home"], child["home"], parent["name"], [parent["key"], child["key"]],
-                         [parent["members"][parent["home"]], child["members"][child["home"]]], {"same_name"})
+                         [parent["members"][parent["home"]], child["members"][child["home"]]], ev)
                 if l:
                     links.append(l)
     for e in entities.values():
         if len(e["members"]) >= 2 or any(e["key"] in l["entity_keys"] for l in links):
             out_entities.append({"key": e["key"], "name": e["name"], "home": e["home"], "members": e["members"],
-                                 "evidence": sorted(set().union(*e["why"].values()))})
-    return {"tables": tables, "entities": out_entities, "links": links, "profile": graph.get("profile") or {}}
+                                 "evidence": sorted(set().union(*e["why"].values())), **({"role_playing": True} if e.get("role_playing") else {})})
+    return {"tables": tables, "entities": out_entities, "links": links, "profile": graph.get("profile") or {},
+            "selected_tables": sorted(selected), "excluded_tables": [{"table_key": k, "reason": "duplicate_copy"} for k in sorted(copies)]}
 
 
 # ── recommend (pure) ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -619,12 +740,54 @@ def _is_fact(t: dict, keyed: set[str], home: bool = False) -> bool:
     return bool(measures) if home else bool(nums)
 
 
+
+def _semantic_review(st: dict, tables: dict, spec: dict) -> tuple[list[str], list[dict]]:
+    """Metadata can identify aggregation hazards, not certify totals or invent numerator/denominator contracts."""
+    warnings: list[str] = []
+    metrics: list[dict] = []
+    for l in st["used"]:
+        ev = set(l["evidence"])
+        if l.get("composite"):
+            warnings.append(f"{tables[l['to']]['table']} → {tables[l['from']]['table']}: composite join requires {len(l.get('column_pairs') or [])} key components together.")
+        elif l.get("role_playing"):
+            warnings.append(f"{l['entity']}: preserve this foreign-key role with its own lookup alias.")
+        elif not ev & {"declared", "confirmed"}:
+            warnings.append(f"{l['entity']}: the join is inferred from metadata; confirm key meaning and parent uniqueness.")
+        home = tables[l["from"]]
+        if _history(home) and not l.get("composite") and [c.casefold() for c in home.get("pk", [])] != [l["columns"][0].casefold()]:
+            warnings.append(f"{home['table']}: history rows require a unique version key or an explicit effective-date join.")
+        if NOT_FACT.search(home["table"]) and re.search(r"(?:^|_)(bridge|brg|xref|crosswalk|map|mapping)(?:_|$)", home["table"], re.I):
+            warnings.append(f"{home['table']}: a bridge may fan out metrics; define allocation or distinct-count semantics.")
+    for m in spec["metrics"]:
+        metadata = next((c for t in tables.values() if t["table"] == m["table"] for c in t["columns"] if c["name"] == m["column"]), {})
+        column = re.sub(r"([a-z])([A-Z])", r"\1_\2", m["column"] + " " + str(metadata.get("description") or "")).replace(" ", "_")
+        table = m["table"]
+        snapshot = re.search(r"(?:^|_)(snapshot|balance|balances|inventory|backlog|stock|holdings)(?:_|$)", table, re.I)
+        semi = re.search(r"(?:^|_)(balance|on_hand|onhand|backlog|stock|inventory|headcount|capacity|mrr|arr)(?:_|$)", column, re.I)
+        cumulative = re.search(r"(?:^|_)(ytd|mtd|qtd|running|cumulative|lifetime)(?:_|$)", column, re.I)
+        ratio = bool(mp.AVERAGED.search(column))
+        if semi or cumulative or snapshot and re.search(r"(?:^|_)(qty|quantity|amount|units|total)(?:_|$)", column, re.I):
+            kind = "semi-additive"
+            reason = "Snapshot/cumulative values must not sum across time; define the time grain and end-of-period rule."
+        elif ratio:
+            kind = "non-additive"
+            reason = "A row average is not a weighted aggregate; define the numerator, denominator or weighting contract."
+        else:
+            kind = "additive-candidate"
+            reason = "SUM is a metadata inference; verify row grain, units and currency before relying on totals."
+        metrics.append({"table": table, "column": m["column"], "additivity": kind, "reason": reason})
+        if kind != "additive-candidate":
+            warnings.append(f"{m['name']}: {reason}")
+    if len(st["facts"]) > 1:
+        warnings.append("Multiple fact grains: aggregate each fact before combining on conformed dimensions; never join raw fact rows together.")
+    return list(dict.fromkeys(warnings)), metrics
+
 def recommend(inferred: dict, options: dict | None = None) -> list[dict]:
     """candidate models: each fact table with the tables it reaches through links (dimensions, and other facts sharing
     them), within the table limits; ranked; each with its reasons and a drafted specification"""
     opts = {**DEFAULT_OPTIONS, **(options or {})}
     tables, links = inferred["tables"], [l for l in inferred["links"] if l["confidence"] >= opts["min_confidence"]]
-    views = view_copies(tables)
+    views = view_copies(tables) - set(inferred.get("selected_tables") or opts.get("selected_tables") or [])
     tables = {k: t for k, t in tables.items() if k not in views}
     links = [l for l in links if l["from"] not in views and l["to"] not in views]
     adj: dict[str, list[dict]] = {}
@@ -645,22 +808,24 @@ def recommend(inferred: dict, options: dict | None = None) -> list[dict]:
         # a star (or snowflake): the fact and what it points to, and what those point to in turn, never back down to
         # other facts that happen to share a dimension
         group, used, frontier = {f}, [], [f]
-        while frontier and len(group) < opts["max_tables"]:
+        while frontier:
             cur = frontier.pop(0)
             for l in sorted(adj.get(cur, []), key=lambda x: -x["confidence"]):
                 if l["to"] != cur:
                     continue
                 other = l["from"]
-                if other in group or len(group) >= opts["max_tables"]:
-                    continue
                 if opts["cross_store"] == "avoid" and l["cross_store"]:
                     continue
+                if other in group:
+                    if l not in used:
+                        used.append(l)      # retain alternate keys and distinct roles on the same pair of tables
+                    continue
+                if len(group) >= opts["max_tables"]:
+                    continue
                 group.add(other); used.append(l); frontier.append(other)
-        dims = frozenset(group - {f})
-        if dims in stars and len(stars[dims]["group"]) < opts["max_tables"]:
-            stars[dims]["group"].add(f); stars[dims]["facts"].append(f)
-            continue
-        stars[dims] = {"group": set(group), "facts": [f], "used": used}
+        # Keep each fact's star even if another fact has exactly the same dimensions. A combined candidate is
+        # offered separately, with all of its joins, rather than replacing the individual models.
+        stars[frozenset(group)] = {"group": set(group), "facts": [f], "used": used}
     # a galaxy: facts that share a conformed dimension (the same Date, Plant or Machine) also make one model together,
     # offered beside each fact's own star while it stays within the table limit
     galaxies, pool = [], [st for st in stars.values() if len(st["group"]) >= opts["min_tables"]]
@@ -679,7 +844,7 @@ def recommend(inferred: dict, options: dict | None = None) -> list[dict]:
             key = frozenset(id(c) for c in comp)
             if key not in seen_comp:
                 seen_comp.add(key)
-                used_all = list({(l["from"], l["to"]): l for c in comp for l in c["used"]}.values())
+                used_all = list({(l["from"], l["to"], tuple(l["columns"])): l for c in comp for l in c["used"]}.values())
                 galaxies.append({"group": set().union(*(c["group"] for c in comp)), "facts": [f for c in comp for f in c["facts"]], "used": used_all, "kind": "combined"})
     # a wide flat table (its own measures and descriptions, nothing it joins) is a model on its own
     in_group = set().union(*(st["group"] for st in stars.values() if len(st["group"]) >= opts["min_tables"]), set())
@@ -699,6 +864,7 @@ def recommend(inferred: dict, options: dict | None = None) -> list[dict]:
             continue
         seen.add(sig)
         stores = sorted({tables[k]["dbms"] for k in group})
+        datasource_ids = {tables[k]["datasource_id"] for k in group}
         modeled_names = {str(x).casefold() for x in opts["modeled_tables"]}
         modeled = sum(1 for k in group if k in opts["modeled_tables"] or tables[k]["table"].casefold() in modeled_names) / len(group)
         conf = sum(l["confidence"] for l in used) / max(1, len(used))
@@ -706,7 +872,7 @@ def recommend(inferred: dict, options: dict | None = None) -> list[dict]:
         # confidence, then a well-formed size (3–6 tables), cross-store when preferred, a bonus for several facts sharing
         # dimensions, and a penalty for what is already modeled
         size = min(1.0, len(group) / 3) * (1.0 if len(group) <= 6 else 0.9)
-        score = round(conf * size * (1 - 0.6 * modeled) * (1.15 if len(stores) > 1 and opts["cross_store"] == "prefer" else 1)
+        score = round(conf * size * (1 - 0.6 * modeled) * (1.15 if len(datasource_ids) > 1 and opts["cross_store"] == "prefer" else 1)
                       * (1 + 0.05 * (len(st["facts"]) - 1)), 3)
         # named for what it measures: its fact tables, then (with one fact) what describes it
         subjects = [mp.subject(tables[x]["table"]) for x in st["facts"]]
@@ -719,10 +885,10 @@ def recommend(inferred: dict, options: dict | None = None) -> list[dict]:
                    + (f", described by {n_dims} related table{'s' if n_dims != 1 else ''}" if n_dims else "")]
         words = {"declared": "declared key", "primary_key_name": "primary key name", "same_name": "same column name", "suffix_name": "matching key name",
                  "family": "same dataset", "measured": "values match", "confirmed": "confirmed by you", "history": "joined in queries",
-                 "statistics": "database statistics agree"}
+                 "statistics": "database statistics agree", "metadata_conformance": "unambiguous dimension key in the selected metadata"}
         reasons += [f"{l['entity']} links {mp.subject(tables[l['from']]['table'])} and {mp.subject(tables[l['to']]['table'])} ({', '.join(words.get(x, x.replace('_', ' ')) for x in l['evidence'] if x != 'family')})" for l in used[:4]]
-        if len(stores) > 1:
-            reasons.append(f"joins {' and '.join(stores)} without moving data")
+        if len(datasource_ids) > 1:
+            reasons.append(f"combines {len(datasource_ids)} data sources ({' and '.join(stores)}); the draft uses in-memory serving")
         if modeled:
             reasons.append(f"{int(modeled * 100)}% of these tables are already in a model")
         cat = {"tables": [tables[k] for k in sorted(group, key=lambda k: (k != f, k))]}
@@ -735,19 +901,28 @@ def recommend(inferred: dict, options: dict | None = None) -> list[dict]:
         for l in used:
             if len(l["entity_keys"]) == 2 and all(k in parent for k in l["entity_keys"]):
                 parent[root(l["entity_keys"][1])] = root(l["entity_keys"][0])
+        allowed: dict[str, set[tuple[str, str]]] = {}
+        for l in used:
+            if l.get("composite"):
+                continue
+            for ek in l["entity_keys"]:
+                allowed.setdefault(ek, set()).update(zip((l["from"], l["to"]), l["columns"]))
         merged: dict[str, dict] = {}
         for e in inferred["entities"]:
-            r = merged.setdefault(root(e["key"]), {"name": None, "members": [], "home": None})
+            r = merged.setdefault(root(e["key"]), {"name": None, "members": [], "home": None, "role_playing": False})
+            r["role_playing"] = r["role_playing"] or e.get("role_playing", False)
             if e["key"] == root(e["key"]):
                 r["name"], r["home"] = e["name"], tables[e["home"]]["table"] if e["home"] in group else None
-            r["members"] += [(tables[k]["table"], c) for k, c in e["members"].items() if k in group]
+            r["members"] += [(tables[k]["table"], c) for k, c in e["members"].items() if k in group and (k, c) in allowed.get(e["key"], set())]
         dims_named = list(dict.fromkeys(l["entity"] for l in used if not l["entity"].endswith(" Key")))[:4]
         where = sorted({f"{tables[k]['datasource']} / {tables[k]['schema']}" for k in group})
         description = (f"{' and '.join(subjects) if len(subjects) < 3 else ', '.join(subjects[:-1]) + ' and ' + subjects[-1]}"
                        + (f", by {', '.join(dims_named[:-1]) + ' and ' + dims_named[-1] if len(dims_named) > 1 else dims_named[0]}" if dims_named else "")
                        + f". From {', '.join(where)}.")[:250]
         spec = mp.spec_from_tables(cat, {}, name,
-                                   entities=[{"name": r["name"], "members": r["members"], "home": r["home"]} for r in merged.values() if len(r["members"]) >= 2])
+                                   entities=[{"name": r["name"], "members": list(dict.fromkeys(r["members"])), "home": r["home"], "role_playing": r["role_playing"]}
+                                             for r in merged.values() if len(set(r["members"])) >= 2], strict_entities=True,
+                                   metric_tables={tables[k]["table"] for k in st["facts"]})
         spec["description"] = description
         # every draft is checked as the builder would check it; one the check refuses is offered for a decision, not a build
         sub = {"tables": [tables[k] for k in group]}
@@ -755,7 +930,7 @@ def recommend(inferred: dict, options: dict | None = None) -> list[dict]:
         try:
             findings = mp.check(mp.from_spec(spec, sub, measured_prof))
             orphans = [x for x in findings if x["level"] == "error" and x["code"] == "attribute_reaches_no_metric"]
-            if orphans and opts.get("prune_unreachable", True) and len(orphans) == sum(1 for x in findings if x["level"] == "error"):
+            if orphans and opts.get("prune_unreachable", True) and not any(l.get("composite") or l.get("role_playing") for l in used) and len(orphans) == sum(1 for x in findings if x["level"] == "error"):
                 # attributes that reach no numbers in this model are left out (and named), rather than holding the model back
                 gone = {x["text"].split(" reaches ")[0] for x in orphans}
                 spec["attributes"] = [a for a in spec["attributes"] if a["name"] not in gone]
@@ -763,7 +938,19 @@ def recommend(inferred: dict, options: dict | None = None) -> list[dict]:
                 findings = mp.check(mp.from_spec(spec, sub, measured_prof))
         except mp.PlanError as e:
             findings = [{"level": "error", "code": "plan", "text": str(e)}]
+        # A structural check cannot prove numeric correctness. Keep each uncertainty attached to the candidate,
+        # and refuse unsupported joins instead of producing a plausible-looking draft with a partial key.
+        semantic_warnings, metric_semantics = _semantic_review(st, tables, spec)
+        spec["notes"] = ["Recommended from metadata only; numeric validation is pending.", *semantic_warnings]
+        if any(l.get("composite") for l in used):
+            findings.insert(0, {"level": "error", "code": "composite_key", "text": "A join requires every component of a composite key; this draft needs an explicit composite-key design before building."})
+        if any(l.get("role_playing") for l in used):
+            findings.insert(0, {"level": "error", "code": "role_playing", "text": "Several foreign-key roles share one lookup table; define separate role aliases before building."})
         problems = [x["text"] for x in findings if x["level"] == "error"]
+        omitted = sorted({l["from"] for k in group for l in adj.get(k, []) if l["to"] == k and l["from"] not in group
+                          and not (opts["cross_store"] == "avoid" and l["cross_store"])})
+        if omitted:
+            reasons.append(f"{len(omitted)} related table{'s' if len(omitted) != 1 else ''} could not fit the {opts['max_tables']}-table limit")
         # how each join is known: declared by the database (or confirmed by a person), checked against the data or the
         # database's statistics, or only by a shared name (to judge before building)
         joins = {"declared": 0, "data": 0, "statistics": 0, "name": 0}
@@ -777,21 +964,41 @@ def recommend(inferred: dict, options: dict | None = None) -> list[dict]:
             reasons.append("one wide table with its own measures and descriptions: a model on its own")
         if joins["name"]:
             reasons.append(f"{joins['name']} of its {len(used)} join{'s' if len(used) != 1 else ''} rest{'s' if joins['name'] == 1 else ''} on a shared column name only: "
-                           "check them before building (an administrator can turn on data checks)")
+                           "confirm the key meaning and uniqueness from the model contract before building")
         out.append({"checked": not problems, "problems": problems[:3], "kind": st.get("kind", "star"), "joins": joins,
+                    "semantic_status": "needs_review" if semantic_warnings or problems else "validation_pending",
+                    "semantic_warnings": semantic_warnings, "metric_semantics": metric_semantics,
+                    "omitted_related_tables": [{"table_key": k, "table": tables[k]["table"], "reason": "table_limit"} for k in omitted],
                     "name": name, "fact": tables[f]["table"], "fact_tables": [tables[x]["table"] for x in st["facts"]], "tables": [t["table"] for t in cat["tables"]], "table_keys": [tkey(t) for t in cat["tables"]],
-                    "stores": stores, "facts": n_facts, "score": score, "confidence": round(conf, 2), "modeled": round(modeled, 2), "reasons": reasons, "spec": spec})
+                    "stores": stores, "cross_store": len(datasource_ids) > 1, "facts": n_facts, "score": score, "confidence": round(conf, 2), "modeled": round(modeled, 2), "reasons": reasons, "spec": spec})
     if opts.get("referenced") or opts.get("dictionary"):
         for rec in out:
             _with_references(rec, opts.get("referenced") or {}, opts.get("dictionary") or {})
     return sorted(out, key=lambda r: (not r["checked"], -r["score"]))      # ready to build first
 
 
+
+def _json_scopes(value: Any, anchors: bool = False) -> list[dict]:
+    """Structured CLI boundary: delimiters belong to identifiers, not to a home-grown serialization format."""
+    if not isinstance(value, list) or any(not isinstance(sc, dict) for sc in value):
+        raise ValueError("sources/anchors must be a JSON list of objects")
+    for sc in value:
+        required = ("datasource", "schema", "table") if anchors else ("datasource",)
+        if any(not isinstance(sc.get(k), str) or not sc[k] for k in required):
+            raise ValueError("Each source/anchor must name its datasource" + (", schema and table" if anchors else ""))
+        if sc.get("schema") is not None and not isinstance(sc["schema"], str):
+            raise ValueError("Source schema must be a string")
+        for field in ("tables", "patterns"):
+            if field in sc and (not isinstance(sc[field], list) or any(not isinstance(x, str) or not x for x in sc[field])):
+                raise ValueError(f"Source {field} must be a list of nonempty strings")
+    return value
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("scan")
-    s.add_argument("--source", action="append", required=True, help="DATASOURCE:SCHEMA[:PATTERN,PATTERN]")
+    s.add_argument("--source", action="append", default=[], help="DATASOURCE:SCHEMA[:PATTERN,PATTERN]")
+    s.add_argument("--sources-json", help="JSON file of scope objects; preserves colons and commas in identifiers")
     s.add_argument("--out", required=True)
     s.add_argument("--options", help="JSON options")
     r = sub.add_parser("recommend")
@@ -803,7 +1010,10 @@ def main() -> int:
     f = sub.add_parser("find", help="the tables that fit a description, from metadata only (no table is read)")
     f.add_argument("--query", default="")
     f.add_argument("--source", action="append", default=[], help="DATASOURCE[:SCHEMA[:PATTERN,PATTERN]]; none = every source")
+    f.add_argument("--sources-json", help="JSON file of scope objects; preserves colons and commas in identifiers")
+    f.add_argument("--anchors-json", help="JSON file of {datasource,schema,table} anchors with exact identifiers")
     f.add_argument("--references", help="JSON file: the references as Ace's reader extracted them")
+    f.add_argument("--search-options", help="JSON file: approved metadata vocabulary aliases and domain groups")
     f.add_argument("--usage", help="JSON file: {table name: number of models using it}")
     f.add_argument("--budget", type=float, default=120.0)
     f.add_argument("--max-tables", type=int, default=24)
@@ -821,11 +1031,16 @@ def main() -> int:
         for src in a.source:
             ds, *rest = src.split(":")
             scopes.append({"datasource": ds, **({"schema": rest[0]} if rest and rest[0] else {}), **({"tables": rest[1].split(",")} if len(rest) > 1 and rest[1] else {})})
+        if a.sources_json:
+            scopes = _json_scopes(live.load_json(a.sources_json, "sources"))
+        anchors = _json_scopes(live.load_json(a.anchors_json, "anchors"), anchors=True) if a.anchors_json else [dict(zip(("datasource", "schema", "table"), x.split(":", 2))) for x in a.anchor]
         found = mosaic_find.find(m, a.query, scopes or None, references=live.load_json(a.references, "references") if a.references else None,
-                                 usage=live.load_json(a.usage, "usage") if a.usage else None, budget=a.budget, max_tables=a.max_tables,
-                                 anchors=[dict(zip(("datasource", "schema", "table"), x.split(":", 2))) for x in a.anchor], datasets=a.datasets,
+                                 usage=live.load_json(a.usage, "usage") if a.usage else None,
+                                 search_options=live.load_json(a.search_options, "search options") if a.search_options else None, budget=a.budget, max_tables=a.max_tables,
+                                 anchors=anchors, datasets=a.datasets,
                                  per_source=a.per_source, log=lambda x: print(x, flush=True))
-        json.dump(found, open(a.out, "w"), default=str)
+        with open(a.out, "w") as handle:
+            json.dump(found, handle, default=str)
         print(f"found {len(found['picked'])} tables of {found['candidates']} matching, in {len(found['read'])} schemas read" + (f"; {len(found['left'])} left" if found["left"] else ""))
         return 0
     if a.cmd == "scan":
@@ -835,12 +1050,18 @@ def main() -> int:
         for src in a.source:
             ds, schema, *rest = src.split(":")
             scopes.append({"datasource": ds, "schema": schema, "patterns": rest[0].split(",") if rest else ["*"]})
+        if a.sources_json:
+            scopes = _json_scopes(live.load_json(a.sources_json, "sources"))
+            scopes = [{**sc, "patterns": sc.get("patterns") or sc.get("tables") or ["*"]} for sc in scopes]
+        if not scopes or any(not sc.get("schema") for sc in scopes):
+            ap.error("scan requires a datasource and schema in --source or --sources-json")
         g = scan(m, scopes, opts, log=lambda x: print(x, flush=True))
         catalog_stats(m, g, log=lambda x: print(x, flush=True))        # the databases' own statistics: metadata, always
-        if not opts.get("skip_data_check"):
+        if opts.get("skip_data_check", True) is False:
             measure_keys(m, g, opts, log=lambda x: print(x, flush=True))
             confirm(m, g, opts, budget=int(opts.get("data_check_budget", 40)), log=lambda x: print(x, flush=True))
-        json.dump(g, open(a.out, "w"), default=str)
+        with open(a.out, "w") as handle:
+            json.dump(g, handle, default=str)
         print(f"graph written: {len(g['tables'])} tables, {len(g['fks'])} declared foreign keys → {a.out}")
         return 0
     import mosaic_live as live
@@ -852,7 +1073,8 @@ def main() -> int:
         opts = {**opts, "referenced": graph["referenced"], "dictionary": graph["dictionary"]}
     inf = infer(graph, opts, json.loads(a.curation) if a.curation else None)
     recs = recommend(inf, opts)
-    json.dump({"entities": inf["entities"], "links": inf["links"], "recommendations": recs}, open(a.out, "w"), default=str)
+    with open(a.out, "w") as handle:
+        json.dump({"entities": inf["entities"], "links": inf["links"], "recommendations": recs}, handle, default=str)
     for rec in recs[:10]:
         print(f"{rec['score']:.2f}  {rec['name']}: {len(rec['tables'])} tables, {'/'.join(rec['stores'])} — " + "; ".join(rec["reasons"][:3]))
     return 0

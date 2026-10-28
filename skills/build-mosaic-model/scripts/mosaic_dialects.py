@@ -271,7 +271,7 @@ def keys_sqls(dbms: str, schema: str) -> list[str]:
 
 def _keys_sql(dbms: str, schema: str):
     f, s = flavor(dbms), lit(schema)
-    ansi = ("SELECT tc.table_name AS t, kcu.column_name AS c, tc.constraint_type AS k, ccu.table_name AS pt, ccu.column_name AS pc, tc.constraint_name AS n "  # nosec B608  # catalog names pass safe_name/lit; paging wraps generated SQL with bounded integers
+    ansi = ("SELECT tc.table_name AS t, kcu.column_name AS c, tc.constraint_type AS k, ccu.table_name AS pt, ccu.column_name AS pc, tc.constraint_name AS n, ccu.table_schema AS ps, kcu.ordinal_position AS o "  # nosec B608  # catalog names pass safe_name/lit; paging wraps generated SQL with bounded integers
             "FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON kcu.constraint_name=tc.constraint_name "
             "AND kcu.table_schema=tc.table_schema AND kcu.table_name=tc.table_name LEFT JOIN information_schema.constraint_column_usage ccu "
             f"ON ccu.constraint_name=tc.constraint_name AND ccu.table_schema=tc.table_schema WHERE tc.table_schema={s} AND tc.constraint_type IN ('PRIMARY KEY','FOREIGN KEY')")
@@ -279,41 +279,41 @@ def _keys_sql(dbms: str, schema: str):
         # pg_constraint, not information_schema: the standard views hide constraints of tables the reader only SELECTs,
         # and pair the columns of a several-column key with each other
         return ("SELECT cl.relname AS t, a.attname AS c, CASE co.contype WHEN 'p' THEN 'PRIMARY KEY' ELSE 'FOREIGN KEY' END AS k, "  # nosec B608  # catalog names pass safe_name/lit; paging wraps generated SQL with bounded integers
-                "rcl.relname AS pt, ra.attname AS pc, co.conname AS n FROM pg_constraint co JOIN pg_class cl ON cl.oid=co.conrelid "
+                "rcl.relname AS pt, ra.attname AS pc, co.conname AS n, rns.nspname AS ps, u.ord AS o FROM pg_constraint co JOIN pg_class cl ON cl.oid=co.conrelid "
                 "JOIN pg_namespace ns ON ns.oid=cl.relnamespace CROSS JOIN LATERAL unnest(co.conkey, co.confkey) WITH ORDINALITY AS u(att, fatt, ord) "
-                "JOIN pg_attribute a ON a.attrelid=co.conrelid AND a.attnum=u.att LEFT JOIN pg_class rcl ON rcl.oid=co.confrelid "
+                "JOIN pg_attribute a ON a.attrelid=co.conrelid AND a.attnum=u.att LEFT JOIN pg_class rcl ON rcl.oid=co.confrelid LEFT JOIN pg_namespace rns ON rns.oid=rcl.relnamespace "
                 f"LEFT JOIN pg_attribute ra ON ra.attrelid=co.confrelid AND ra.attnum=u.fatt WHERE ns.nspname={s} AND co.contype IN ('p','f')")
     if f in ("redshift", "databricks"):
         return ansi
     if f in ("sqlserver", "synapse"):
         # the catalog views: INFORMATION_SCHEMA misses a foreign key that references a unique index
-        return [("SELECT t.name AS t, c.name AS c, 'FOREIGN KEY' AS k, rt.name AS pt, rc.name AS pc, fk.name AS n FROM sys.foreign_key_columns fkc "  # nosec B608  # catalog names pass safe_name/lit; paging wraps generated SQL with bounded integers
+        return [("SELECT t.name AS t, c.name AS c, 'FOREIGN KEY' AS k, rt.name AS pt, rc.name AS pc, fk.name AS n, rsc.name AS ps, fkc.constraint_column_id AS o FROM sys.foreign_key_columns fkc "  # nosec B608  # catalog names pass safe_name/lit; paging wraps generated SQL with bounded integers
                 "JOIN sys.foreign_keys fk ON fk.object_id=fkc.constraint_object_id JOIN sys.tables t ON t.object_id=fkc.parent_object_id "
                 "JOIN sys.schemas sc ON sc.schema_id=t.schema_id JOIN sys.columns c ON c.object_id=fkc.parent_object_id AND c.column_id=fkc.parent_column_id "
-                "JOIN sys.tables rt ON rt.object_id=fkc.referenced_object_id JOIN sys.columns rc ON rc.object_id=fkc.referenced_object_id AND rc.column_id=fkc.referenced_column_id "
+                "JOIN sys.tables rt ON rt.object_id=fkc.referenced_object_id JOIN sys.schemas rsc ON rsc.schema_id=rt.schema_id JOIN sys.columns rc ON rc.object_id=fkc.referenced_object_id AND rc.column_id=fkc.referenced_column_id "
                 f"WHERE sc.name={s}"),
                 ("SELECT t.name AS t, c.name AS c, 'PRIMARY KEY' AS k, NULL AS pt, NULL AS pc, i.name AS n FROM sys.indexes i JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id "  # nosec B608  # catalog names pass safe_name/lit; paging wraps generated SQL with bounded integers
                 "JOIN sys.tables t ON t.object_id=i.object_id JOIN sys.schemas sc ON sc.schema_id=t.schema_id JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id "
                 f"WHERE i.is_primary_key=1 AND sc.name={s}")]
     if f == "mysql":
         return ("SELECT k.TABLE_NAME AS t, k.COLUMN_NAME AS c, CASE WHEN k.CONSTRAINT_NAME='PRIMARY' THEN 'PRIMARY KEY' ELSE 'FOREIGN KEY' END AS k, "  # nosec B608  # catalog names pass safe_name/lit; paging wraps generated SQL with bounded integers
-                "k.REFERENCED_TABLE_NAME AS pt, k.REFERENCED_COLUMN_NAME AS pc, k.CONSTRAINT_NAME AS n FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE k "
+                "k.REFERENCED_TABLE_NAME AS pt, k.REFERENCED_COLUMN_NAME AS pc, k.CONSTRAINT_NAME AS n, k.REFERENCED_TABLE_SCHEMA AS ps, k.ORDINAL_POSITION AS o FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE k "
                 f"WHERE k.TABLE_SCHEMA={s} AND (k.CONSTRAINT_NAME='PRIMARY' OR k.REFERENCED_TABLE_NAME IS NOT NULL)")
     if f == "bigquery":
         ds = "`" + schema.replace("`", "") + "`"
-        return ("SELECT tc.table_name AS t, kcu.column_name AS c, tc.constraint_type AS k, ccu.table_name AS pt, ccu.column_name AS pc, tc.constraint_name AS n "  # nosec B608  # catalog names pass safe_name/lit; paging wraps generated SQL with bounded integers
+        return ("SELECT tc.table_name AS t, kcu.column_name AS c, tc.constraint_type AS k, ccu.table_name AS pt, ccu.column_name AS pc, tc.constraint_name AS n, ccu.table_schema AS ps, kcu.ordinal_position AS o "  # nosec B608  # catalog names pass safe_name/lit; paging wraps generated SQL with bounded integers
                 f"FROM {ds}.INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc JOIN {ds}.INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu ON kcu.constraint_name=tc.constraint_name "
                 f"LEFT JOIN {ds}.INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE ccu ON ccu.constraint_name=tc.constraint_name AND tc.constraint_type='FOREIGN KEY' "
                 "WHERE tc.constraint_type IN ('PRIMARY KEY','FOREIGN KEY')")
     if f == "oracle":
         return ("SELECT c.TABLE_NAME AS t, cc.COLUMN_NAME AS c, CASE c.CONSTRAINT_TYPE WHEN 'P' THEN 'PRIMARY KEY' ELSE 'FOREIGN KEY' END AS k, "  # nosec B608  # catalog names pass safe_name/lit; paging wraps generated SQL with bounded integers
-                "rc.TABLE_NAME AS pt, rcc.COLUMN_NAME AS pc, c.CONSTRAINT_NAME AS n FROM ALL_CONSTRAINTS c "
+                "rc.TABLE_NAME AS pt, rcc.COLUMN_NAME AS pc, c.CONSTRAINT_NAME AS n, rc.OWNER AS ps, cc.POSITION AS o FROM ALL_CONSTRAINTS c "
                 "JOIN ALL_CONS_COLUMNS cc ON cc.OWNER=c.OWNER AND cc.CONSTRAINT_NAME=c.CONSTRAINT_NAME "
                 "LEFT JOIN ALL_CONSTRAINTS rc ON rc.OWNER=c.R_OWNER AND rc.CONSTRAINT_NAME=c.R_CONSTRAINT_NAME "
                 "LEFT JOIN ALL_CONS_COLUMNS rcc ON rcc.OWNER=rc.OWNER AND rcc.CONSTRAINT_NAME=rc.CONSTRAINT_NAME AND rcc.POSITION=cc.POSITION "
                 f"WHERE c.OWNER={s} AND c.CONSTRAINT_TYPE IN ('P','R')")
     if f == "db2":
-        return ("SELECT k.TABNAME AS t, k.COLNAME AS c, CASE tc.TYPE WHEN 'P' THEN 'PRIMARY KEY' ELSE 'FOREIGN KEY' END AS k, r.REFTABNAME AS pt, pk.COLNAME AS pc, k.CONSTNAME AS n "  # nosec B608  # catalog names pass safe_name/lit; paging wraps generated SQL with bounded integers
+        return ("SELECT k.TABNAME AS t, k.COLNAME AS c, CASE tc.TYPE WHEN 'P' THEN 'PRIMARY KEY' ELSE 'FOREIGN KEY' END AS k, r.REFTABNAME AS pt, pk.COLNAME AS pc, k.CONSTNAME AS n, r.REFTABSCHEMA AS ps, k.COLSEQ AS o "  # nosec B608  # catalog names pass safe_name/lit; paging wraps generated SQL with bounded integers
                 "FROM SYSCAT.KEYCOLUSE k JOIN SYSCAT.TABCONST tc ON tc.TABSCHEMA=k.TABSCHEMA AND tc.CONSTNAME=k.CONSTNAME "
                 "LEFT JOIN SYSCAT.REFERENCES r ON r.TABSCHEMA=k.TABSCHEMA AND r.CONSTNAME=k.CONSTNAME "
                 "LEFT JOIN SYSCAT.KEYCOLUSE pk ON pk.TABSCHEMA=r.REFTABSCHEMA AND pk.CONSTNAME=r.REFKEYNAME AND pk.COLSEQ=k.COLSEQ "

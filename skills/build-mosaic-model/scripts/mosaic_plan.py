@@ -34,6 +34,8 @@ class Catalog:
     def __init__(self, cat: dict[str, Any]):
         self.tables = {t["table"]: t for t in cat["tables"]}
         self._fold = {t.casefold(): t for t in self.tables}
+        if len(self._fold) != len(cat["tables"]):
+            raise PlanError("Selected sources repeat a table name across schemas or stores; assign distinct table aliases before building.")
 
     def table(self, name: str) -> str:
         real = self._fold.get(name.casefold())
@@ -56,11 +58,12 @@ def from_spec(spec: dict[str, Any], cat: dict[str, Any], prof: dict[str, Any] | 
     plan: dict[str, Any] = {
         "name": spec["name"], "description": spec.get("description", ""), "serve_mode": spec.get("serve_mode", "in_memory"),
         "tables": [], "attributes": [], "metrics": [], "relationships": [], "derived": copy.deepcopy(spec.get("derived", [])),
-        "conditional": copy.deepcopy(spec.get("conditional", [])), "notes": [], "keys": {},
+        "conditional": copy.deepcopy(spec.get("conditional", [])), "notes": list(spec.get("notes") or []), "keys": {},
     }
     for s in spec["sources"]:
         t = c.tables[c.table(s["table"])]
-        plan["tables"].append({k: t[k] for k in ("datasource_id", "datasource", "dbms", "schema", "table", "columns")})
+        plan["tables"].append({**{k: t[k] for k in ("datasource_id", "datasource", "dbms", "schema", "table", "columns")},
+                               **({"pk": list(t["pk"])} if t.get("pk") else {})})
 
     for a in spec["attributes"]:
         id_exprs, descs = [], []
@@ -116,7 +119,9 @@ def _table_keys(plan: dict, prof: dict) -> dict[str, dict]:
     conformed key, not a surrogate only the dimensions use). Ties beyond that are refused, not guessed."""
     out: dict[str, dict] = {}
     measured_on = {m["table"] for m in plan["metrics"]}
-    for t in (x["table"] for x in plan["tables"]):
+    for table in plan["tables"]:
+        t = table["table"]
+        declared = [x.casefold() for x in table.get("pk", [])]
         scored = []
         for a in plan["attributes"]:
             ids = _id_columns(a)
@@ -134,11 +139,13 @@ def _table_keys(plan: dict, prof: dict) -> dict[str, dict]:
             uniq = _unique(prof, t, ids[t])
             if uniq is False:
                 continue
+            if len(declared) > 1 and ids[t].casefold() in declared and uniq is not True:
+                continue                    # a component of a composite PK is not the table's unique key
             own = re.sub(KEY_COLUMN, "", ids[t]).strip("_").casefold()
             subj = re.sub(r"[^a-z0-9]", "", STAR_ANY.sub("", t).casefold())
             # ITEM_SALES_KEY on FACT_ITEM_SALES, or MDS_PRODUCT_CODE on DIM_PRODUCT (the table's subject in the key's name)
             named_for_table = bool(own) and (own.replace("_", "") in re.sub(r"[^a-z0-9]", "", t.casefold()) or (len(subj) > 2 and subj in own.replace("_", "")))
-            score = (4 if a["lookup"] == t else 0) + (2 if len(ids) > 1 else 0) + (1 if len(a["forms"]) > 1 else 0) + (1 if KEYISH.search(ids[t]) else 0)
+            score = (16 if declared == [ids[t].casefold()] else 0) + (4 if a["lookup"] == t else 0) + (2 if len(ids) > 1 else 0) + (1 if len(a["forms"]) > 1 else 0) + (1 if KEYISH.search(ids[t]) else 0)
             # designation, then breadth (the conformed key), then a key named for its own table; measured unique beats
             # not measured; never compares None
             scored.append((score, len(ids), named_for_table, uniq is True, a["name"]))
@@ -378,7 +385,7 @@ DESCRIPTIVE_NUMBER = re.compile(r"(?:^|_)(date_index|date_idx|year|yr|month|mon|
 MEASURE_NUMBER = re.compile(r"(amount|amt|price|cost|revenue|sales|spend|fee|qty|quantity|units|weight|volume|area|capacity|budget|target|balance|total|count|cnt|duration|mins|minutes|hours|hrs|seconds|secs|pct|percent|rate|ratio|score|margin)", re.I)
 # measures that read as an average, not a total
 # whole words only: "ratio" inside DURATION_MINS made every duration an average (seen live 2026-10-22)
-AVERAGED = re.compile(r"(?:^|[_\s])(pct|percent|percentage|rate|ratio|avg|average|mean|score|index|margin|utili[sz]ation|efficiency|yield|apr|apy|interest_rate|likelihood|probability)(?=$|[_\s])", re.I)
+AVERAGED = re.compile(r"(?:^|[_\s])(pct|percent|percentage|rate|ratio|avg|average|mean|score|index|margin|utili[sz]ation|efficiency|yield|apr|apy|interest_rate|likelihood|probability|unit_price|unit_cost|list_price)(?=$|[_\s])", re.I)
 
 
 def subject(table: str) -> str:
@@ -387,7 +394,7 @@ def subject(table: str) -> str:
 
 
 def spec_from_tables(cat: dict[str, Any], prof: dict[str, Any] | None = None, name: str = "Generated model",
-                     entities: list[dict] | None = None) -> dict[str, Any]:
+                     entities: list[dict] | None = None, strict_entities: bool = False, metric_tables: set[str] | None = None) -> dict[str, Any]:
     """keys (…_ID, …_KEY, …_NUMBER, …_CODE) become attributes shared by every table that carries them, in each table's
     own spelling, defined by the table where they are unique; other text and dates become attributes of their table;
     numbers become summed metrics. A bare `id` is never shared: it is a different thing on every table.
@@ -400,7 +407,8 @@ def spec_from_tables(cat: dict[str, Any], prof: dict[str, Any] | None = None, na
     for e in entities or []:
         members = [(t, c) for t, c in e["members"] if any(x["table"] == t and any(col["name"] == c for col in x["columns"]) for x in tables)]
         if len(members) >= 2:
-            pre.append({"name": e["name"], "members": members, "home": e.get("home") if any(t == e.get("home") for t, _ in members) else members[0][0]})
+            pre.append({"name": e["name"], "members": members, "home": e.get("home") if any(t == e.get("home") for t, _ in members) else members[0][0],
+                        "role_playing": bool(e.get("role_playing"))})
     # alternate keys: two keys of one thing (STORE_KEY and STORE_NUMBER, ITEM_KEY and ITEM_CODE) homed on the same table
     # and carried by the same tables are one attribute. The readable one (a code, then a number, then an id) is its ID
     # on every table; the other becomes a form on its home, so neither competes to be the table's key.
@@ -409,7 +417,7 @@ def spec_from_tables(cat: dict[str, Any], prof: dict[str, Any] | None = None, na
     groups: dict[tuple, list[dict]] = {}
     for e in pre:
         home_col = next((c for t, c in e["members"] if t == e["home"]), e["members"][0][1])
-        groups.setdefault((e["home"], stem_of(home_col).split("_")[-1]), []).append({**e, "home_col": home_col, "tables": frozenset(t for t, _ in e["members"])})
+        groups.setdefault((e["home"], e["name"] if e.get("role_playing") else stem_of(home_col).split("_")[-1]), []).append({**e, "home_col": home_col, "tables": frozenset(t for t, _ in e["members"])})
     # keys of one thing on one home (PLANT_KEY beside SOURCE_PLANT_ID on DIM_PLANT) whose tables are within the main
     # key's tables are its alternate forms; keys reaching other tables stay their own attributes
     split: dict[tuple, list[dict]] = {}
@@ -443,7 +451,9 @@ def spec_from_tables(cat: dict[str, Any], prof: dict[str, Any] | None = None, na
     for t in tables:
         for c in t["columns"]:
             if KEY_COLUMN.search(c["name"]) and not calendar_part.search(c["name"]) and _family(c.get("dataType")) in ("number", "text"):
-                k = c["name"].casefold() if c["name"].casefold() != "id" else f"{t['table'].casefold()}.id"
+                # Discovery has already judged every candidate link. Do not silently recreate a rejected join from
+                # a shared spelling while drafting its specification.
+                k = f"{t['table'].casefold()}.{c['name'].casefold()}" if strict_entities or c["name"].casefold() == "id" else c["name"].casefold()
                 keys.setdefault(k, []).append((t["table"], c["name"]))
     attributes, metrics = [], []
     keyed = set()
@@ -503,7 +513,8 @@ def spec_from_tables(cat: dict[str, Any], prof: dict[str, Any] | None = None, na
             if (t["table"], c["name"]) in keyed:
                 continue
             fam = _family(c.get("dataType"))
-            if fam == "number" and (DESCRIPTIVE_NUMBER.search(c["name"]) or dimension and not MEASURE_NUMBER.search(c["name"])):
+            if fam == "number" and (DESCRIPTIVE_NUMBER.search(c["name"]) or metric_tables is not None and t["table"] not in metric_tables
+                                    or dimension and not MEASURE_NUMBER.search(c["name"])):
                 attributes.append({"name": unique_name(_friendly(c["name"]), t["table"]), "description": "", "lookup_table": t["table"],
                                    "time": False, "forms": [{"name": "ID", "category": "ID", "table": t["table"], "column": c["name"]}]})
             elif fam == "number":

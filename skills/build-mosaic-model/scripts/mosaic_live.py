@@ -107,21 +107,31 @@ def datasource(m: bm.MSTR, name_or_id: str, cache: dict[str, dict] | None = None
     return cache[ds_id]
 
 
-def catalog(m: bm.MSTR, refs: list[dict[str, str]]) -> dict[str, Any]:
+def catalog(m: bm.MSTR, refs: list[dict[str, str]], errors: list[dict] | None = None) -> dict[str, Any]:
     """refs: [{datasource (name or id), schema, table}] → {tables: [...]} with exact column names and mapped types"""
     cache: dict[str, dict] = {}
     tables = []
     for ref in refs:
-        ds = datasource(m, ref["datasource"], cache)
-        md = bm.fetch_table_metadata(m, ds["id"], ref["schema"], ref["table"])
+        try:
+            ds = datasource(m, ref["datasource"], cache)
+            md = bm.fetch_table_metadata(m, ds["id"], ref["schema"], ref["table"])
+        except RuntimeError as exc:
+            if errors is None:
+                raise
+            errors.append({"datasource": ref["datasource"], "schema": ref["schema"], "table": ref["table"],
+                           "stage": "columns", "error": type(exc).__name__})
+            continue
         cols = []
         for c in md["columns"]:
             name = c.get("name") or c.get("columnName")
             dt = c.get("dataType")
             dt = {"type": dt} if isinstance(dt, str) else dt if isinstance(dt, dict) else {"type": "utf8_char"}
-            cols.append({"name": name, "dataType": bm.sot.normalize_datatype(dt)})
+            description = c.get("description") or c.get("comment") or c.get("remarks")
+            cols.append({"name": name, "dataType": bm.sot.normalize_datatype(dt),
+                         **({"description": str(description)[:2000]} if description else {})})
+        description = md.get("description") or md.get("comment") or md.get("remarks")
         tables.append({"datasource_id": ds["id"], "datasource": ds["name"], "dbms": ds["dbms"], "schema": ref["schema"],
-                       "table": ref["table"], "columns": cols})
+                       "table": ref["table"], "columns": cols, **({"description": str(description)[:2000]} if description else {})})
     return {"tables": tables}
 
 
