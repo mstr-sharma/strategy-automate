@@ -409,7 +409,7 @@ def view_copies(tables: dict) -> set:
         name = t["table"].casefold()
         for cut in range(1, len(name)):
             kk = by_name.get((t["datasource_id"], t.get("schema"), name[:cut]))
-            if kk is None or kk == k or not re.fullmatch(r"_(v|vw|view|copy|backup|bak)", name[cut:]):
+            if kk is None or kk == k or not re.fullmatch(r"_(v|vw|view|copy|backup|bak|raw|raw_upload|upload|stg|staging)", name[cut:]):
                 continue
             if cols(k) and cols(k) == cols(kk):
                 out.add(k)
@@ -418,6 +418,32 @@ def view_copies(tables: dict) -> set:
 
 
 STAR_ROLE = re.compile(r"^(dim|dimension|d|fact|fct|f|lkp|lookup|lu|ref|rel|bridge|brg|agg|xref)_", re.I)
+
+
+def _prefix_datasets(tables: dict[str, dict]) -> set[str]:
+    """name prefixes that mark a self-contained dataset: three or more tables of one schema share the prefix and one of
+    them is the lookup for a key its siblings carry (KEYSIGHT_PRODUCTS for PRODUCT_ID on KEYSIGHT_ORDER_LINES). Facts
+    that only share a prefix (TXN_BOOKING4, TXN_BOOKING6) and look their keys up in LU_ tables are not one"""
+    groups: dict[tuple, list[dict]] = {}
+    for t in tables.values():
+        parts = t["table"].split("_")
+        if len(parts) < 2 or STAR_ROLE.match(t["table"]) or re.match(r"^SD_[A-Z]+_[A-Z0-9]+_\d{8}_\d{4}_", t["table"], re.I):
+            continue
+        groups.setdefault((t.get("datasource_id"), t.get("schema"), parts[0].casefold()), []).append(t)
+    out = set()
+    for (_, _, tok), members in groups.items():
+        if len(members) < 3 or len(tok) < 3:
+            continue
+        def stem(x: str) -> str:
+            x = x.casefold()
+            return x[:-3] if x.endswith("ies") else x[:-1] if x.endswith("s") and not x.endswith("ss") else x
+        subjects = {stem("_".join(t["table"].split("_")[1:])): t for t in members}
+        for t in members:
+            keys = {stem(re.sub(mp.KEY_COLUMN, "", c["name"]).strip("_")) for c in t["columns"] if mp.KEY_COLUMN.search(c["name"])}
+            if any(s in keys and subjects[s] is not t for s in subjects):
+                out.add(tok)
+                break
+    return out
 
 
 def _family_key(name: str, schema: str = "", datasource: str = "") -> str:
@@ -457,7 +483,15 @@ def infer(graph: dict, options: dict | None = None, curation: dict | None = None
     for (ds, schema), n in list(per_schema.items()):
         per_schema[(ds, schema)] = max(n, (graph.get("schema_sizes") or {}).get(f"{ds}/{schema}", 0))
     star_schema = {(t.get("datasource_id"), t.get("schema")) for t in tables.values() if mp.STAR_DIM.match(t["table"])}
+    datasets = _prefix_datasets(tables)
     for t in tables.values():
+        # a named dataset (KEYSIGHT_ORDER_LINES, KEYSIGHT_PRODUCTS, KEYSIGHT_CUSTOMERS) is one family wherever its tables
+        # live, so a schema holding several datasets beside a few DIM_/LU_ tables is not read as one star, and the same
+        # dataset's tables in another schema or database join it
+        tok = t["table"].split("_")[0].casefold() if "_" in t["table"] else ""
+        if tok in datasets and not re.match(r"^SD_[A-Z]+_[A-Z0-9]+_\d{8}_\d{4}_", t["table"], re.I):
+            t["family"] = f"dataset#{tok}"
+            continue
         # a schema with dimension or lookup tables (DIM_, LU_) and up to 60 tables is one star: its facts join its
         # lookups whatever they are called (TXN_BOOKING with LU_RESIDENCY)
         if (t.get("datasource_id"), t.get("schema")) in star_schema and per_schema[(t.get("datasource_id"), t.get("schema"))] <= opts.get("star_schema", 60) \

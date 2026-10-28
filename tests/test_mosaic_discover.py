@@ -739,3 +739,42 @@ class MetadataOnlyRecommendationTests(unittest.TestCase):
                 g = md.scan(object(), [{"datasource": "A", "schema": "s", "patterns": [requested]}])
             self.assertEqual([t["table"] for t in catalog.call_args[0][1]], [requested])
             self.assertEqual(g["selected_tables"], ["A/s/" + requested])
+
+
+class MixedSchemaDatasets(unittest.TestCase):
+    """One schema holding several named datasets beside a few DIM_/LU_ tables, with part of one dataset in another
+    database (a real demo schema, reduced to invented names)."""
+
+    def graph(self):
+        F = {"type": "double"}
+        ts = [
+            table("SF", "Snowflake", "W", "ACME_ORDER_LINES", [("ORDER_LINE_ID", N), ("CUSTOMER_ID", N), ("PRODUCT_ID", N), ("PARTNER_ID", N), ("NET_REVENUE", F)], rows=20000),
+            table("SF", "Snowflake", "W", "ACME_PRODUCTS", [("PRODUCT_ID", N), ("PRODUCT_NAME", T), ("LIST_PRICE", F)], rows=47),
+            table("SF", "Snowflake", "W", "ACME_CUSTOMERS", [("CUSTOMER_ID", N), ("CUSTOMER_NAME", T)], rows=320),
+            table("SF", "Snowflake", "W", "ACME_PARTNERS", [("PARTNER_ID", N), ("PARTNER_NAME", T)], rows=19),
+            table("SF", "Snowflake", "W", "ACME_CUSTOMERS_RAW_UPLOAD", [("CUSTOMER_ID", N), ("CUSTOMER_NAME", T)], rows=321),
+            table("SF", "Snowflake", "W", "LU_PRODUCT", [("PRODUCT_ID", N), ("PRODUCT_DESC", T), ("FACTORY_ID", N)], rows=25),
+            table("SF", "Snowflake", "W", "LU_FACTORY", [("FACTORY_ID", N), ("FACTORY_NAME", T)], rows=5),
+            table("SF", "Snowflake", "W", "FACT_FACTORY_PRODUCTION", [("PRODUCT_ID", N), ("FACTORY_ID", N), ("UNITS_PRODUCED", F)], rows=30000),
+            table("SF", "Snowflake", "W", "DIM_CUSTOMER", [("CUSTOMER_ID", N), ("SEGMENT", T)], rows=25),
+            table("PG", "PostgreSQL", "c360", "ACME_ORDER_FULFILLMENT", [("ORDER_LINE_ID", N), ("CUSTOMER_ID", N), ("PRODUCT_ID", N), ("DAYS_LATE", F)], rows=20000),
+        ]
+        return {"tables": {md.tkey(t): t for t in ts}, "fks": [], "scopes": [], "schema_sizes": {"SF/W": 44}}
+
+    def test_a_named_dataset_keeps_its_own_lookups_across_databases(self):
+        recs = md.recommend(md.infer(self.graph()), {})
+        whole = {"ACME_ORDER_LINES", "ACME_PRODUCTS", "ACME_CUSTOMERS", "ACME_PARTNERS", "ACME_ORDER_FULFILLMENT"}
+        self.assertTrue(any(set(r["tables"]) == whole and not r["problems"] for r in recs))     # across the two databases
+        for r in recs:
+            if "ACME_ORDER_LINES" in r["tables"]:
+                self.assertNotIn("LU_PRODUCT", r["tables"]); self.assertNotIn("DIM_CUSTOMER", r["tables"])
+            self.assertNotIn("ACME_CUSTOMERS_RAW_UPLOAD", r["tables"])     # an uploaded copy with the same columns
+
+    def test_facts_that_only_share_a_prefix_stay_in_the_star(self):
+        F = {"type": "double"}
+        ts = [table("DS", "SQL Server", "dbo", n, [("RESIDENCY_ID", N), ("MODE_ID", N), ("AMOUNT", F)], rows=900) for n in ("TXN_BOOKING", "TXN_BOOKING4", "TXN_BOOKING6")]
+        ts += [table("DS", "SQL Server", "dbo", "LU_RESIDENCY", [("RESIDENCY_ID", N), ("RESIDENCY_DESC", T)], rows=4),
+               table("DS", "SQL Server", "dbo", "LU_MODE", [("MODE_ID", N), ("MODE_DESC", T)], rows=3)]
+        self.assertEqual(md._prefix_datasets({md.tkey(t): t for t in ts}), set())
+        recs = md.recommend(md.infer({"tables": {md.tkey(t): t for t in ts}, "fks": [], "scopes": []}), {})
+        self.assertTrue(any("LU_RESIDENCY" in r["tables"] for r in recs))
