@@ -44,7 +44,7 @@ Worked example — cross-source ratio `MktCap / ((OutputSat/1e8) * Close)`:
  "dimty": null,
  "format": {"header":[],"values":[{"type":"number_category","value":"0"},{"type":"number_format","value":"#,##0.0"},{"type":"number_decimal_places","value":"1"}]}}
 ```
-On GET, the service round-trips `expression.text`, e.g. `{Market Capitalization USD} / (({Output Value Satoshis} / 100000000) * {Closing Price USD})`. The CLI `create-compound-metric` (superseded `{type:operator/metric_reference}` guess, forces identity-on) does NOT produce this shape — POST the tree directly instead.
+On GET, the service round-trips `expression.text`, e.g. `{Market Capitalization USD} / (({Output Value Satoshis} / 100000000) * {Closing Price USD})`. `build_mosaic.py create-compound-metric` posts this shape (`--formula '[A] / ([B] * [C])'`, names or objectIds; `--join outer`, §0d rule 7; `--replace` for the full-body PUT below). It replaced an earlier `{type:operator/metric_reference}` guess on `/factMetrics`.
 
 **Updating a compound metric (verified 2026-07-21):** `PATCH /metrics/{id}` is NOT a registered route (404 8004cc04), and the helper's `patch-model-object --kind metric` used to route to `/factMetrics/{id}` (500 8004d706 subtype mismatch; fixed 2026-10-05: `--kind metric` is now the derived metric's `/metrics/{id}` with PUT, `--kind fact_metric` the fact metric). Use **PUT `/api/model/dataModels/{id}/metrics/{mid}`** with a FULL body `{information, expression:{tree}, dimty: null, format}` in a changeset. GET returns the expression as read-only `text` only — you must supply the `tree` again on PUT (rebuild it; stripping text and sending an empty expression → 400 8004d718 "expression could not be set to empty").
 
@@ -188,6 +188,79 @@ just before `end_of_text`, plus a top-level `conditionality` block:
 Then **commit**. On any failure, discard the changeset — the half-built metric and its embedded
 filter go with it. The conditional metric composes like any derived metric: a tree `divide` of it
 over its unfiltered source (a filtered share of the total) evaluated correctly in the same run.
+
+## 0d. Periodic-snapshot facts — once-per-entity, filtered and point-in-time metrics (verified 2026-10-30/31)
+
+Verified on a Strategy ONE Cloud tenant, in-memory Mosaic model from an uploaded file: one snapshot fact
+table (one row per `<Entity>` per `<Period>`; rows keep repeating after the entity exits, carrying a frozen
+status and exit code) plus lookup tables. Every value below was tied to an independent recomputation from
+the source file. Field notes: `captures/2026-10-31-snapshot-fact-metric-behaviors/`. Notation: `[Entity]` =
+the entity key attribute, `[Period]` = the snapshot period attribute, `[M]` = a fact metric.
+
+**1. Once-per-entity amounts (origination-type values repeated on every snapshot row).**
+`Sum(Max([M]) {~+, [attribute:Entity]+}) {~+}` as tokens with a `report_base_level` dimty: the inner
+`Max` takes the value per entity at report grain, the outer `Sum` adds entities. Correct at every grouping
+(by pool, by period, by any entity characteristic, no grouping). A fact metric with `first_in_fact` on
+`[Period]` is NOT a substitute: it is right only when every group contains whole pools that start in the
+same period (`reference_mosaic_fact_metric_aggregation.md`). The single-level form
+`Max([M]) {~+, [Entity]+}` with `[Entity]` in dimty returns the largest single entity per group, not a total.
+
+**2. Weighted averages straight from attributes** (no extra fact metrics). `Max()` of an attribute is
+accepted inside a level cluster:
+- numerator `Sum(Max([attribute:A]) {~+, [attribute:Entity]+} * Max([W]) {~+, [attribute:Entity]+}) {~+}`
+- denominator `Sum(Max([W]) {~+,[attribute:Entity]+} * Max([attribute:A]) {~+,[attribute:Entity]+} / Max([attribute:A]) {~+,[attribute:Entity]+}) {~+}`
+  — `A/A` is NULL for entities with no `A`, so they drop out of the denominator (the product is computed
+  in SQL, where NULL propagates). This avoids integer constants in tokens (token type not verified).
+- the average = tree `divide` of the two (§0) with `formulaJoinType: "outer"` (rule 7).
+
+**3. Counting entities.** `Count<Distinct=True, UseLookupForAttributes=False>([attribute:Entity]) {~+}` counts
+distinct entities, with or without an embedded filter. **`Count` of an attribute ignores an attribute dimty
+unit on `[Period]`** (both `Distinct=True` and `False`) unless the counted attribute is related to the period
+attribute. **`Count` of a fact metric keeps it**: `Count<UseLookupForAttributes=False>([M]) {~+}` plus a
+`[Period]` unit counts the snapshot rows in the selected period, which equals entities per period.
+
+**4. A filter drops the referenced fact metric's level rule.** A conditional metric (§0c) over a fact metric
+that carries `last_in_fact` on `[Period]` evaluates over every qualifying row: repeated post-exit rows were
+summed (4× and 8× the true amount). Fix: put the period unit on the conditional metric itself —
+`dimty.dimtyUnits = [report_base_level, {"dimtyUnitType":"attribute","target":{<Period ref>},"aggregation":"last_in_fact","filtering":"apply","groupBy":true}]`
+in both the create (a) and the bind (c) bodies. Query-time; no republish.
+
+**5. Nested level metrics ignore conditional filters — do not combine them.** An embedded filter on
+`Sum(Max([M]) {~+,[Entity]+}) {~+}` was ignored (the unfiltered total came back). Nesting over a conditional
+metric, `Sum(Max([Conditional]) {~+,[Entity]+}) {~+}`, returned the conditional metric's own report-level
+value (no per-entity aggregation). Use rule 4 instead.
+
+**6. Multi-condition embedded filters work.** `qualification.tree =
+{"type":"operator","function":"and","children":[<predicate_element_list>, <predicate_element_list>, ...]}`
+(verified with 2 and 3 children; each child is the §0c (b) element-list predicate).
+
+**7. Compound join type.** Tree compounds accept `"formulaJoinType": "outer"` in the POST/PUT body (read-back
+shows `formulaJoinType`; the default is `default`). With the default, a row whose operand has no data
+disappears from the result unless a plain metric is also on the query (a pool with no events vanished from a
+loss-by-pool query). In compound arithmetic a blank operand evaluates as 0 (`A − blank = A`; `X / blank`
+stays blank). A group with no rows for ANY metric on the query still drops — keep a base count (entity count)
+on comparison queries.
+
+**8. Delete.** `DELETE /api/model/dataModels/{mid}/metrics/{metricId}` inside a changeset deletes a derived
+metric (verified, including conditional metrics with embedded filters). Delete dependents first.
+
+**9. "Latest period" for point-in-time metrics (in-memory models).** `last_in_fact` AND `last_in_relationship`
+on `[Period]` both resolved "latest" per report group among the rows that pass the metric's filter — even
+after the period attribute was given a separate lookup table (`attributeLookupTable` = the period table,
+`autoDetectLookupTable: false`; read-back confirmed `{~+,>[Period]+}` for lookup vs `{~+,>|[Period]+}` for
+fact). A status metric (e.g. "entities in status S") with no period on the query therefore shows, per group,
+the last period in which that group had an S row — silently wrong. Workaround: a latest-period flag column on
+the period lookup table (`Y` on the newest period, refreshed with the data) and descriptions that tell
+consumers to filter on it. A metric that should always read the latest period can embed `flag = Y` in its own
+filter (rule 6), e.g. `Avg<UseLookupForAttributes=False>([attribute:<numeric attribute>]) {~+}` filtered to
+`<event flag> = Y AND <latest flag> = Y` averages once per entity. Possible engine defect: classic ending-lookup
+semantics would return the period table's last period for every group.
+
+**Runnable** (`skills/build-mosaic-model/scripts/build_mosaic.py`): `create-conditional-metric --count-attribute <Entity>`
+(rule 3, distinct count), `--source-metric <M> --function Count` (rule 3, counts rows and keeps a level rule),
+`--level-rule last|first --level-attribute <Period>` (rule 4), repeatable `--and <attribute> <values...>` (rules 6
+and 9); `create-compound-metric --join outer` (rule 7); `delete-derived-metric` (rule 8; lists the derived
+metrics that refer to the target and refuses unless `--force`). Each takes `--dry-run`.
 
 ## 1. Compound metric — ratio of two metrics
 
@@ -427,3 +500,6 @@ When building by script, take the category from the enum above — money written
 5. For conditional metrics, follow §0c: create the metric, `POST .../embeddedObjects` for the filter, `PUT` the metric with the filter-bound tokens + `conditionality` — all in ONE changeset.
 6. For level metrics, use an attribute-ONLY dimty plus the `{[Attr]+}` cluster (§0b rule 3); the UI's `report_base_level` + `{~+, [Attr]+}` shape evaluates at report grain. Use `filtering: "ignore"` for benchmarks (§0b).
 7. Match the format.values fields to the metric's semantic category (money, percent, fixed decimal, etc.) with the verified `number_category` enum above.
+8. On periodic-snapshot facts (§0d): once-per-entity amounts as `Sum(Max([M]){~+,[Entity]+}){~+}`; count entities with `Count<Distinct=True>([Entity])`, but count a FACT metric when a period level rule must apply; give a conditional metric its own period unit; never put a filter on, or nest over, a nested level metric.
+9. Send `"formulaJoinType": "outer"` on every tree compound unless dropping rows with a blank operand is intended.
+10. Before removing or replacing an attribute, list the derived metrics whose embedded filters reference it — they are deleted with it (`feedback_mosaic_gotchas.md`).
