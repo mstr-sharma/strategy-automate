@@ -23,6 +23,17 @@ Subcommands:
   validate-model             Run the full post-build quality checklist (failures exit non-zero).
   validate-topology          Lightweight topology check — isolated attrs, fact-table coverage, misclassified numerics.
   discover                   Probe endpoint variants when the server version is unknown.
+  create-compound-metric     Derived metric from arithmetic over metrics (expression tree; --join outer).
+  create-conditional-metric  Filtered derived metric: Sum/Avg/Count of a fact metric or a distinct count
+                             of an attribute, ANDed conditions, optional latest/first-period rule.
+  delete-derived-metric      Delete one derived metric after a dependents check.
+  create-level-metric        Once-per-entity metric: Sum(Max([M]) {~+, [Entity]+}) {~+} (snapshot facts).
+  create-weighted-average    Weighted average once per entity: numerator + denominator helpers and the ratio.
+  set-column-types           Change column types in the model (table + pipeline), no reload; republish after.
+  create-formula-attribute   Attribute computed from columns (prefer a lookup table); republish after.
+  add-column-attribute       Attribute that reads one existing column (e.g. a fact metric's) as-is; republish after.
+  add-time-attributes        Year / quarter / month (week, day) intervals on a date attribute; republish after.
+  rename-describe            Rename / describe attributes and fact metrics by name; no republish.
 
 Authentication
 ~~~~~~~~~~~~~~
@@ -56,7 +67,7 @@ rejects a path with 404, use `discover` to find the current variant on this
 tenant's API and update ENDPOINT_CANDIDATES below.
 """
 from __future__ import annotations
-import argparse, csv, json, os, shutil, subprocess, sys, time, urllib.parse, uuid
+import argparse, copy, csv, json, os, shutil, subprocess, sys, time, urllib.parse, uuid
 from typing import Any
 import requests
 
@@ -4019,6 +4030,23 @@ def _read_merge_hints(path: str) -> list[tuple[str, str]]:
     return pairs
 
 
+def infer_relationship_table(parent_full: dict, p_tids, c_tids, tables_by_name: dict) -> tuple[str | None, str]:
+    """The table a relationship lives in, when the hint names none: the one table both attributes read (each has
+    an expression on it). Several: the parent's lookup table if it is one of them. -> (table id, why not)."""
+    names = {tid: n for n, tid in tables_by_name.items()}
+    common = sorted(set(p_tids) & set(c_tids))
+    if len(common) == 1:
+        return common[0], ""
+    if not common:
+        return None, ("no table that both attributes read; name relationship_table, after giving the parent or "
+                      "child an expression on it")
+    lookup = (parent_full.get("attributeLookupTable") or {}).get("objectId")
+    if lookup in common:
+        return lookup, ""
+    return None, (f"both attributes read {len(common)} tables ({sorted(names.get(t, t) for t in common)}); name "
+                  f"relationship_table")
+
+
 def cmd_wire_relationships(m: MSTR, args):
     """Wire attribute relationships with step-3/step-5 validation.
 
@@ -4030,7 +4058,7 @@ def cmd_wire_relationships(m: MSTR, args):
       {"relationships": [
          {"parent_attribute": "<name or id>",
           "child_attribute":  "<name or id>",
-          "relationship_table": "<name or id>",
+          "relationship_table": "<name or id>",   # optional: inferred from the tables both attributes read
           "type": "one_to_many"|"many_to_many"|"one_to_one"}]}
     """
     m.login(identity=True)
@@ -4077,8 +4105,11 @@ def cmd_wire_relationships(m: MSTR, args):
     def _resolve_attr(ref: str) -> dict:
         if not ref: return None
         if ref in by_id: return by_id[ref]
-        hits = by_name.get(ref.lower()) or []
-        return hits[0] if len(hits) == 1 else None
+        for cand in attribute_name_candidates(ref):   # also the connector's form names
+            hits = by_name.get(cand) or []
+            if hits:
+                return hits[0] if len(hits) == 1 else None
+        return None
 
     def _attr_problem(ref: str, role: str) -> str:
         n = len(by_name.get((ref or "").lower()) or [])
@@ -4087,9 +4118,12 @@ def cmd_wire_relationships(m: MSTR, args):
         return f"{role} attribute {ref!r} not found"
 
     def _resolve_table(ref: str) -> str:
-        if not ref: return None
+        if not ref:   # inferred below from the tables both attributes read
+            return None
         if ref in tables_by_name.values(): return ref
-        return tables_by_name.get(ref)
+        if ref in tables_by_name: return tables_by_name[ref]
+        loose = [tid for nm, tid in tables_by_name.items() if _table_key(nm) == _table_key(ref)]
+        return loose[0] if len(loose) == 1 else None
 
     plan = []   # rows ready to PUT
     skips = []  # rows skipped with reason
@@ -4099,6 +4133,7 @@ def cmd_wire_relationships(m: MSTR, args):
         child  = _resolve_attr(h.get("child_attribute"))
         rtbl_id = _resolve_table(h.get("relationship_table"))
         rtype  = h.get("type","one_to_many")
+        table_given = bool(h.get("relationship_table"))
         label = f"{h.get('parent_attribute')}→{h.get('child_attribute')} via {h.get('relationship_table')}"
 
         if not parent:
@@ -4107,8 +4142,9 @@ def cmd_wire_relationships(m: MSTR, args):
         if not child:
             skips.append((label, _attr_problem(h.get("child_attribute"), "child")))
             continue
-        if not rtbl_id:
-            skips.append((label, f"relationship_table {h.get('relationship_table')!r} not found in model"))
+        if table_given and not rtbl_id:
+            skips.append((label, f"relationship_table {h.get('relationship_table')!r} not found in model; "
+                                 f"tables: {sorted(tables_by_name)}"))
             continue
 
         # Step-3: forbid self-reference.
@@ -4123,6 +4159,13 @@ def cmd_wire_relationships(m: MSTR, args):
         c_full = _fetch_attribute(m, model_id, c_id, fetched)
         p_tids = _attr_table_ids(p_full)
         c_tids = _attr_table_ids(c_full)
+        if not table_given:
+            rtbl_id, why = infer_relationship_table(p_full, p_tids, c_tids, tables_by_name)
+            if not rtbl_id:
+                skips.append((label, why))
+                continue
+            label = f"{h.get('parent_attribute')}→{h.get('child_attribute')} via " \
+                    f"{next((n for n, t in tables_by_name.items() if t == rtbl_id), rtbl_id)} (inferred)"
 
         # Step-5: both endpoints must have an expression on the relationship table.
         missing = []
@@ -4819,6 +4862,21 @@ def _expression_params(args) -> dict:
     return params
 
 
+def cmd_export_model(m: MSTR, args):
+    """The model's full definition (tables, columns, attributes with their lookup tables, metrics) to a private
+    file: what assess_model.py lookups --model-export reads to name existing lookup tables."""
+    m.login(identity=False)
+    r = m.post(f"/api/model/dataModels/{args.model_id}/export")
+    if not r.ok:
+        die(f"export-model: {format_mstr_error(r)}")
+    _write_private(args.out, r.json())
+    body = r.json()
+    model = (body.get("model") or [{}])[0] if isinstance(body.get("model"), list) else body.get("model") or {}
+    print(json.dumps({"ok": True, "saved_to": args.out, "tables": len(model.get("tables") or []),
+                      "attributes": len(model.get("attributes") or []),
+                      "note": "holds IDs of your tenant: keep it out of repos"}, indent=2))
+
+
 def cmd_get_model_object(m: MSTR, args):
     path, _ = _model_object_path(args.kind, args.model_id, args.object_id)
     m.login(identity=False)
@@ -5054,51 +5112,255 @@ def cmd_create_transformation(m: MSTR, args):
     print(json.dumps({"ok": True, "transformation_id": tid}, indent=2))
 
 
+# ── Derived metrics: compound (tree), conditional (embedded filter), delete ───────────────────
+# Verified write paths, all on /api/model/dataModels/{id}/metrics in one changeset each:
+# memory/reference_mosaic_derived_metrics.md §0 (tree compounds), §0c (conditional metrics),
+# §0d (level rules and counts on periodic-snapshot facts).
+
+DESCRIPTION_MAX = 250   # longer descriptions are cut in the UI (memory/feedback_mosaic_ship_bar.md)
+_TREE_OPS = {"+": "plus", "-": "minus", "*": "times", "/": "divide"}
+_OBJECT_ID = _re.compile(r"[0-9A-Fa-f]{32}")
+_ARITH_TOKEN = _re.compile(r"\s*(?:(?P<ref>\[[^\]]+\])|(?P<num>\d+(?:\.\d+)?)|(?P<op>[()+\-*/])"
+                           r"|(?P<id>[0-9A-Fa-f]{32})(?![0-9A-Za-z]))")
+
+
+def _check_description(text: str) -> str:
+    text = text or ""
+    if len(text) > DESCRIPTION_MAX:
+        die(f"description is {len(text)} characters; the limit is {DESCRIPTION_MAX}")
+    return text
+
+
+def compound_metric_tree(formula: str, resolve) -> dict:
+    """Arithmetic over metrics → expression tree (§0): `[A] - [B]`, `([A] + [B]) / [C]`,
+    `[A] * 100`, `-[A]`. Operands are `[name]`, `[objectId]`, `[fact_metric:name]`,
+    `[metric:name]`, or a bare 32-character objectId (the old space-separated syntax).
+    Constants are whole numbers (the tree's int64 variant; write 0.5 as 1 / 2).
+    resolve(text) returns the operand's {"objectId", "subType", "name"}."""
+    s, pos, toks = formula.strip(), 0, []
+    while pos < len(s):
+        mt = _ARITH_TOKEN.match(s, pos)
+        if not mt or mt.end() == pos:
+            die(f"formula: cannot read '{s[pos:pos + 20]}' (operands are [metric name] or an objectId; "
+                f"operators + - * / and parentheses)")
+        pos = mt.end()
+        toks.append(mt)
+    if not toks:
+        die("formula is empty")
+    i = 0
+
+    def peek():
+        return toks[i].group("op") if i < len(toks) else None
+
+    def factor():
+        nonlocal i
+        if i >= len(toks):
+            die("formula ends after an operator")
+        t = toks[i]
+        i += 1
+        if t.group("ref") or t.group("id"):
+            raw = t.group("ref")[1:-1].strip() if t.group("ref") else t.group("id")
+            return {"type": "object_reference", "target": resolve(raw)}
+        if t.group("num"):
+            if "." in t.group("num"):
+                die(f"formula: constant {t.group('num')} is not a whole number (write 0.5 as 1 / 2)")
+            return {"type": "constant", "variant": {"type": "int64", "value": t.group("num")}}
+        if t.group("op") == "(":
+            node = expr()
+            if peek() != ")":
+                die("formula: missing )")
+            i += 1
+            return node
+        if t.group("op") == "-":
+            return {"type": "operator", "function": "unary_minus", "children": [factor()]}
+        die(f"formula: unexpected '{t.group(0).strip()}'")
+
+    def term():
+        nonlocal i
+        node = factor()
+        while peek() in ("*", "/"):
+            op = peek()
+            i += 1
+            node = {"type": "operator", "function": _TREE_OPS[op], "children": [node, factor()]}
+        return node
+
+    def expr():
+        nonlocal i
+        node = term()
+        while peek() in ("+", "-"):
+            op = peek()
+            i += 1
+            node = {"type": "operator", "function": _TREE_OPS[op], "children": [node, term()]}
+        return node
+
+    tree = expr()
+    if i != len(toks):
+        die(f"formula: unexpected '{toks[i].group(0).strip()}'")
+    if not any(t.group("ref") or t.group("id") for t in toks):
+        die("formula references no metric")
+    return tree
+
+
+def compound_metric_body(name: str, tree: dict, *, description: str = "", join: str = "",
+                         fmt_values: list | None = None) -> dict:
+    """/metrics body for a compound metric: expression tree with dimty null (a compound
+    rejects a dimty, 8004d711). join "outer" keeps a row when one operand has no data for it
+    (the blank operand counts as 0); the default inner join drops that row."""
+    info = {"name": name, "subType": "metric"}
+    if description:
+        info["description"] = description
+    body: dict = {"information": info, "expression": {"tree": tree}, "dimty": None}
+    if join:
+        body["formulaJoinType"] = join
+    if fmt_values:
+        body["format"] = {"header": [], "values": list(fmt_values)}
+    return body
+
+
+def _metric_operand_index(fact_metrics: list, derived_metrics: list) -> dict:
+    """lower(name) and upper(objectId) → candidate operand refs, fact and derived metrics."""
+    index: dict = {}
+    for items, sub_type in ((fact_metrics, "fact_metric"), (derived_metrics, "metric")):
+        for o in items:
+            info = (o.get("information") or {}) if isinstance(o, dict) else {}
+            if not info.get("objectId"):
+                continue
+            ref = {"objectId": info["objectId"], "subType": sub_type, "name": info.get("name") or ""}
+            index.setdefault(ref["name"].lower(), []).append(ref)
+            index.setdefault(ref["objectId"].upper(), []).append(ref)
+    return index
+
+
+def _resolve_metric_operand(index: dict, raw: str) -> dict:
+    want = None
+    if ":" in raw and raw.split(":", 1)[0].strip().lower() in ("fact_metric", "metric"):
+        want, raw = (p.strip() for p in raw.split(":", 1))
+        want = want.lower()
+    key = raw.upper() if _OBJECT_ID.fullmatch(raw) else raw.lower()
+    hits = [h for h in index.get(key, []) if want is None or h["subType"] == want]
+    if not hits:
+        die(f"formula: no fact or derived metric matches [{raw}]")
+    if len(hits) > 1:
+        die(f"formula: [{raw}] matches {len(hits)} metrics; write [fact_metric:{raw}], [metric:{raw}] or the objectId")
+    return dict(hits[0])
+
+
+def _list_model_metrics(m: MSTR, model_id: str) -> tuple[list, list]:
+    mp = f"/api/model/dataModels/{model_id}"
+    facts, failed = _list_all(m, f"{mp}/factMetrics", "factMetrics")
+    if failed is not None: die(f"list factMetrics: {format_mstr_error(failed)}")
+    derived, failed = _list_all(m, f"{mp}/metrics", "metrics")
+    if failed is not None: die(f"list metrics: {format_mstr_error(failed)}")
+    return facts, derived
+
+
+def _named(items: list, name_or_id: str) -> list[dict]:
+    """information blocks whose name (case-insensitive) or objectId matches."""
+    infos = [o.get("information") or {} for o in items if isinstance(o, dict)]
+    return [i for i in infos if (i.get("objectId") or "").upper() == name_or_id.upper()
+            or (i.get("name") or "").lower() == name_or_id.lower()]
+
+
 def cmd_create_compound_metric(m: MSTR, args):
-    """Create a compound metric from a formula referencing existing metric IDs.
-    --formula: infix tokens, e.g. 'METRIC:<id1> - METRIC:<id2>'  (METRIC:<id> metric_reference tokens,
-    OP:<op> operator tokens).  Simple: 'A - B' where A,B are metric IDs."""
-    _require_unverified_ok(args, "create-compound-metric",
-                           "it posts an `expression` to /factMetrics, and the spec's fact-metric body "
-                           "has no expression (derived metrics go to /metrics; see "
-                           "memory/reference_mosaic_derived_metrics.md for the verified shapes).")
+    """Create (or, with --replace, rewrite in place) a compound derived metric from
+    arithmetic over existing fact or derived metrics, e.g. '[Sales] - [Returns]' or
+    '([Units Sold] / [Units Available]) * 100'.
+
+    Verified write path (memory/reference_mosaic_derived_metrics.md §0): expression tree
+    with dimty null, POST /metrics (create) or a full-body PUT /metrics/{id} (replace), in
+    one changeset. --join outer keeps groups where one operand has no rows (blank counts
+    as 0); without it such groups drop out of the result. On --replace, the description and
+    number format are kept unless given again; pass --join again (the read-back may not
+    carry it).
+    """
+    if getattr(args, "unverified_ok", False):
+        print("[note] --unverified-ok is no longer needed: create-compound-metric uses the verified "
+              "tree path", file=sys.stderr)
+    description = _check_description(getattr(args, "description", "") or "")
     m.login(identity=True)
-    tokens = []
-    for raw in args.formula.split():
-        if raw in {"+","-","*","/","(",")"}:
-            tokens.append({"type":"operator","value": raw})
-        else:
-            tokens.append({"type":"metric_reference","value": raw})
+    mp = f"/api/model/dataModels/{args.model_id}"
+    q = {"showAdvancedProperties": "true"}
+    facts, derived = _list_model_metrics(m, args.model_id)
+    index = _metric_operand_index(facts, derived)
+    tree = compound_metric_tree(args.formula, lambda raw: _resolve_metric_operand(index, raw))
+    fmt_values = _resolve_metric_format(args.format) if getattr(args, "format", None) else None
+
+    existing = [i for i in _named(derived, args.name) if (i.get("name") or "").lower() == args.name.lower()]
+    if len(existing) > 1:
+        die(f"'{args.name}' names {len(existing)} derived metrics: {[e.get('objectId') for e in existing]}")
+    replace = bool(getattr(args, "replace", False))
+    if existing and not replace:
+        die(f"a derived metric named '{args.name}' already exists ({existing[0].get('objectId')}); "
+            f"pass --replace to rewrite it in place")
+    if replace and not existing:
+        die(f"--replace: no derived metric named '{args.name}' on this model")
+    target_id = existing[0]["objectId"] if existing else None
+    if target_id:
+        r = m.get(f"{mp}/metrics/{target_id}", params=q)
+        if not r.ok: die(f"read '{args.name}': {format_mstr_error(r)}")
+        cur = _json_or(r, {})
+        description = description or (cur.get("information") or {}).get("description") or ""
+        if fmt_values is None:
+            fmt_values = (cur.get("format") or {}).get("values")
+    join = getattr(args, "join", None) or ""
+    body = compound_metric_body(args.name, tree, description=description, join=join, fmt_values=fmt_values)
+    method, path = ("PUT", f"{mp}/metrics/{target_id}") if target_id else ("POST", f"{mp}/metrics")
+    if getattr(args, "dry_run", False):
+        print(json.dumps({"ok": True, "dry_run": True,
+                          "plan": [{"method": method, "path": path, "params": q, "body": body}]}, indent=2))
+        return
     cs = open_cs(m)
-    r = m.post(f"/api/model/dataModels/{args.model_id}/factMetrics",
-               json={"information":{"name": args.name},
-                     "expression":{"tokens": tokens},
-                     "dimty":{}, "format":{"header":[],"values":[]}})
-    mid = (_json_or(r, {}).get("information") or {}).get("objectId") if r.ok else None
-    if not mid:
+    try:
+        r = (m.put if target_id else m.post)(path, params=q, json=body)
+        if not r.ok: die(f"{'replace' if target_id else 'create'} metric: {format_mstr_error(r)}")
+        metric_id = target_id or (_json_or(r, {}).get("information") or {}).get("objectId")
+        if not metric_id: die(f"create metric: no objectId in response {r.text[:200]}")
+        commit_cs(m, cs)
+    except BaseException:  # die() raises SystemExit; discard on every failure path
         discard_cs(m, cs)
-        die(f"compound metric: {r.status_code} {r.text[:300]}")
-    commit_cs(m, cs)
-    print(json.dumps({"ok": True, "metric_id": mid}, indent=2))
+        raise
+    print(json.dumps({"ok": True, "metric_id": metric_id,
+                      "action": "replaced" if target_id else "created"}, indent=2))
 
 
 # Aggregate-function objectIds are platform constants (same on every tenant) —
-# memory/reference_mosaic_derived_metrics.md "Well-known function objectIds".
+# memory/reference_mosaic_derived_metrics.md "Well-known function objectIds". Count is sent by
+# name without a target, the shape verified live for both counting forms (§0d).
 AGG_FUNCTION_IDS = {"Sum": "8107C31BDD9911D3B98100C04F2233EA",
                     "Avg": "8107C31DDD9911D3B98100C04F2233EA"}
+CONDITIONAL_FUNCTIONS = ("Avg", "Count", "Sum")
+
+# A metric's own level rule on a period-type attribute (snapshot date, month, week). The
+# *_fact rules read the latest/first period among the rows that qualify for the metric, and do
+# so per group: "latest" for a group is that group's last period with qualifying rows, not
+# the latest period overall. The *_lookup rules were accepted by the service but answered the
+# same way on an in-memory model (§0d); for "latest period overall", filter on a
+# latest-period flag column instead.
+LEVEL_RULE_AGGREGATIONS = {"last": "last_in_fact", "first": "first_in_fact",
+                           "last_lookup": "last_in_relationship", "first_lookup": "first_in_relationship"}
 
 
-def conditional_metric_tokens(function: str, source: dict, filter_id: str = "") -> list[dict]:
+def conditional_metric_tokens(function: str, source: dict, filter_id: str = "", *,
+                              distinct: bool = False) -> list[dict]:
     """Tokens for `Fn<UseLookupForAttributes=False>([Source]){~+}`; with filter_id,
-    the `<embedded filter>` binding goes just before end_of_text.
+    the `<embedded filter>` binding goes just before end_of_text. distinct=True (Count only)
+    adds `Distinct=True` for a distinct count of an attribute.
 
-    source is {"objectId", "subType": "fact_metric", "name"}. Every token carries
-    a "value", end_of_text included — omitting one fails with 8004cb04.
+    source is {"objectId", "subType": "fact_metric" | "attribute", "name"}. Every token
+    carries a "value", end_of_text included — omitting one fails with 8004cb04.
     """
-    tokens = [
-        {"type": "function", "value": function,
-         "target": {"objectId": AGG_FUNCTION_IDS[function], "subType": "function", "name": function}},
-        {"type": "character", "value": "<"},
+    if function in AGG_FUNCTION_IDS:
+        head = {"type": "function", "value": function,
+                "target": {"objectId": AGG_FUNCTION_IDS[function], "subType": "function", "name": function}}
+    else:
+        head = {"type": "function", "value": function}
+    tokens = [head, {"type": "character", "value": "<"}]
+    if distinct:
+        tokens += [{"type": "identifier", "value": "Distinct"},
+                   {"type": "function", "value": "="},
+                   {"type": "boolean", "value": "True"},
+                   {"type": "character", "value": ","}]
+    tokens += [
         {"type": "identifier", "value": "UseLookupForAttributes"},
         {"type": "function", "value": "="},
         {"type": "boolean", "value": "False"},
@@ -5118,21 +5380,33 @@ def conditional_metric_tokens(function: str, source: dict, filter_id: str = "") 
     return tokens + [{"type": "end_of_text", "value": ""}]
 
 
+def level_rule_unit(attribute: dict, rule: str) -> dict:
+    """dimty unit that makes the metric read the latest/first value of a period-type attribute
+    (LEVEL_RULE_AGGREGATIONS). A metric with its own unit keeps the rule under a filter; a
+    filtered metric over a fact metric that has the rule loses it (§0d)."""
+    return {"dimtyUnitType": "attribute",
+            "target": {"objectId": attribute["objectId"], "subType": "attribute", "name": attribute["name"]},
+            "aggregation": LEVEL_RULE_AGGREGATIONS[rule], "filtering": "apply", "groupBy": True}
+
+
 def conditional_metric_body(name: str, function: str, source: dict, fmt_values: list | None = None,
-                            description: str = "", filter_id: str = "") -> dict:
+                            description: str = "", filter_id: str = "", *, distinct: bool = False,
+                            level: tuple[dict, str] | None = None) -> dict:
     """/metrics body for a conditional metric. Without filter_id it is the
     unfiltered create (POST); with it, the binding update (PUT) — filter-bound
-    tokens plus the conditionality block."""
+    tokens plus the conditionality block. level=(attribute ref, rule) adds a level rule."""
     info = {"name": name, "subType": "metric"}
     if description:
         info["description"] = description
+    units = [{"dimtyUnitType": "report_base_level", "aggregation": "normal",
+              "filtering": "apply", "groupBy": True}]
+    if level:
+        units.append(level_rule_unit(*level))
     body = {
         "information": info,
         "expression": {"text": f"{function}({{{source['name']}}})",
-                       "tokens": conditional_metric_tokens(function, source, filter_id)},
-        "dimty": {"dimtyUnits": [{"dimtyUnitType": "report_base_level", "aggregation": "normal",
-                                  "filtering": "apply", "groupBy": True}],
-                  "excludeAttribute": False, "allowAddingUnit": True},
+                       "tokens": conditional_metric_tokens(function, source, filter_id, distinct=distinct)},
+        "dimty": {"dimtyUnits": units, "excludeAttribute": False, "allowAddingUnit": True},
         "format": {"header": [], "values": list(fmt_values or [])},
     }
     if filter_id:
@@ -5144,15 +5418,41 @@ def conditional_metric_body(name: str, function: str, source: dict, fmt_values: 
     return body
 
 
-def embedded_element_filter_body(attribute: dict, elements: list[str]) -> dict:
-    """POST /metrics/{id}/embeddedObjects body for `<attribute> IN (elements)`.
+def _element_list_predicate(attribute: dict, elements: list[str]) -> dict:
+    return {"type": "predicate_element_list",
+            "predicateTree": {
+                "attribute": attribute,
+                "elements": [{"elementId": f"h{v};{attribute['objectId']}", "display": v} for v in elements],
+                "function": "in"}}
+
+
+def embedded_filter_body(conditions: list[tuple[dict, list[str]]]) -> dict:
+    """POST /metrics/{id}/embeddedObjects body: one `<attribute> IN (elements)` list per
+    condition, ANDed under an operator node when there are several (verified with 2 and 3).
     elements are ID-form values; each elementId is `h<value>;<attribute objectId>`."""
-    return {"subType": "filter", "qualification": {"tree": {
-        "type": "predicate_element_list",
-        "predicateTree": {
-            "attribute": attribute,
-            "elements": [{"elementId": f"h{v};{attribute['objectId']}", "display": v} for v in elements],
-            "function": "in"}}}}
+    if not conditions:
+        die("a conditional metric needs at least one condition")
+    parts = [_element_list_predicate(a, list(e)) for a, e in conditions]
+    tree = parts[0] if len(parts) == 1 else {"type": "operator", "function": "and", "children": parts}
+    return {"subType": "filter", "qualification": {"tree": tree}}
+
+
+def embedded_element_filter_body(attribute: dict, elements: list[str]) -> dict:
+    """Single-condition form of embedded_filter_body."""
+    return embedded_filter_body([(attribute, elements)])
+
+
+def attribute_name_candidates(name: str) -> list[str]:
+    """The connector shows an attribute's forms as '<attribute>__<form>' or '<attribute> (<form>)'. Return the
+    name as given, then the attribute name behind such a form name (lower case)."""
+    n = (name or "").strip().lower()
+    out = [n]
+    if "__" in n:
+        out.append(n.split("__", 1)[0].strip())
+    hit = _re.match(r"^(.*\S)\s+\(([^()]+)\)$", n)
+    if hit:
+        out.append(hit.group(1))
+    return list(dict.fromkeys(x for x in out if x))
 
 
 def resolve_model_object_ref(m: MSTR, model_id: str, collection: str, sub_type: str,
@@ -5164,6 +5464,10 @@ def resolve_model_object_ref(m: MSTR, model_id: str, collection: str, sub_type: 
     infos = [o.get("information") or {} for o in items if isinstance(o, dict)]
     hits = [i for i in infos if (i.get("objectId") or "").upper() == name_or_id.upper()
             or (i.get("name") or "").lower() == name_or_id.lower()]
+    for alt in attribute_name_candidates(name_or_id)[1:]:   # a connector form name: its attribute
+        if hits:
+            break
+        hits = [i for i in infos if (i.get("name") or "").lower() == alt]
     if not hits:
         die(f"no {collection} entry matches '{name_or_id}'")
     if len(hits) > 1:
@@ -5172,45 +5476,1118 @@ def resolve_model_object_ref(m: MSTR, model_id: str, collection: str, sub_type: 
 
 
 def cmd_create_conditional_metric(m: MSTR, args):
-    """Create a conditional (filtered) derived metric: Fn(<fact metric>) scoped to
-    <attribute> IN (<elements>) by a filter embedded in the metric.
+    """Create a conditional (filtered) derived metric scoped by a filter embedded in the
+    metric: one `<attribute> IN (<elements>)` condition, plus any --and conditions (ANDed).
 
-    Verified write path (memory/reference_mosaic_derived_metrics.md §0c), ONE
-    changeset: POST /metrics (unfiltered) → POST /metrics/{id}/embeddedObjects
-    (the filter) → PUT /metrics/{id} (filter-bound tokens + conditionality) →
-    commit. Any failure discards the changeset. Number format values are copied
-    from the source fact metric.
+    What it aggregates (exactly one):
+      --source-metric F [--function Sum|Avg|Count]   Fn(<fact metric>); Count counts fact rows
+      --count-attribute A                            Count<Distinct=True>(<attribute>)
+    Optional level rule: --level-rule last|first|last_lookup|first_lookup with
+    --level-attribute P (a period-type attribute) makes the metric read the latest/first
+    period's value — needed on periodic-snapshot facts, where a filtered metric over a
+    fact metric that carries the rule loses it (memory/reference_mosaic_derived_metrics.md
+    §0d). A distinct count of an attribute ignores the rule unless that attribute is
+    related to the period attribute; count a fact metric (--function Count) instead.
+
+    Verified write path (§0c), ONE changeset: POST /metrics (unfiltered) → POST
+    /metrics/{id}/embeddedObjects (the filter) → PUT /metrics/{id} (filter-bound tokens +
+    conditionality) → commit. Any failure discards the changeset. The number format is
+    --format, else the source fact metric's (Sum/Avg), else `integer` (counts).
     """
+    source_name = getattr(args, "source_metric", None)
+    count_attr = getattr(args, "count_attribute", None)
+    function = getattr(args, "function", None)
+    if bool(source_name) == bool(count_attr):
+        die("pass exactly one of --source-metric or --count-attribute")
+    if count_attr and function not in (None, "Count"):
+        die("--count-attribute always counts distinct elements; drop --function")
+    function = "Count" if count_attr else (function or "Sum")
+    if function not in CONDITIONAL_FUNCTIONS:
+        die(f"--function must be one of {list(CONDITIONAL_FUNCTIONS)}")
+    level_rule = getattr(args, "level_rule", None)
+    level_attr_name = getattr(args, "level_attribute", None)
+    if bool(level_rule) != bool(level_attr_name):
+        die("--level-rule and --level-attribute go together")
+    if level_rule and level_rule not in LEVEL_RULE_AGGREGATIONS:
+        die(f"--level-rule must be one of {sorted(LEVEL_RULE_AGGREGATIONS)}")
+    extra = [list(c) for c in (getattr(args, "and_conditions", None) or [])]
+    for c in extra:
+        if len(c) < 2:
+            die(f"--and {' '.join(c)}: give an attribute and at least one element value")
+    if not args.elements:
+        die("--elements needs at least one value")
+    description = _check_description(getattr(args, "description", "") or "")
+    fmt_preset = getattr(args, "format", None)
+
     m.login(identity=True)
     mp = f"/api/model/dataModels/{args.model_id}"
-    source = resolve_model_object_ref(m, args.model_id, "factMetrics", "fact_metric", args.source_metric)
-    attribute = resolve_model_object_ref(m, args.model_id, "attributes", "attribute", args.attribute)
-    r = m.get(f"{mp}/factMetrics/{source['objectId']}")
-    if not r.ok: die(f"source metric GET: {format_mstr_error(r)}")
-    fmt_values = ((r.json() or {}).get("format") or {}).get("values")
+    if count_attr:
+        source = resolve_model_object_ref(m, args.model_id, "attributes", "attribute", count_attr)
+    else:
+        source = resolve_model_object_ref(m, args.model_id, "factMetrics", "fact_metric", source_name)
+    conditions = [(resolve_model_object_ref(m, args.model_id, "attributes", "attribute", args.attribute),
+                   list(args.elements))]
+    for c in extra:
+        conditions.append((resolve_model_object_ref(m, args.model_id, "attributes", "attribute", c[0]), c[1:]))
+    level = None
+    if level_rule:
+        level = (resolve_model_object_ref(m, args.model_id, "attributes", "attribute", level_attr_name),
+                 level_rule)
+    if fmt_preset:
+        fmt_values = _resolve_metric_format(fmt_preset)
+    elif function == "Count":
+        fmt_values = _resolve_metric_format("integer")
+    else:
+        r = m.get(f"{mp}/factMetrics/{source['objectId']}")
+        if not r.ok: die(f"source metric GET: {format_mstr_error(r)}")
+        fmt_values = ((r.json() or {}).get("format") or {}).get("values")
+    distinct = bool(count_attr)
+
+    def body(filter_id=""):
+        return conditional_metric_body(args.name, function, source, fmt_values, description,
+                                       filter_id=filter_id, distinct=distinct, level=level)
+
     q = {"showAdvancedProperties": "true"}
+    filter_body = embedded_filter_body(conditions)
+    if getattr(args, "dry_run", False):
+        print(json.dumps({"ok": True, "dry_run": True, "plan": [
+            {"step": "create", "method": "POST", "path": f"{mp}/metrics", "params": q, "body": body()},
+            {"step": "embed filter", "method": "POST", "path": f"{mp}/metrics/<new metric id>/embeddedObjects",
+             "params": {"showExpressionAs": "tree"}, "body": filter_body},
+            {"step": "bind filter", "method": "PUT", "path": f"{mp}/metrics/<new metric id>", "params": q,
+             "body": body("<embedded filter id>")},
+        ]}, indent=2))
+        return
     cs = open_cs(m)
     try:
-        r = m.post(f"{mp}/metrics", params=q,
-                   json=conditional_metric_body(args.name, args.function, source, fmt_values,
-                                                args.description))
+        r = m.post(f"{mp}/metrics", params=q, json=body())
         if not r.ok: die(f"create metric: {format_mstr_error(r)}")
         metric_id = r.json()["information"]["objectId"]
         r = m.post(f"{mp}/metrics/{metric_id}/embeddedObjects", params={"showExpressionAs": "tree"},
-                   json=embedded_element_filter_body(attribute, args.elements))
+                   json=filter_body)
         if not r.ok: die(f"embed filter: {format_mstr_error(r)}")
         emb = r.json() or {}
         filter_id = emb.get("id") or (emb.get("information") or {}).get("objectId")
         if not filter_id: die(f"embed filter: no id in response {str(emb)[:200]}")
-        r = m.put(f"{mp}/metrics/{metric_id}", params=q,
-                  json=conditional_metric_body(args.name, args.function, source, fmt_values,
-                                               args.description, filter_id=filter_id))
+        r = m.put(f"{mp}/metrics/{metric_id}", params=q, json=body(filter_id))
         if not r.ok: die(f"bind filter: {format_mstr_error(r)}")
         commit_cs(m, cs)
     except BaseException:  # die() raises SystemExit; discard on every failure path
         discard_cs(m, cs)
         raise
     print(json.dumps({"ok": True, "metric_id": metric_id, "embedded_filter_id": filter_id}, indent=2))
+
+
+def _metric_references(definition: dict, target: dict) -> bool:
+    """True when a derived metric's definition (tokens read-back) refers to target: its
+    objectId anywhere in the body, or `{name}` / `[name]` in the expression text."""
+    blob = json.dumps(definition).upper()
+    if target["objectId"].upper() in blob:
+        return True
+    text = ((definition.get("expression") or {}).get("text") or "").lower()
+    name = (target.get("name") or "").lower()
+    return bool(name) and (f"{{{name}}}" in text or f"[{name}]" in text)
+
+
+def cmd_delete_derived_metric(m: MSTR, args):
+    """Delete one derived metric (never a fact metric or attribute) in a changeset.
+
+    Before deleting, reads every other derived metric of the model and lists the ones that
+    refer to it; refuses when there are any, unless --force. (What the service does to a
+    dependent metric when its operand is deleted has not been verified.) Requires --yes;
+    --dry-run reports the target and its dependents and writes nothing.
+    """
+    key = getattr(args, "object_id", None) or getattr(args, "name", None)
+    if not key: die("pass --name or --object-id")
+    dry_run = bool(getattr(args, "dry_run", False))
+    if not dry_run and not getattr(args, "yes", False):
+        die("delete-derived-metric requires --yes after you have reviewed the target (try --dry-run first)")
+    m.login(identity=True)
+    mp = f"/api/model/dataModels/{args.model_id}"
+    facts, derived = _list_model_metrics(m, args.model_id)
+    hits = _named(derived, key)
+    if not hits:
+        if _named(facts, key):
+            die(f"'{key}' is a fact metric; delete-derived-metric deletes derived metrics only")
+        die(f"no derived metric matches '{key}'")
+    if len(hits) > 1:
+        die(f"'{key}' matches {len(hits)} derived metrics: {[h.get('objectId') for h in hits]}. Pass --object-id.")
+    target = {"objectId": hits[0]["objectId"], "name": hits[0].get("name") or ""}
+
+    dependents = []
+    for o in derived:
+        info = (o.get("information") or {}) if isinstance(o, dict) else {}
+        oid = info.get("objectId")
+        if not oid or oid.upper() == target["objectId"].upper():
+            continue
+        r = m.get(f"{mp}/metrics/{oid}", params={"showExpressionAs": "tokens", "showAdvancedProperties": "true"})
+        if not r.ok: die(f"read '{info.get('name')}' to check dependents: {format_mstr_error(r)}")
+        if _metric_references(_json_or(r, {}), target):
+            dependents.append({"objectId": oid, "name": info.get("name")})
+    report = {"target": target, "dependents": dependents}
+    if dry_run:
+        print(json.dumps({"ok": True, "dry_run": True, **report}, indent=2))
+        return
+    if dependents and not getattr(args, "force", False):
+        die(f"'{target['name']}' is used by {len(dependents)} derived metric(s): "
+            f"{[d['name'] for d in dependents]}. Delete or rewrite those first, or pass --force.")
+    cs = open_cs(m)
+    try:
+        r = m.delete(f"{mp}/metrics/{target['objectId']}")
+        if not r.ok: die(f"delete metric: {format_mstr_error(r)}")
+        commit_cs(m, cs)
+    except BaseException:
+        discard_cs(m, cs)
+        raise
+    print(json.dumps({"ok": True, "deleted": target, "dependents": dependents}, indent=2))
+
+
+# ── Once-per-entity (level) metrics and weighted averages on snapshot facts ────────────────────
+# Verified shapes: memory/reference_mosaic_derived_metrics.md §0d rules 1 and 2. Tokens with a
+# report_base_level dimty; functions go by name (as the service resolves them).
+
+LEVEL_FUNCTIONS = ("Avg", "Max", "Min", "Sum")
+_RBL_UNIT = {"dimtyUnitType": "report_base_level", "aggregation": "normal", "filtering": "apply", "groupBy": True}
+
+
+def _tok(kind: str, value: str, target: dict | None = None) -> dict:
+    t: dict = {"type": kind, "value": value}
+    if target is not None:
+        t["target"] = dict(target)
+    return t
+
+
+def _chars(text: str) -> list[dict]:
+    return [_tok("character", c) for c in text]
+
+
+def _per_entity(function: str, ref: dict, entity: dict) -> list[dict]:
+    """`Fn([ref]) {~+, [entity]+}`: the value per entity, at report grain."""
+    return ([_tok("function", function), _tok("character", "("), _tok("object_reference", f"[{ref['name']}]", ref),
+             _tok("character", ")")] + _chars("{~+,")
+            + [_tok("object_reference", f"[{entity['name']}]", entity)] + _chars("+}"))
+
+
+def _outer(function: str, inner: list[dict]) -> list[dict]:
+    """`Fn(<inner>) {~+}` closed with end_of_text."""
+    return ([_tok("function", function), _tok("character", "(")] + inner + [_tok("character", ")")]
+            + _chars("{~+}") + [_tok("end_of_text", "")])
+
+
+def level_metric_tokens(source: dict, entity: dict, inner: str = "Max", outer: str = "Sum") -> list[dict]:
+    """`Sum(Max([M]) {~+, [Entity]+}) {~+}`: one value per entity, then added across entities (§0d rule 1).
+    Right at any grouping, unlike a first/last-value rule on the period."""
+    return _outer(outer, _per_entity(inner, source, entity))
+
+
+def weighted_average_tokens(value: dict, weight: dict, entity: dict) -> tuple[list[dict], list[dict]]:
+    """Numerator `Sum(Max([A]){E} * Max([W]){E}){~+}` and denominator `Sum(Max([W]){E} * Max([A]){E} /
+    Max([A]){E}){~+}` (§0d rule 2): `A/A` is NULL for entities with no value, so they drop out of the
+    denominator as they do from the numerator."""
+    num = _outer("Sum", _per_entity("Max", value, entity) + [_tok("character", "*")] + _per_entity("Max", weight, entity))
+    den = _outer("Sum", _per_entity("Max", weight, entity) + [_tok("character", "*")] + _per_entity("Max", value, entity)
+                 + [_tok("character", "/")] + _per_entity("Max", value, entity))
+    return num, den
+
+
+def level_metric_body(name: str, tokens: list[dict], *, description: str = "", fmt_values: list | None = None) -> dict:
+    info = {"name": name, "subType": "metric"}
+    if description:
+        info["description"] = description
+    body: dict = {"information": info, "expression": {"tokens": tokens},
+                  "dimty": {"dimtyUnits": [dict(_RBL_UNIT)], "excludeAttribute": False, "allowAddingUnit": True}}
+    if fmt_values:
+        body["format"] = {"header": [], "values": list(fmt_values)}
+    return body
+
+
+def _source_format(m: MSTR, model_id: str, ref: dict) -> list | None:
+    if ref.get("subType") != "fact_metric":
+        return None
+    r = m.get(f"/api/model/dataModels/{model_id}/factMetrics/{ref['objectId']}")
+    return ((_json_or(r, {}) or {}).get("format") or {}).get("values") if r.ok else None
+
+
+def _require_new_names(derived: list, names: list[str]) -> None:
+    taken = [n for n in names if any((i.get("name") or "").lower() == n.lower() for i in _named(derived, n))]
+    if taken:
+        die(f"derived metric(s) already exist: {taken}. Delete them first (delete-derived-metric) or pick other names.")
+
+
+def _create_metric(m: MSTR, model_id: str, body: dict, label: str) -> str:
+    """POST one derived metric in its own changeset; returns its objectId."""
+    mp = f"/api/model/dataModels/{model_id}"
+    cs = open_cs(m)
+    try:
+        r = m.post(f"{mp}/metrics", params={"showAdvancedProperties": "true"}, json=body)
+        if not r.ok: die(f"create {label}: {format_mstr_error(r)}")
+        metric_id = (_json_or(r, {}).get("information") or {}).get("objectId")
+        if not metric_id: die(f"create {label}: no objectId in response {r.text[:200]}")
+        commit_cs(m, cs)
+    except BaseException:
+        discard_cs(m, cs)
+        raise
+    return metric_id
+
+
+def cmd_create_level_metric(m: MSTR, args):
+    """Create a once-per-entity metric: `Outer(Inner([source]) {~+, [entity]+}) {~+}` — by default
+    Sum(Max(...)): the value is taken once per entity (customer, account, loan...) and added across
+    entities. Use it for amounts repeated on every row of a periodic-snapshot fact (an original amount, a
+    limit, a characteristic), which a plain sum would multiply by the number of periods. Verified shape:
+    memory/reference_mosaic_derived_metrics.md §0d rule 1. One changeset.
+    """
+    description = _check_description(getattr(args, "description", "") or "")
+    m.login(identity=True)
+    facts, derived = _list_model_metrics(m, args.model_id)
+    source = _resolve_metric_operand(_metric_operand_index(facts, derived), args.source_metric)
+    entity = resolve_model_object_ref(m, args.model_id, "attributes", "attribute", args.entity_attribute)
+    _require_new_names(derived, [args.name])
+    fmt = _resolve_metric_format(args.format) if getattr(args, "format", None) else \
+        _source_format(m, args.model_id, source)
+    body = level_metric_body(args.name, level_metric_tokens(source, entity, args.inner, args.outer),
+                             description=description, fmt_values=fmt)
+    if getattr(args, "dry_run", False):
+        print(json.dumps({"ok": True, "dry_run": True, "plan": [
+            {"method": "POST", "path": f"/api/model/dataModels/{args.model_id}/metrics", "body": body}]}, indent=2))
+        return
+    metric_id = _create_metric(m, args.model_id, body, args.name)
+    print(json.dumps({"ok": True, "metric_id": metric_id}, indent=2))
+
+
+def cmd_create_weighted_average(m: MSTR, args):
+    """Create a weighted average taken once per entity, as three derived metrics: a numerator helper
+    (value x weight per entity, summed), a denominator helper (weight of entities that have a value,
+    summed) and the average (numerator / denominator, outer join). The value can be an attribute (a
+    score or ratio stored per entity) or a metric; the weight is a metric (an amount). Verified shape:
+    memory/reference_mosaic_derived_metrics.md §0d rule 2. Each metric goes in its own changeset; if a
+    later step fails, the helpers already created are listed for cleanup with delete-derived-metric.
+    """
+    description = _check_description(getattr(args, "description", "") or "")
+    if bool(getattr(args, "value_attribute", None)) == bool(getattr(args, "value_metric", None)):
+        die("pass exactly one of --value-attribute or --value-metric")
+    m.login(identity=True)
+    facts, derived = _list_model_metrics(m, args.model_id)
+    index = _metric_operand_index(facts, derived)
+    if args.value_attribute:
+        value = resolve_model_object_ref(m, args.model_id, "attributes", "attribute", args.value_attribute)
+    else:
+        value = _resolve_metric_operand(index, args.value_metric)
+    weight = _resolve_metric_operand(index, args.weight_metric)
+    entity = resolve_model_object_ref(m, args.model_id, "attributes", "attribute", args.entity_attribute)
+    num_name = args.numerator_name or f"{args.name} numerator"
+    den_name = args.denominator_name or f"{args.name} denominator"
+    _require_new_names(derived, [args.name, num_name, den_name])
+    num_tokens, den_tokens = weighted_average_tokens(value, weight, entity)
+    helper = f"Helper for {args.name}"
+    num_body = level_metric_body(num_name, num_tokens, fmt_values=_resolve_metric_format("fixed2"),
+                                 description=_check_description(
+                                     f"{helper}: {value['name']} x {weight['name']} per {entity['name']}, summed."))
+    den_body = level_metric_body(den_name, den_tokens, fmt_values=_source_format(m, args.model_id, weight),
+                                 description=_check_description(
+                                     f"{helper}: {weight['name']} of each {entity['name']} that has a "
+                                     f"{value['name']}, summed."))
+    fmt = _resolve_metric_format(args.format) if getattr(args, "format", None) else None
+
+    def avg_body(num_id: str, den_id: str) -> dict:
+        tree = {"type": "operator", "function": "divide", "children": [
+            {"type": "object_reference", "target": {"objectId": num_id, "subType": "metric", "name": num_name}},
+            {"type": "object_reference", "target": {"objectId": den_id, "subType": "metric", "name": den_name}}]}
+        return compound_metric_body(args.name, tree, description=description, join="outer", fmt_values=fmt)
+
+    if getattr(args, "dry_run", False):
+        mp = f"/api/model/dataModels/{args.model_id}/metrics"
+        print(json.dumps({"ok": True, "dry_run": True, "plan": [
+            {"method": "POST", "path": mp, "body": num_body}, {"method": "POST", "path": mp, "body": den_body},
+            {"method": "POST", "path": mp, "body": avg_body("<numerator id>", "<denominator id>")}]}, indent=2))
+        return
+    created: list[dict] = []
+    try:
+        num_id = _create_metric(m, args.model_id, num_body, num_name)
+        created.append({"name": num_name, "objectId": num_id})
+        den_id = _create_metric(m, args.model_id, den_body, den_name)
+        created.append({"name": den_name, "objectId": den_id})
+        avg_id = _create_metric(m, args.model_id, avg_body(num_id, den_id), args.name)
+    except SystemExit:
+        if created:
+            print(f"[cleanup] created before the failure: {created} — remove with delete-derived-metric "
+                  f"--object-id <id> --yes, or rerun after fixing", file=sys.stderr)
+        raise
+    print(json.dumps({"ok": True, "metric_id": avg_id, "numerator_id": num_id, "denominator_id": den_id}, indent=2))
+
+
+# ── set-column-types: change column types in the model (no reload) ────────────────────────
+# Ported from a run that worked live on a single-table CSV model: the table PATCH carries each type in both
+# physicalTable.columns and the pipeline; the service then carried the type to the attribute forms and fact
+# metrics itself (the alignment pass found nothing left to write). The alignment pass stays as a safety net.
+
+COLUMN_TYPES: dict[str, dict] = {
+    "text":      {"type": "utf8_char",  "precision": 0, "scale": 0},
+    "integer":   {"type": "integer",    "precision": 4, "scale": 0},
+    "bigint":    {"type": "int64",      "precision": 8, "scale": 0},
+    "double":    {"type": "double",     "precision": 0, "scale": 0},
+    "date":      {"type": "date",       "precision": 0, "scale": 0},
+    "timestamp": {"type": "time_stamp", "precision": 0, "scale": 0},
+}
+_FORM_DISPLAY = {"text": "text", "date": "date", "timestamp": "date",
+                 "integer": "number", "bigint": "number", "double": "number"}
+_SIMPLE_COLUMN = _re.compile(r"^\s*[\[{](.+?)[\]}]\s*$")
+
+
+def _simple_column(text: str | None) -> str | None:
+    """'[COL]' / '{COL}' / 'COL' -> 'COL'; a formula with operators or functions -> None."""
+    if not text:
+        return None
+    hit = _SIMPLE_COLUMN.match(text)
+    if hit:
+        return hit.group(1)
+    t = text.strip()
+    return t if _re.fullmatch(r"[A-Za-z0-9_ ]+", t) else None
+
+
+def column_type_targets(sets: list[list[str]] | None, spec: str | None) -> dict[str, tuple[str, str, str]]:
+    """--set COLUMN TYPE [DATE_FORMAT] (repeatable) and/or --spec (CSV: column_name, target_type, date_format,
+    enabled; or JSON {"columns": [{"column", "type", "date_format"}]}) -> {column.casefold(): (column, type, fmt)}."""
+    rows: list[tuple[str, str, str]] = []
+    for v in sets or []:
+        if len(v) not in (2, 3):
+            die(f"--set takes COLUMN TYPE [DATE_FORMAT], got {v}")
+        rows.append((v[0], v[1], v[2] if len(v) == 3 else ""))
+    if spec:
+        if spec.lower().endswith(".csv"):
+            with open(spec, newline="", encoding="utf-8-sig") as f:
+                for r in csv.DictReader(f):
+                    r = {(k or "").strip().lower(): (x or "").strip() for k, x in r.items()}
+                    if r.get("enabled", "y").lower() in ("n", "no", "0", "false"):
+                        continue
+                    rows.append((r.get("column_name", ""), r.get("target_type", ""), r.get("date_format", "")))
+        else:
+            for c in (_load_json_arg(None, spec) or {}).get("columns") or []:
+                rows.append((str(c.get("column") or ""), str(c.get("type") or ""), str(c.get("date_format") or "")))
+    if not rows:
+        die("give at least one --set COLUMN TYPE [DATE_FORMAT] or a --spec file")
+    out: dict[str, tuple[str, str, str]] = {}
+    for col, typ, fmt in rows:
+        t = typ.lower()
+        if not col:
+            die("a column name is empty")
+        if t not in COLUMN_TYPES:
+            die(f"{col}: unknown type '{typ}' (use {', '.join(COLUMN_TYPES)})")
+        if t in ("date", "timestamp") and not fmt:
+            die(f"{col}: {t} needs a date format of the source values, e.g. yyyyMM")
+        if t not in ("date", "timestamp") and fmt:
+            die(f"{col}: a date format only applies to date or timestamp")
+        out[col.casefold()] = (col, t, fmt)
+    return out
+
+
+def _table_key(name: str) -> str:
+    """Compare table names loosely: case, spacing and a file extension don't matter."""
+    return _re.sub(r"[^a-z0-9]", "", _re.sub(r"\.(csv|txt|tsv|xlsx?|parquet)$", "", name.strip().lower()))
+
+
+def _pick_table(tables: list[dict], name: str | None) -> dict:
+    if name:
+        hit = [t for t in tables if (t.get("information") or {}).get("name", "").casefold() == name.casefold()] or \
+              [t for t in tables if _table_key((t.get("information") or {}).get("name", "")) == _table_key(name)]
+        if not hit:
+            die(f"table '{name}' is not in the model: {[(t.get('information') or {}).get('name') for t in tables]}")
+        return hit[0]
+    if not tables:
+        die("the model has no tables")
+    return max(tables, key=lambda t: len((t.get("physicalTable") or {}).get("columns") or []))
+
+
+def resolve_column_targets(model: dict, cols: dict[str, tuple[str, str]],
+                           targets: dict[str, tuple[str, str, str]]) -> tuple[dict[str, tuple[str, str, str]], list[str]]:
+    """Let --set name an attribute or a fact metric as well as a column: the connector shows attribute names,
+    not the columns behind them. An attribute resolves through its ID form, a fact metric through its fact;
+    either must read one column directly. -> (targets keyed by column, notes on what was resolved)."""
+    via: dict[str, list[str]] = {}
+    for a in model.get("attributes") or []:
+        name = (a.get("information") or {}).get("name") or ""
+        for f in a.get("forms") or []:
+            if str(f.get("category") or f.get("name") or "").upper() != "ID":
+                continue
+            exprs = f.get("expressions") or []
+            col = _simple_column((exprs[0].get("expression") or {}).get("text")) if len(exprs) == 1 else None
+            if col and col.casefold() in cols:
+                via.setdefault(name.casefold(), []).append(cols[col.casefold()][1])
+    for fm in model.get("factMetrics") or []:
+        name = (fm.get("information") or {}).get("name") or ""
+        exprs = (fm.get("fact") or {}).get("expressions") or []
+        col = _simple_column((exprs[0].get("expression") or {}).get("text")) if len(exprs) == 1 else None
+        if col and col.casefold() in cols:
+            via.setdefault(name.casefold(), []).append(cols[col.casefold()][1])
+    out, notes, unknown = {}, [], []
+    for key, (name, t, fmt) in targets.items():
+        if key in cols:
+            col = cols[key][1]
+        else:
+            # a connector form name ("postal code__id", "bucket (id)"): use the attribute behind it
+            base = next((c for c in attribute_name_candidates(key) if c in via), key)
+            hits = sorted(set(via.get(base) or []))
+            if len(hits) != 1:
+                unknown.append(name if not hits else f"{name} (reads {hits})")
+                continue
+            col = hits[0]
+            notes.append(f"'{name}' reads column {col}")
+        if col.casefold() in out and out[col.casefold()][1:] != (t, fmt):
+            die(f"column {col} is given two types: {out[col.casefold()][1]} and {t}")
+        out[col.casefold()] = (col, t, fmt)
+    if unknown:
+        die(f"not a column, attribute or fact metric of this table: {unknown}. Columns: {sorted(c[1] for c in cols.values())}")
+    return out, notes
+
+
+def joined_column_targets(model: dict, table_id: str,
+                          targets: dict[str, tuple[str, str, str]]) -> dict[str, dict[str, tuple[str, str, str]]]:
+    """Columns of OTHER tables that the same attribute form reads (a lookup or mapping table keyed on the
+    retyped column). They must take the same type or the join breaks. -> {table_id: {column key: target}}."""
+    out: dict[str, dict[str, tuple[str, str, str]]] = {}
+    for a in model.get("attributes") or []:
+        for f in a.get("forms") or []:
+            reads = []
+            for e in f.get("expressions") or []:
+                col = _simple_column((e.get("expression") or {}).get("text"))
+                for t in e.get("tables") or []:
+                    if col and t.get("objectId"):
+                        reads.append((t["objectId"], col))
+            hit = next((targets[c.casefold()] for tid, c in reads if tid == table_id and c.casefold() in targets), None)
+            if not hit:
+                continue
+            for tid, col in reads:
+                if tid != table_id:
+                    out.setdefault(tid, {})[col.casefold()] = (col, hit[1], hit[2])
+    return out
+
+
+def column_type_table_patch(table: dict, targets: dict[str, tuple[str, str, str]]):
+    """-> (physicalTable body for PATCH /tables/{id}, [(column, old type, new type, fmt)], [unchanged columns]).
+    Sets each type in physicalTable.columns AND the pipeline; both must agree."""
+    keep = lambda i: {k: i[k] for k in ("objectId", "subType", "name") if k in (i or {})}  # noqa: E731
+    pt = copy.deepcopy(table["physicalTable"])
+    pt["information"] = keep(pt.get("information"))
+    pipeline = json.loads(pt["pipeline"])
+    pipe_cols = {c["name"].casefold(): c for ch in (pipeline.get("rootTable") or {}).get("children") or []
+                 for c in ch.get("columns") or []}
+    present = {c["columnName"].casefold() for c in pt["columns"]}
+    missing = [v[0] for k, v in targets.items() if k not in present]
+    if missing:
+        die(f"column(s) not in table '{keep(table.get('information')).get('name')}': {missing}")
+    changed, same = [], []
+    for c in pt["columns"]:
+        c["information"] = keep(c.get("information"))
+        key = c["columnName"].casefold()
+        if key not in targets:
+            continue
+        _, t, fmt = targets[key]
+        new = COLUMN_TYPES[t]
+        if c.get("dataType") == new and c.get("format", "") == fmt:
+            same.append(c["columnName"])
+            continue
+        pc = pipe_cols.get(key)
+        if pc is None:
+            die(f"{c['columnName']} is not in the table's pipeline")
+        changed.append((c["columnName"], (c.get("dataType") or {}).get("type"), new["type"], fmt))
+        c["dataType"] = dict(new)
+        if fmt:
+            c["format"] = fmt
+        else:
+            c.pop("format", None)
+        pc["dataType"] = dict(new)
+        pc["format"] = fmt
+    pt["pipeline"] = json.dumps(pipeline, separators=(",", ":"))
+    return pt, changed, same
+
+
+def _colref_token(col_id: str, name: str) -> dict:
+    return {"type": "column_reference", "value": f"[{name}]",
+            "target": {"objectId": col_id, "subType": "column", "name": name}}
+
+
+def _tokenized_exprs(exprs: list[dict], cols: dict[str, tuple[str, str]]) -> list[dict] | None:
+    """Rewrite simple column expressions as tokens (the only shape the service accepts on write); None when an
+    expression is a formula this command does not rewrite."""
+    out = []
+    for e in exprs:
+        col = _simple_column((e.get("expression") or {}).get("text"))
+        if col is None or col.casefold() not in cols:
+            return None
+        cid, name = cols[col.casefold()]
+        out.append({"expression": {"tokens": [_colref_token(cid, name), {"type": "end_of_text", "value": ""}]},
+                    "tables": e.get("tables")})
+    return out
+
+
+def column_type_object_writes(model: dict, mid: str, cols: dict[str, tuple[str, str]],
+                              targets: dict[str, tuple[str, str, str]], get) -> tuple[list[tuple], list[str]]:
+    """Attribute forms and fact metrics that read a target column get the same type. -> (writes, notes);
+    each write is (label, path, body). `get(path)` returns the current object."""
+    writes, notes = [], []
+    for a in model.get("attributes") or []:
+        refs = [_simple_column((e.get("expression") or {}).get("text"))
+                for f in a.get("forms") or [] for e in f.get("expressions") or []]
+        if not any(r and r.casefold() in targets for r in refs):
+            continue
+        aid, aname = a["information"]["objectId"], a["information"]["name"]
+        cur = get(f"/api/model/dataModels/{mid}/attributes/{aid}")
+        forms, need = [], False
+        for f in cur.get("forms") or []:
+            f = {k: v for k, v in f.items() if k != "translations"}
+            if f.get("expressions"):
+                ex = _tokenized_exprs(f["expressions"], cols)
+                if ex is None:
+                    notes.append(f"attribute '{aname}': form '{f.get('name')}' has a formula; check its type by hand")
+                    forms = None
+                    break
+                col = _simple_column(f["expressions"][0]["expression"].get("text"))
+                if col and col.casefold() in targets:
+                    t = targets[col.casefold()][1]
+                    role = "date" if t in ("date", "timestamp") else f.get("semanticRole")
+                    if f.get("dataType") != COLUMN_TYPES[t] or f.get("displayFormat") != _FORM_DISPLAY[t] \
+                            or f.get("semanticRole") != role:
+                        need = True
+                    f["dataType"], f["displayFormat"] = dict(COLUMN_TYPES[t]), _FORM_DISPLAY[t]
+                    if role:   # Studio gives a date form the "date" role (an integer yyyyMM had "month")
+                        f["semanticRole"] = role
+                f["expressions"] = ex
+            forms.append(f)
+        if forms is not None and need:
+            writes.append((f"attribute '{aname}'", f"/api/model/dataModels/{mid}/attributes/{aid}", {"forms": forms}))
+    for fm in model.get("factMetrics") or []:
+        exprs = (fm.get("fact") or {}).get("expressions") or []
+        col = _simple_column((exprs[0].get("expression") or {}).get("text")) if exprs else None
+        if not col or col.casefold() not in targets:
+            continue
+        t = targets[col.casefold()][1]
+        fid, fname = fm["information"]["objectId"], fm["information"]["name"]
+        cur = get(f"/api/model/dataModels/{mid}/factMetrics/{fid}")
+        if (cur.get("fact") or {}).get("dataType") == COLUMN_TYPES[t]:
+            continue
+        ex = _tokenized_exprs(cur["fact"]["expressions"], cols)
+        if ex is None:
+            notes.append(f"fact metric '{fname}' has a formula; check its type by hand")
+            continue
+        fact = {"dataType": dict(COLUMN_TYPES[t]), "expressions": ex,
+                "extensions": cur["fact"].get("extensions", []), "entryLevel": cur["fact"].get("entryLevel", [])}
+        writes.append((f"fact metric '{fname}'", f"/api/model/dataModels/{mid}/factMetrics/{fid}", {"fact": fact}))
+    return writes, notes
+
+
+def _patch_in_changeset(m: MSTR, writes: list[tuple], label: str) -> None:
+    cs = open_cs(m)
+    try:
+        for what, path, body in writes:
+            r = m.patch(path, json=body)
+            if not r.ok:
+                die(f"{label}: PATCH {what}: {format_mstr_error(r)}")
+        commit_cs(m, cs)
+    except BaseException:   # die() raises SystemExit; discard on every failure path
+        discard_cs(m, cs)
+        raise
+
+
+def cmd_set_column_types(m: MSTR, args):
+    """Change column types (and the source date format) inside the model, without reloading the source:
+    1) one changeset: the table, each type in both the column list and the pipeline;
+    2) one changeset: attribute forms and fact metrics that read a changed column get the same type
+       (usually already done by the service; this pass writes only what still differs).
+    Republish afterwards for the data to change."""
+    targets = column_type_targets(args.set, args.spec)
+    m.login(identity=True)
+    mid = args.model_id
+    r = m.post(f"/api/model/dataModels/{mid}/export")
+    if not r.ok:
+        die(f"export model: {format_mstr_error(r)}")
+    model = (r.json().get("model") or [{}])[0]
+    table = _pick_table(model.get("tables") or [], args.table)
+    tinfo = table["information"]
+    cols = {c["columnName"].casefold(): (c["information"]["objectId"], c["columnName"])
+            for c in table["physicalTable"]["columns"]}
+
+    def get(path: str) -> dict:
+        g = m.get(path)
+        if not g.ok:
+            die(f"GET {path}: {format_mstr_error(g)}")
+        return g.json() or {}
+
+    targets, resolved = resolve_column_targets(model, cols, targets)
+    for n in resolved:
+        print(f"  = {n}", file=sys.stderr)
+    cur_table = get(f"/api/model/dataModels/{mid}/tables/{tinfo['objectId']}")
+    pt, changed, same = column_type_table_patch(cur_table, targets)
+    print(f"→ table '{tinfo['name']}': {len(changed)} column type(s) to change, {len(same)} already set",
+          file=sys.stderr)
+    for col, old, new, fmt in changed:
+        print(f"  ~ {col}: {old} -> {new}{' (' + fmt + ')' if fmt else ''}", file=sys.stderr)
+    if changed and not args.dry_run:
+        _patch_in_changeset(m, [(f"table '{tinfo['name']}'", f"/api/model/dataModels/{mid}/tables/{tinfo['objectId']}",
+                                 {"physicalTable": pt})], "table")
+    # A lookup or mapping table keyed on a retyped column takes the same type, or its join breaks.
+    joined = [] if args.no_joined else [(t, tgt) for t, tgt in joined_column_targets(model, tinfo["objectId"],
+                                                                                     targets).items()]
+    joined_changed = []
+    for tid, tgt in joined:
+        other = get(f"/api/model/dataModels/{mid}/tables/{tid}")
+        oname = (other.get("information") or {}).get("name", tid)
+        opt, ochanged, _ = column_type_table_patch(other, tgt)
+        for col, old, new, fmt in ochanged:
+            print(f"  ~ {oname}.{col}: {old} -> {new} (joined)", file=sys.stderr)
+            joined_changed.append({"table": oname, "column": col, "from": old, "to": new})
+        if ochanged and not args.dry_run:
+            _patch_in_changeset(m, [(f"table '{oname}'", f"/api/model/dataModels/{mid}/tables/{tid}",
+                                     {"physicalTable": opt})], f"joined table {oname}")
+    writes, notes = column_type_object_writes(model, mid, cols, targets, get)
+    for n in notes:
+        print(f"  ! {n}", file=sys.stderr)
+    if writes and not args.dry_run:
+        _patch_in_changeset(m, writes, "align attributes and fact metrics")
+    print(json.dumps({"ok": True, "dry_run": bool(args.dry_run), "table": tinfo["name"],
+                      "changed": [{"column": c, "from": o, "to": n, "date_format": f or None}
+                                  for c, o, n, f in changed],
+                      "already_set": same, "resolved": resolved, "joined": joined_changed,
+                      "aligned": [w[0] for w in writes],
+                      "check_by_hand": notes,
+                      "next": "republish the model for the data to change" if (changed or writes or joined_changed)
+                      else None},
+                     indent=2))
+
+
+# ── create-formula-attribute: an attribute computed from the table's columns ─────────────────
+# Ported from runs that worked live (AddMonths([PERIOD], -1); Year([date]) typed integer; MonthsBetween).
+# Prefer a lookup table: it is faster at run time, and it can be replaced without deleting the derived
+# metrics built on it. Create a formula attribute only when the user asks for one.
+
+_ID_FORM = "45C11FA478E745FEA08D781CEA190FE5"     # the system ID form
+_FORMULA_TOKEN = _re.compile(r"""\s*(?:
+    (?P<col>\[[^\]]+\])            |
+    (?P<str>'(?:[^']|'')*')        |
+    (?P<num>\d+(?:\.\d+)?)         |
+    (?P<op><=|>=|<>|[(),+\-*/=<>]) |
+    (?P<id>[A-Za-z_][A-Za-z0-9_]*)
+)""", _re.X)
+
+
+def formula_attribute_tokens(formula: str, cols: dict[str, tuple[str, str]]) -> tuple[list[dict], list[str]]:
+    """Strategy formula over [COLUMNS] -> (tokens, unverified token kinds used). Verified live: functions,
+    [columns], integers, operators. String literals and decimals have not been confirmed on a tenant."""
+    toks, unverified, pos, text = [], [], 0, formula.strip()
+    while pos < len(text):
+        hit = _FORMULA_TOKEN.match(text, pos)
+        if not hit or hit.end() == pos:
+            die(f"cannot read the formula at: {text[pos:pos + 20]!r}")
+        pos = hit.end()
+        if hit.group("col"):
+            name = hit.group("col")[1:-1]
+            if name.casefold() not in cols:
+                die(f"unknown column [{name}]; columns: {sorted(c[1] for c in cols.values())}")
+            cid, cname = cols[name.casefold()]
+            toks.append(_colref_token(cid, cname))
+        elif hit.group("str"):
+            toks.append({"type": "string", "value": hit.group("str")})
+            unverified.append("string literal")
+        elif hit.group("num"):
+            v = hit.group("num")
+            toks.append({"type": "real" if "." in v else "integer", "value": v})
+            if "." in v:
+                unverified.append("decimal")
+        elif hit.group("op"):
+            toks.append({"type": "character", "value": hit.group("op")})
+        else:
+            word = hit.group("id")
+            toks.append({"type": "function" if text[pos:].lstrip()[:1] == "(" else "identifier", "value": word})
+    return toks + [{"type": "end_of_text", "value": ""}], sorted(set(unverified))
+
+
+def formula_attribute_body(name: str, tokens: list[dict], table_ref: dict, *, description: str = "",
+                           display_format: str = "text", data_type: str | None = None) -> dict:
+    form = {"id": _ID_FORM, "category": "ID", "type": "system", "displayFormat": display_format, "name": "ID",
+            "expressions": [{"expression": {"tokens": tokens}, "tables": [table_ref]}], "lookupTable": table_ref}
+    if data_type:
+        form["dataType"] = dict(COLUMN_TYPES[data_type])
+    shown = [{"id": _ID_FORM, "name": "ID"}]
+    return {"information": {"name": name, "description": description}, "forms": [form],
+            "keyForm": {"id": _ID_FORM}, "attributeLookupTable": table_ref,
+            "displays": {"reportDisplays": shown, "browseDisplays": list(shown)}}
+
+
+def cmd_create_formula_attribute(m: MSTR, args):
+    """Create (or, with --update, rewrite) an attribute whose ID form is a formula over the table's columns.
+    One changeset. Republish afterwards for it to hold data. Prefer a lookup table where one can do the job."""
+    if args.data_type and args.data_type not in COLUMN_TYPES:
+        die(f"--data-type must be one of {', '.join(COLUMN_TYPES)}")
+    m.login(identity=True)
+    mid = args.model_id
+    r = m.post(f"/api/model/dataModels/{mid}/export")
+    if not r.ok:
+        die(f"export model: {format_mstr_error(r)}")
+    model = (r.json().get("model") or [{}])[0]
+    table = _pick_table(model.get("tables") or [], args.table)
+    tinfo = table["information"]
+    table_ref = {"objectId": tinfo["objectId"], "subType": "logical_table", "name": tinfo["name"]}
+    cols = {c["columnName"].casefold(): (c["information"]["objectId"], c["columnName"])
+            for c in table["physicalTable"]["columns"]}
+    if getattr(args, "column", None):   # add-column-attribute: one column as-is, named as column, attribute or metric
+        targets, notes = resolve_column_targets(model, cols, {args.column.casefold(): (args.column, "", "")})
+        ((col, _t, _f),) = targets.values()
+        for n in notes:
+            print(f"  = {n}", file=sys.stderr)
+        args.formula = f"[{col}]"
+        taken = {(o.get("information") or {}).get("name", "").casefold(): kind
+                 for kind in ("factMetrics", "metrics") for o in model.get(kind) or []}
+        if args.name.casefold() in taken:
+            die(f"'{args.name}' is already a metric's name; give the attribute another name, or the connector "
+                f"shows two columns with one name")
+    tokens, unverified = formula_attribute_tokens(args.formula, cols)
+    if unverified:
+        _require_unverified_ok(args, "create-formula-attribute",
+                               f"the formula uses {', '.join(unverified)}, which no live run has confirmed.")
+    existing = {(a.get("information") or {}).get("name", "").casefold(): a for a in model.get("attributes") or []}
+    current = existing.get(args.name.casefold())
+    if args.update:
+        if not current:
+            die(f"no attribute named '{args.name}' to update")
+        aid = current["information"]["objectId"]
+        g = m.get(f"/api/model/dataModels/{mid}/attributes/{aid}")
+        if not g.ok:
+            die(f"GET attribute: {format_mstr_error(g)}")
+        forms = (g.json() or {}).get("forms") or []
+        if len(forms) != 1:
+            die(f"'{args.name}' has {len(forms)} forms; --update handles single-form attributes only")
+        f = {k: v for k, v in forms[0].items() if k != "translations"}
+        f["expressions"] = [{"expression": {"tokens": tokens}, "tables": [table_ref]}]
+        if args.data_type:
+            f["dataType"] = dict(COLUMN_TYPES[args.data_type])
+        f["displayFormat"] = args.display_format or f.get("displayFormat") or "text"
+        method, path, body = "PATCH", f"/api/model/dataModels/{mid}/attributes/{aid}", {"forms": [f]}
+    else:
+        if current:
+            die(f"an attribute named '{args.name}' exists; pass --update to rewrite its formula")
+        method, path = "POST", f"/api/model/dataModels/{mid}/attributes"
+        body = formula_attribute_body(args.name, tokens, table_ref, description=args.description or "",
+                                      display_format=args.display_format or "text", data_type=args.data_type)
+    if args.dry_run:
+        print(json.dumps({"ok": True, "dry_run": True, "method": method, "path": path, "body": body}, indent=2))
+        return
+    cs = open_cs(m)
+    try:
+        w = m.patch(path, json=body) if method == "PATCH" else m.post(path, json=body)
+        if not w.ok:
+            die(f"{method} attribute '{args.name}': {format_mstr_error(w)}")
+        commit_cs(m, cs)
+    except BaseException:
+        discard_cs(m, cs)
+        raise
+    print(json.dumps({"ok": True, "attribute": args.name, "updated": bool(args.update),
+                      "next": "republish the model for the attribute to hold data"}, indent=2))
+
+
+# ── rename-describe: names and descriptions of attributes and fact metrics ──────────────────
+# Ported from runs that worked live: PATCH {"information": {"name", "description"}} on the attribute or fact
+# metric, all in one changeset; takes effect at once, no republish. Derived metrics need a full PUT (not here).
+
+DESCRIPTION_LIMIT = 250   # characters, Strategy's limit for a description
+
+
+def rename_describe_items(spec: dict | list) -> list[dict]:
+    """{"items": [{object_type, current_name, new_name?, description?}]} (or the list itself) -> checked items."""
+    items = spec.get("items") if isinstance(spec, dict) else spec
+    out = []
+    for it in items or []:
+        kind = str(it.get("object_type") or "").lower()
+        if kind not in ("attribute", "fact_metric"):
+            die(f"{it.get('current_name')}: object_type must be attribute or fact_metric (derived metrics take "
+                f"their description when created)")
+        if not it.get("current_name"):
+            die("an item has no current_name")
+        desc = it.get("description")
+        if desc is not None and len(str(desc)) > DESCRIPTION_LIMIT:
+            die(f"{it['current_name']}: description is {len(str(desc))} characters (max {DESCRIPTION_LIMIT})")
+        if not (it.get("new_name") or desc is not None):
+            die(f"{it['current_name']}: give new_name, description or both")
+        out.append({"object_type": kind, "current_name": str(it["current_name"]),
+                    "new_name": it.get("new_name") or None, "description": desc})
+    if not out:
+        die("no items")
+    return out
+
+
+def rename_describe_writes(model: dict, mid: str, items: list[dict]) -> tuple[list[tuple], list[str]]:
+    """-> (writes [(label, path, body)], notes). Already-applied items are skipped, so a rerun is harmless.
+
+    A connector form name ('<attribute>__<form>', '<attribute> (<form>)') describes its attribute: a form has
+    no description of its own, and the connector shows the attribute's on every form. A form name can't be
+    renamed here. Every item is checked before anything is written, and all problems are reported together."""
+    pools = {"attribute": ("attributes", model.get("attributes") or []),
+             "fact_metric": ("factMetrics", model.get("factMetrics") or [])}
+    by_name = {k: {(o.get("information") or {}).get("name", "").casefold(): o for o in objs}
+               for k, (_, objs) in pools.items()}
+    writes, notes, problems = [], [], []
+    wanted: dict[str, dict] = {}             # objectId -> merged request for that object
+    renamed: dict[str, dict] = {k: {} for k in pools}
+    for it in items:
+        kind, cur = it["object_type"], it["current_name"]
+        names = by_name[kind]
+        o, via_form = names.get(cur.casefold()) or renamed[kind].get(cur.casefold()), False
+        if o is None and kind == "attribute":
+            for alt in attribute_name_candidates(cur)[1:]:
+                if alt in names:
+                    o, via_form = names[alt], True
+                    break
+        if o is None:
+            if it["new_name"] and it["new_name"].casefold() in names:
+                notes.append(f"{cur}: already renamed to '{it['new_name']}'")
+                continue
+            other = "fact_metric" if kind == "attribute" else "attribute"
+            hint = (f" (it is a {other}: set object_type to {other})"
+                    if any(c in by_name[other] for c in attribute_name_candidates(cur)) else "")
+            problems.append(f"{kind} '{cur}' not found{hint}")
+            continue
+        info = o["information"]
+        if via_form:
+            if it["new_name"]:
+                problems.append(f"'{cur}' is a form of attribute '{info['name']}': forms can't be renamed here; "
+                                f"rename the attribute, or leave new_name out")
+                continue
+            notes.append(f"'{cur}' is a form: its description is set on attribute '{info['name']}', which the "
+                         f"connector shows on every form")
+        if it["new_name"]:
+            renamed[kind][it["new_name"].casefold()] = o     # later items may use the new name
+        w = wanted.setdefault(info["objectId"], {"o": o, "kind": kind, "items": [], "name": None, "desc": None})
+        for key, val in (("name", it["new_name"]), ("desc", it["description"])):
+            if val is None:
+                continue
+            if w[key] is not None and str(w[key]) != str(val):
+                problems.append(f"{kind} '{info['name']}' gets two different {'names' if key == 'name' else 'descriptions'} "
+                                f"(items '{w['items'][-1]}' and '{cur}'); give it one (a form shares its "
+                                f"attribute's description)")
+            w[key] = val
+        w["items"].append(cur)
+    for w in wanted.values():
+        kind, o = w["kind"], w["o"]
+        info, names = o["information"], by_name[kind]
+        name = w["name"] or info["name"]
+        desc = info.get("description", "") if w["desc"] is None else str(w["desc"])
+        if name.casefold() != info["name"].casefold() and name.casefold() in names \
+                and names[name.casefold()] is not o:
+            problems.append(f"{info['name']}: another {kind} is already named '{name}'")
+            continue
+        if name == info["name"] and desc == info.get("description", ""):
+            notes.append(f"{info['name']}: unchanged")
+            continue
+        names[name.casefold()] = o
+        what = " + ".join(x for x in ((f"rename -> '{name}'" if name != info["name"] else ""),
+                                       ("description" if desc != info.get("description", "") else "")) if x)
+        writes.append((f"{kind} '{info['name']}': {what}",
+                       f"/api/model/dataModels/{mid}/{pools[kind][0]}/{info['objectId']}",
+                       {"information": {"name": name, "description": desc}}))
+    if problems:
+        die(f"rename-describe: {len(problems)} of {len(items)} item(s) can't be applied; nothing was written. "
+            f"Fix them and run again:\n  - " + "\n  - ".join(problems))
+    return writes, notes
+
+
+def cmd_rename_describe(m: MSTR, args):
+    """Rename attributes and fact metrics and/or set their descriptions, by name, in one changeset."""
+    items = rename_describe_items(_load_json_arg(None, args.spec))
+    m.login(identity=True)
+    r = m.post(f"/api/model/dataModels/{args.model_id}/export")
+    if not r.ok:
+        die(f"export model: {format_mstr_error(r)}")
+    model = (r.json().get("model") or [{}])[0]
+    writes, notes = rename_describe_writes(model, args.model_id, items)
+    for n in notes:
+        print(f"  = {n}", file=sys.stderr)
+    for w in writes:
+        print(f"  ~ {w[0]}", file=sys.stderr)
+    if writes and not args.dry_run:
+        _patch_in_changeset(m, writes, "rename-describe")
+    print(json.dumps({"ok": True, "dry_run": bool(args.dry_run), "changed": [w[0] for w in writes],
+                      "skipped": notes}, indent=2))
+
+
+TIME_INTERVALS = ("year", "quarter", "month", "week", "day")   # seen live on a date attribute (smartAttributeType "<x>_interval")
+
+
+def time_attribute_items(args) -> list[dict]:
+    """--attribute A --intervals year,quarter,month and/or --spec {items: [{attribute, intervals}]}."""
+    items = []
+    if getattr(args, "spec", None):
+        items += list((_load_json_arg(None, args.spec) or {}).get("items") or [])
+    if getattr(args, "attribute", None):
+        items.append({"attribute": args.attribute, "intervals": [x.strip() for x in (args.intervals or "").split(",")
+                                                                   if x.strip()]})
+    if not items:
+        die("add-time-attributes: give --attribute and --intervals, or --spec")
+    for it in items:
+        bad = [x for x in it.get("intervals") or [] if str(x).lower() not in TIME_INTERVALS]
+        if not it.get("attribute") or not it.get("intervals") or bad:
+            die(f"add-time-attributes: each item needs an attribute and intervals from {', '.join(TIME_INTERVALS)}"
+                + (f" (unknown: {bad})" if bad else ""))
+    return items
+
+
+def _smart_type(entry: dict) -> str:
+    return str(entry.get("smartAttributeType") or (entry.get("definition") or {}).get("smartAttributeType") or "")
+
+
+def time_attribute_body(attr: dict, intervals: list[str]) -> tuple[dict | None, list[str], list[str]]:
+    """-> (PUT body or None when nothing to add, added types, problems). The PUT replaces the whole set, so the
+    existing smart attributes go in again with their objectId."""
+    name = (attr.get("information") or {}).get("name") or "?"
+    key_id = (attr.get("keyForm") or {}).get("id")
+    key = next((f for f in attr.get("forms") or [] if f.get("id") == key_id), (attr.get("forms") or [{}])[0])
+    typ = ((key.get("dataType") or {}).get("type") or "").lower()
+    if typ not in ("date", "time_stamp"):
+        return None, [], [f"'{name}' is {typ or 'not typed'}: time attributes need a date or timestamp; convert it "
+                          f"first (set-column-types ... date <pattern>, e.g. yyyyMM)"]
+    existing = [e for e in attr.get("smartAttributes") or [] if _smart_type(e)]
+    have = {_smart_type(e) for e in existing}
+    wanted = [f"{str(x).lower()}_interval" for x in intervals]
+    added = [w for w in wanted if w not in have]
+    if not added:
+        return None, [], []
+    def entry(t, e=None):
+        label = t.replace("_interval", "").capitalize()             # Studio names them '<attribute> (Year)'
+        out = {"subType": "attribute_smart",
+               "name": (e or {}).get("name") or ((e or {}).get("information") or {}).get("name") or f"{name} ({label})",
+               "definition": {"smartAttributeType": t, "parameters": [], "ascending": (e or {}).get("ascending", True)}}
+        if e and ((e.get("information") or {}).get("objectId") or e.get("objectId")):
+            out["objectId"] = (e.get("information") or {}).get("objectId") or e.get("objectId")
+        return out
+    return {"smartAttributes": [entry(_smart_type(e), e) for e in existing] + [entry(t) for t in added]}, added, []
+
+
+def cmd_add_time_attributes(m: MSTR, args):
+    """Time attributes (year, quarter, month, week, day intervals) on date attributes, as Studio adds them: each
+    shows on the connector as '<attribute> (<interval>)__id / __start / __desc'. One changeset; republish after."""
+    items = time_attribute_items(args)
+    m.login(identity=True)
+    r = m.post(f"/api/model/dataModels/{args.model_id}/export")
+    if not r.ok:
+        die(f"export model: {format_mstr_error(r)}")
+    model = (r.json().get("model") or [{}])[0]
+    by_name = {}
+    for a in model.get("attributes") or []:
+        by_name[(a.get("information") or {}).get("name", "").casefold()] = a
+    writes, notes, problems = [], [], []
+    for it in items:
+        a = next((by_name[c] for c in attribute_name_candidates(it["attribute"]) if c in by_name), None)
+        if a is None:
+            problems.append(f"attribute '{it['attribute']}' not found")
+            continue
+        body, added, probs = time_attribute_body(a, it["intervals"])
+        problems += probs
+        aname, aid = a["information"]["name"], a["information"]["objectId"]
+        if body is None and not probs:
+            notes.append(f"'{aname}' already has {', '.join(it['intervals'])}")
+        if body is not None:
+            writes.append((f"attribute '{aname}': + {', '.join(added)}",
+                           f"/api/model/dataModels/{args.model_id}/attributes/{aid}/smartAttributes", body))
+    if problems:
+        die("add-time-attributes: nothing was written:\n  - " + "\n  - ".join(problems))
+    for n in notes:
+        print(f"  = {n}", file=sys.stderr)
+    for w in writes:
+        print(f"  ~ {w[0]}", file=sys.stderr)
+        if args.dry_run:
+            print(json.dumps(w[2], indent=2), file=sys.stderr)
+    if writes and not args.dry_run:
+        cs = open_cs(m)
+        try:
+            for what, path, body in writes:
+                resp = m.put(path, json=body)
+                if not resp.ok:
+                    die(f"add-time-attributes: PUT {what}: {format_mstr_error(resp)}")
+            commit_cs(m, cs)
+        except BaseException:   # die() raises SystemExit; discard on every failure path
+            discard_cs(m, cs)
+            raise
+    print(json.dumps({"ok": True, "dry_run": bool(args.dry_run), "changed": [w[0] for w in writes],
+                      "skipped": notes, "next": "republish, then the intervals show on the connector as "
+                                                "'<attribute> (<interval>)__id / __start / __desc'"}, indent=2))
+
+
+def _display_ids(entries) -> list[str]:
+    out = []
+    for d in entries or []:
+        i = d.get("id") if isinstance(d, dict) else d
+        if i and str(i) not in out:
+            out.append(str(i))
+    return out
+
+
+def show_forms_body(attr: dict, forms: list[str]) -> tuple[dict | None, list[str], list[str]]:
+    """The displays body that adds forms (by name or category, such as ID or DESC) to an attribute's report and
+    browse displays, keeping the ones it has. A form in neither list is hidden: the connector doesn't list it
+    (verified: adding a form to both lists made the connector list it as '<attribute>__<form>').
+    Returns (body or None when nothing changes, forms added, problems)."""
+    by_key: dict[str, str] = {}
+    for f in attr.get("forms") or []:
+        fid = f.get("id") or (f.get("information") or {}).get("objectId")
+        for k in (f.get("name"), (f.get("information") or {}).get("name"), f.get("category")):
+            if k and fid:
+                by_key.setdefault(str(k).casefold(), str(fid))
+    disp = attr.get("displays") or {}
+    report, browse = _display_ids(disp.get("reportDisplays")), _display_ids(disp.get("browseDisplays"))
+    problems, ids, added = [], [], []
+    for name in forms:
+        fid = by_key.get(str(name).strip().casefold())
+        if not fid:
+            problems.append(f"form '{name}' not found (forms: {', '.join(sorted({k for k in by_key}))})")
+            continue
+        ids.append(fid)
+        if fid not in report or fid not in browse:
+            added.append(str(name))
+    new_report = report + [i for i in ids if i not in report]
+    new_browse = browse + [i for i in ids if i not in browse]
+    if problems or (new_report == report and new_browse == browse):
+        return None, added, problems
+    return ({"displays": {"reportDisplays": [{"id": i} for i in new_report],
+                          "browseDisplays": [{"id": i} for i in new_browse]}}, added, problems)
+
+
+def cmd_show_forms(m: MSTR, args):
+    """Make hidden forms visible: add them to the attribute's report and browse displays, keeping the ones it
+    has. A form already in both is left alone, so running it twice changes nothing. One changeset; republish
+    and re-certify after, then check the connector lists the form."""
+    forms = [x.strip() for x in (args.forms or "").split(",") if x.strip()]
+    if not forms:
+        die("show-forms: give --forms (names or categories, comma-separated)")
+    m.login(identity=True)
+    r = m.post(f"/api/model/dataModels/{args.model_id}/export")
+    if not r.ok:
+        die(f"export model: {format_mstr_error(r)}")
+    model = (r.json().get("model") or [{}])[0]
+    by_name = {(a.get("information") or {}).get("name", "").casefold(): a for a in model.get("attributes") or []}
+    a = next((by_name[c] for c in attribute_name_candidates(args.attribute) if c in by_name), None)
+    if a is None:
+        die(f"show-forms: attribute '{args.attribute}' not found")
+    body, added, problems = show_forms_body(a, forms)
+    if problems:
+        die("show-forms: nothing was written:\n  - " + "\n  - ".join(problems))
+    aname, aid = a["information"]["name"], a["information"]["objectId"]
+    if body is None:
+        print(json.dumps({"ok": True, "dry_run": bool(args.dry_run), "changed": [],
+                          "skipped": [f"'{aname}': {', '.join(forms)} already shown"]}, indent=2))
+        return
+    print(f"  ~ attribute '{aname}': show {', '.join(added)}", file=sys.stderr)
+    if args.dry_run:
+        print(json.dumps(body, indent=2), file=sys.stderr)
+    else:
+        cs = open_cs(m)
+        try:
+            resp = m.patch(f"/api/model/dataModels/{args.model_id}/attributes/{aid}", json=body)
+            if not resp.ok:
+                die(f"show-forms: PATCH '{aname}': {format_mstr_error(resp)}")
+            commit_cs(m, cs)
+        except BaseException:
+            discard_cs(m, cs)
+            raise
+    print(json.dumps({"ok": True, "dry_run": bool(args.dry_run), "changed": [f"'{aname}': {', '.join(added)}"],
+                      "next": "republish and re-certify; the connector then lists the form as "
+                              "'<attribute>__<form>'"}, indent=2))
 
 
 def cmd_patch_fact_metrics(m: MSTR, args):
@@ -5824,6 +7201,10 @@ def build_parser():
     sp.add_argument("--raw", action="store_true")
 
     object_kinds = sorted(MODEL_OBJECT_KINDS)
+    sp = sub.add_parser("export-model", help="save the model's full definition (for lookups --model-export)")
+    sp.add_argument("--model-id", required=True)
+    sp.add_argument("--out", required=True)
+
     sp = sub.add_parser("get-model-object")
     sp.add_argument("--kind", required=True, choices=object_kinds,
                     help="Mosaic-contained kind, or project_/legacy_ kind for classic schema objects")
@@ -6061,27 +7442,175 @@ def build_parser():
     sp.add_argument("--unverified-ok", action="store_true", help="send the unverified request anyway")
 
     sp = sub.add_parser("create-compound-metric",
-                        help="UNVERIFIED: uses operator/metric_reference tokens on /factMetrics; the "
-                             "verified derived-metric shapes are in memory/reference_mosaic_derived_metrics.md")
+        help="Derived metric from arithmetic over existing metrics ('[Sales] - [Returns]', "
+             "'([A] + [B]) / [C]', '[A] * 100'), posted as an expression tree in one changeset "
+             "(see memory/reference_mosaic_derived_metrics.md §0).")
     sp.add_argument("--model-id", required=True)
     sp.add_argument("--name", required=True)
-    sp.add_argument("--formula", required=True, help="space-separated: 'METRIC_ID1 - METRIC_ID2'")
-    sp.add_argument("--unverified-ok", action="store_true", help="send the unverified request anyway")
+    sp.add_argument("--formula", required=True,
+                    help="operands [metric name], [objectId], [fact_metric:name] or [metric:name] (bare "
+                         "objectIds also work); operators + - * / and parentheses; whole-number constants")
+    sp.add_argument("--join", choices=["inner", "outer"],
+                    help="formulaJoinType. outer keeps a group when one operand has no rows for it (the "
+                         "blank operand counts as 0); the default (inner) drops that group from results")
+    sp.add_argument("--format", help=f"number format preset: {', '.join(sorted(METRIC_FORMAT_PRESETS))}")
+    sp.add_argument("--description", default="", help=f"business description (max {DESCRIPTION_MAX} characters)")
+    sp.add_argument("--replace", action="store_true",
+                    help="rewrite the existing derived metric with this name in place (full-body PUT); "
+                         "keeps its description and format unless given again")
+    sp.add_argument("--dry-run", action="store_true", help="print the request; open no changeset")
+    sp.add_argument("--unverified-ok", action="store_true",
+                    help="no longer needed (the tree path is verified); accepted so old scripts still run")
 
     sp = sub.add_parser("create-conditional-metric",
-        help="Derived metric Fn(<fact metric>) scoped to <attribute> IN (<elements>) by an embedded "
-             "filter, in one changeset (see memory/reference_mosaic_derived_metrics.md §0c).")
+        help="Derived metric scoped by a filter embedded in the metric (<attribute> IN (<elements>), "
+             "optionally ANDed with more), with an optional latest/first-period level rule, in one "
+             "changeset (see memory/reference_mosaic_derived_metrics.md §0c, §0d).")
     sp.add_argument("--model-id", required=True)
     sp.add_argument("--name", required=True)
-    sp.add_argument("--source-metric", required=True,
-                    help="fact metric to aggregate: name (case-insensitive) or objectId")
+    what = sp.add_mutually_exclusive_group(required=True)
+    what.add_argument("--source-metric",
+                      help="fact metric to aggregate with --function: name (case-insensitive) or objectId")
+    what.add_argument("--count-attribute",
+                      help="attribute whose distinct elements to count (customers, patients, accounts...): "
+                           "name or objectId")
     sp.add_argument("--attribute", required=True,
                     help="attribute to filter on: name (case-insensitive) or objectId")
     sp.add_argument("--elements", required=True, nargs="+",
                     help="attribute ID-form values to keep (IN list); quote values that contain spaces")
-    sp.add_argument("--function", default="Sum", choices=sorted(AGG_FUNCTION_IDS),
-                    help="aggregation wrapped around the source metric (default Sum, the live-verified path)")
-    sp.add_argument("--description", default="", help="business description for the new metric")
+    sp.add_argument("--and", dest="and_conditions", action="append", nargs="+", metavar="ATTR_OR_VALUE",
+                    help="another condition, ANDed: the attribute (name or objectId) then its ID-form values. "
+                         "Repeatable.")
+    sp.add_argument("--function", choices=list(CONDITIONAL_FUNCTIONS),
+                    help="aggregation around --source-metric (default Sum). Count counts the fact rows and, "
+                         "unlike a distinct count of an attribute, honors --level-rule")
+    sp.add_argument("--level-rule", choices=sorted(LEVEL_RULE_AGGREGATIONS),
+                    help="read only the latest (last) or earliest (first) period's rows, per group, for "
+                         "balances, statuses and other snapshot values that must not be summed over time. "
+                         "*_lookup variants use the attribute's lookup; see §0d before relying on them")
+    sp.add_argument("--level-attribute",
+                    help="the period-type attribute (snapshot date, month, week) for --level-rule")
+    sp.add_argument("--format", help=f"number format preset: {', '.join(sorted(METRIC_FORMAT_PRESETS))} "
+                                     f"(default: the source metric's format; integer for counts)")
+    sp.add_argument("--description", default="", help=f"business description (max {DESCRIPTION_MAX} characters)")
+    sp.add_argument("--dry-run", action="store_true", help="print the three requests; open no changeset")
+
+    sp = sub.add_parser("delete-derived-metric",
+        help="Delete one derived metric (never a fact metric or attribute) in a changeset, after "
+             "checking which other derived metrics refer to it.")
+    sp.add_argument("--model-id", required=True)
+    target = sp.add_mutually_exclusive_group(required=True)
+    target.add_argument("--name", help="derived metric name (case-insensitive)")
+    target.add_argument("--object-id", help="derived metric objectId")
+    sp.add_argument("--yes", action="store_true", help="delete it (required unless --dry-run)")
+    sp.add_argument("--force", action="store_true",
+                    help="delete even when other derived metrics refer to it (they may break)")
+    sp.add_argument("--dry-run", action="store_true", help="show the target and its dependents; delete nothing")
+
+    sp = sub.add_parser("create-level-metric",
+        help="Once-per-entity metric Sum(Max([M]) {~+, [Entity]+}) {~+}: for amounts repeated on every row of a "
+             "periodic-snapshot fact (see memory/reference_mosaic_derived_metrics.md §0d rule 1).")
+    sp.add_argument("--model-id", required=True)
+    sp.add_argument("--name", required=True)
+    sp.add_argument("--source-metric", required=True,
+                    help="fact or derived metric: [name], objectId, or fact_metric:/metric: prefix when ambiguous")
+    sp.add_argument("--entity-attribute", required=True,
+                    help="the entity the value belongs to (customer, account, loan...): name or objectId")
+    sp.add_argument("--inner", choices=list(LEVEL_FUNCTIONS), default="Max",
+                    help="per-entity function (default Max: the value repeated on the entity's rows)")
+    sp.add_argument("--outer", choices=list(LEVEL_FUNCTIONS), default="Sum",
+                    help="function across entities (default Sum; Avg for a simple per-entity average)")
+    sp.add_argument("--format", help=f"number format preset: {', '.join(sorted(METRIC_FORMAT_PRESETS))} "
+                                     f"(default: the source fact metric's format)")
+    sp.add_argument("--description", default="", help=f"business description (max {DESCRIPTION_MAX} characters)")
+    sp.add_argument("--dry-run", action="store_true", help="print the request; open no changeset")
+
+    sp = sub.add_parser("create-weighted-average",
+        help="Weighted average taken once per entity, as numerator and denominator helpers plus the ratio "
+             "(see memory/reference_mosaic_derived_metrics.md §0d rule 2).")
+    sp.add_argument("--model-id", required=True)
+    sp.add_argument("--name", required=True, help="name of the average metric")
+    value = sp.add_mutually_exclusive_group(required=True)
+    value.add_argument("--value-attribute", help="attribute holding the value per entity (score, ratio, rate)")
+    value.add_argument("--value-metric", help="metric holding the value per entity")
+    sp.add_argument("--weight-metric", required=True, help="metric to weight by (an amount per entity)")
+    sp.add_argument("--entity-attribute", required=True, help="the entity: name or objectId")
+    sp.add_argument("--numerator-name", help="default: '<name> numerator'")
+    sp.add_argument("--denominator-name", help="default: '<name> denominator'")
+    sp.add_argument("--format", help=f"number format preset for the average: {', '.join(sorted(METRIC_FORMAT_PRESETS))}")
+    sp.add_argument("--description", default="", help=f"business description (max {DESCRIPTION_MAX} characters)")
+    sp.add_argument("--dry-run", action="store_true", help="print the three requests; open no changeset")
+
+    sp = sub.add_parser("rename-describe",
+        help="Rename attributes and fact metrics and/or set their descriptions by name, in one changeset "
+             "(no republish). Spec: {items: [{object_type, current_name, new_name, description}]}.")
+    sp.add_argument("--model-id", required=True)
+    sp.add_argument("--spec", required=True, help="JSON file with the items")
+    sp.add_argument("--dry-run", action="store_true", help="print the changes; open no changeset")
+
+    sp = sub.add_parser("add-time-attributes",
+        help="Time attributes (year, quarter, month, week, day intervals) on date or timestamp attributes, in one "
+             "changeset. Convert a yyyyMM number first with set-column-types. Republish afterwards.")
+    sp.add_argument("--model-id", required=True)
+    sp.add_argument("--attribute", help="date attribute (name as the connector shows it, or the model's)")
+    sp.add_argument("--intervals", default="year,quarter,month", help="comma-separated: " + ", ".join(TIME_INTERVALS))
+    sp.add_argument("--spec", help="JSON {items: [{attribute, intervals: [...]}]} instead of --attribute")
+    sp.add_argument("--dry-run", action="store_true", help="print the request bodies; open no changeset")
+
+    sp = sub.add_parser("show-forms",
+        help="Make hidden forms visible: add them to the attribute's report and browse displays (the connector lists "
+             "only displayed forms). Keeps the displays it has. Republish and re-certify afterwards.")
+    sp.add_argument("--model-id", required=True)
+    sp.add_argument("--attribute", required=True, help="attribute (name as the connector shows it, or the model's)")
+    sp.add_argument("--forms", required=True, help="comma-separated form names or categories (ID, DESC)")
+    sp.add_argument("--dry-run", action="store_true", help="print the request body; open no changeset")
+
+    sp = sub.add_parser("add-column-attribute",
+        help="Attribute that reads one existing column as-is, so a numeric column read as a fact metric can also be "
+             "grouped and filtered on (number of units, a score band, a code stored as a number). Not a formula: "
+             "the fact metric stays. Republish afterwards.")
+    sp.add_argument("--model-id", required=True)
+    sp.add_argument("--name", required=True)
+    sp.add_argument("--column", required=True, help="the column, or the fact metric or attribute that reads it")
+    sp.add_argument("--description", default="")
+    sp.add_argument("--display-format", choices=["text", "number", "date"], default="number")
+    sp.add_argument("--data-type", help="text | integer | bigint | double | date | timestamp (default: the column's)")
+    sp.add_argument("--table", help="table name (default: the table with the most columns)")
+    sp.add_argument("--dry-run", action="store_true", help="resolve the column and print the request; no changeset")
+    sp.set_defaults(update=False, unverified_ok=False, formula="")
+
+    sp = sub.add_parser("create-formula-attribute",
+        help="Attribute computed from the table's columns (e.g. Year([FIRST DATE])). Prefer a lookup table: "
+             "faster, and replaceable without deleting the metrics built on it. Republish afterwards.")
+    sp.add_argument("--model-id", required=True)
+    sp.add_argument("--name", required=True)
+    sp.add_argument("--formula", required=True, help="Strategy syntax, columns in [brackets]")
+    sp.add_argument("--description", default="")
+    sp.add_argument("--display-format", choices=["text", "number", "date"])
+    sp.add_argument("--data-type", help="text | integer | bigint | double | date | timestamp (Year() of a date "
+                                        "comes back as a date unless you set integer)")
+    sp.add_argument("--table", help="table name (default: the table with the most columns)")
+    sp.add_argument("--update", action="store_true", help="rewrite the formula of an existing single-form attribute")
+    sp.add_argument("--unverified-ok", action="store_true",
+                    help="send a formula with string literals or decimals (not yet confirmed live)")
+    sp.add_argument("--dry-run", action="store_true",
+                    help="check the columns against the model and print the request; open no changeset. The "
+                         "tenant checks the functions only when the step is applied")
+
+    sp = sub.add_parser("set-column-types",
+        help="Change column types in the model without reloading the source (table + pipeline, then the "
+             "attribute forms and fact metrics that read them); republish afterwards.")
+    sp.add_argument("--model-id", required=True)
+    sp.add_argument("--set", action="append", nargs="+", metavar="VALUE",
+                    help="COLUMN TYPE [DATE_FORMAT]; TYPE is one of " + ", ".join(COLUMN_TYPES)
+                         + "; date and timestamp need the source pattern, e.g. yyyyMM. Repeatable.")
+    sp.add_argument("--spec", help="CSV (column_name, target_type, date_format, enabled) or JSON "
+                                   "{columns: [{column, type, date_format}]}")
+    sp.add_argument("--table", help="table name (default: the table with the most columns)")
+    sp.add_argument("--no-joined", action="store_true",
+                    help="don't retype the matching key column of lookup/mapping tables joined through the same "
+                         "attribute (by default they take the same type, or the join breaks)")
+    sp.add_argument("--dry-run", action="store_true", help="print the changes; open no changeset")
 
     sp = sub.add_parser("patch-fact-metrics",
         help="Set aggregation function and/or number format on many fact metrics in one changeset, "
@@ -6153,6 +7682,16 @@ def main():
             "create-transformation": cmd_create_transformation,
             "create-compound-metric": cmd_create_compound_metric,
             "create-conditional-metric": cmd_create_conditional_metric,
+            "delete-derived-metric": cmd_delete_derived_metric,
+            "create-level-metric": cmd_create_level_metric,
+            "create-weighted-average": cmd_create_weighted_average,
+            "rename-describe": cmd_rename_describe,
+            "create-formula-attribute": cmd_create_formula_attribute,
+            "add-column-attribute": cmd_create_formula_attribute,
+            "add-time-attributes": cmd_add_time_attributes,
+            "show-forms": cmd_show_forms,
+            "export-model": cmd_export_model,
+            "set-column-types": cmd_set_column_types,
             "patch-fact-metrics": cmd_patch_fact_metrics,
             "attach-transformation": cmd_attach_transformation,
         }[args.cmd](m, args)

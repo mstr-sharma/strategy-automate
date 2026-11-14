@@ -30,6 +30,41 @@ Verified against a Strategy ONE Library Modeling Service in 2026. These rules ca
 - The outer `physicalTable.columns` list is a separate flat array with `{information:{name}, dataType, columnName}` — **no top-level `id`** — while the inner pipeline `rootTable.children[].columns` uses `{id, name, dataType, sourceDataType}`. Both the outer and the inner pipeline `columns` must be present.
 - When the pipeline shape misbehaves on a tenant, the fallback is the object form via clone-and-remap — see `reference_strategy_object_cloning.md`.
 
+## Changing a column's type in an existing model (verified 2026-10-30)
+`PATCH /api/model/dataModels/{mid}/tables/{tid}` with `{"physicalTable": ...}`, inside a changeset: set the new
+`dataType` (and `format`, e.g. `yyyyMM`, for a date read from integers) on the column in BOTH
+`physicalTable.columns` and the pipeline's `rootTable.children[].columns`; leave `sourceDataType` as it is.
+Trim every `information` block to `objectId`, `subType`, `name` before sending. The source is not reloaded:
+the new type applies at the next republish. In the verified run (13 columns: integer → text, integer →
+date, text → double) the service also updated the attribute forms and fact metrics that read those columns,
+so a second pass to align them found nothing to write. `build_mosaic.py set-column-types` does both steps.
+
+## Renames and descriptions (verified 2026-10-30/31)
+`PATCH /api/model/dataModels/{mid}/attributes/{id}` or `.../factMetrics/{id}` with `{"information": {"name",
+"description"}}` inside a changeset renames and/or describes; it takes effect on commit, with no republish.
+Descriptions over 250 characters are refused. Derived metrics need a full-body PUT instead.
+`build_mosaic.py rename-describe` sends this shape.
+- A form has no description of its own: the connector shows the attribute's description on every form
+  (`<attribute>__<form>`, `<attribute> (<form>)`). Describe the attribute once, covering its forms.
+  `rename-describe` maps a form name to its attribute for a description and refuses to rename one.
+- Not yet confirmed: whether the connector's `get_semantics` shows a new description before the next
+  republish. Check it after applying; republish if the old text still shows, and record the result here.
+
+## Formula attributes (verified 2026-10-30/31)
+`POST /api/model/dataModels/{mid}/attributes` in a changeset, one ID form (system form id
+`45C11FA478E745FEA08D781CEA190FE5`, `category: ID`) whose expression is tokens, never text: `function`,
+`character` (operators, parentheses, commas), `column_reference` with the column's objectId, `integer`,
+then `end_of_text`. Include `keyForm`, `attributeLookupTable` and report/browse `displays`, or the commit
+is refused. The server infers the form's type from the column inside the formula, so `Year([a date])`
+comes back as a date unless `dataType` is set to integer. Confirmed: `AddMonths([PERIOD], -1)`,
+`Year([date])`, `MonthsBetween([a], [b])`. String literals and decimals are unconfirmed. `Sign` does not exist
+(refused with `8004cd15`, "Searching for 'Sign' resulted in no matches", 2026-11-09): the tenant resolves each
+function by name when the request is applied, inside the changeset, which is discarded on refusal.
+`Case([<an amount column>] > 0, 1, 0)` typed integer was accepted (2026-11-09) and, after the republish,
+flags exactly the rows with a positive amount (rows flagged 1 = rows with the amount > 0): `Case` and
+the `>` comparison work in formula attributes.
+`build_mosaic.py create-formula-attribute` sends this shape.
+
 ## Column objectIds (the #1 trap)
 - After `POST .../tables`, column objectIds are **visible inside the changeset** but are **ephemeral until commit**. A subsequent attribute/metric that references those IDs in the same uncommitted changeset will fail at commit with `Object with ID '...' and type 26 (Column) is not found in metadata`.
 - Safe ordering: **commit tables first**, then re-`GET /api/model/dataModels/{mid}/tables/{tid}?showColumns=true` to capture the post-commit column objectIds, then open a new changeset for attributes/metrics.
@@ -132,3 +167,39 @@ Always tell the helper how to sign in per tenant: `MSTR_AUTH_METHOD` (`sso` for 
 
 ## Session cap
 - Canonical coverage: `feedback_build_mosaic_session_leak.md` — symptom (`500 Maximum number of interactive session per user for project exceeded …`, `8004cb0a` / iServerCode `-2147072486`), the one-session-per-pipeline rule (one process or `MSTR_REUSE_SESSION=1`), try/finally `m.logout()`, and recovery. (Earlier guidance here to wait 5–10 min after capping is superseded: iServer reaps project-interactive sessions on a ~30-min idle timer — budget the full 30 minutes and do not paper over with retries.)
+
+## Dates stored as numbers, and time attributes (from a Studio-built model export, 2026-11-12)
+- A yyyyMM integer column typed as a date in Studio is stored as `dataType: {type: date, precision: 0,
+  scale: 0}` plus `format: "yyyyMM"` on the physical column AND on the pipeline column; `sourceDataType`
+  stays integer. The attribute form gets `dataType: date`, `displayFormat: "date"`, `semanticRole: "date"`
+  (an integer yyyyMM form had `"month"`), and the attribute a display format (`format.values`:
+  `number_category` "7", `number_format` "yyyyMM"). `set-column-types ... date yyyyMM` writes the column and
+  form shape; the attribute display format is not written (not needed for the connector).
+- A **date** base takes time attributes (timestamp is not required): `smartAttributes` on the attribute,
+  `smartAttributeType` `day_interval`, `week_interval`, `month_interval`, `quarter_interval`,
+  `year_interval`, each with forms ID (integer), Start (timestamp) and DESC (text). On the connector:
+  `<date> (month)__id` = 202201 (the yyyyMM value), `__start`, `__desc` = "2022-01"; quarter id 202201 for
+  2022-Q1, desc "2022-Q1"; year id 2022. Grouping by them aggregates correctly (unlike GROUP BY an
+  expression of the number). No 15-minute interval appears for a date base.
+- Write: `PUT /api/model/dataModels/{id}/attributes/{attributeId}/smartAttributes` in a changeset, body
+  `{"smartAttributes": [{"subType": "attribute_smart", "name": "<attribute> (Month)", "objectId"?: <existing>, "definition":
+  {"smartAttributeType": "month_interval", "parameters": [], "ascending": true}}]}`. It replaces the whole
+  set: send existing ones with their objectId. Each entry needs a `name` (refused without:
+  8004c901 "Json input missing the following field: name"); Studio's are "<attribute> (Year)".
+  `build_mosaic.py add-time-attributes` does this. **Verified live 2026-11-12** on a scratch model:
+  `set-column-types ... date yyyyMM` on an integer yyyyMM column, republish, `add-time-attributes
+  --intervals year,quarter,month`, republish, certify. The connector showed the column as a date,
+  `(month)__id` = the old integer, quarters grouping 3 months, and a yyyyMM filter on `(month)__id` working.
+- After a conversion, a description that says how the value was stored ("stored as YYYYMM integer") is
+  wrong: change it in the same finding (`rename_describe`).
+
+
+## File tables: the import settings decide how a reload splits (verified live, 2026-11-13)
+
+- A file table's import settings are in the model export under the pipeline's `importSource.dataOptions`:
+  separator, quote character, header row, encoding.
+- With no quote character (`quote = ""`), the loader splits on **every** separator, quotes included:
+  a reloaded file whose value was quoted to hide a comma loaded with its columns shifted. Verified by
+  loading such a file by hand. Write a reload file in the table's own format, keep the separator,
+  quotes and line breaks out of values, and give it exactly the table's columns (an extra column such as
+  `source` breaks a straight reload). `assess_model.py check-lookup` checks a file against these rules.
